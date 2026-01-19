@@ -368,24 +368,24 @@ safe_import_manager = SafeImportJobManager()
 # Compatibility functions for gradual migration
 def safe_create_import_job(user_id: str, task_id: str, job_data: dict) -> bool:
     """Create an import job safely with user isolation."""
-    return safe_import_manager.create_job(user_id, task_id, job_data)
+    return safe_import_manager.create_job(str(user_id), task_id, job_data)
 
 
 def safe_update_import_job(user_id: str, task_id: str, updates: dict) -> bool:
     """Update an import job safely with user isolation."""
-    return safe_import_manager.update_job(user_id, task_id, updates)
+    return safe_import_manager.update_job(str(user_id), task_id, updates)
 
 
 def safe_get_import_job(user_id: str, task_id: str) -> Optional[dict]:
     """Get an import job safely with user isolation."""
-    return safe_import_manager.get_job(user_id, task_id)
+    return safe_import_manager.get_job(str(user_id), task_id)
 
 
 def safe_get_user_import_jobs(user_id: str) -> Dict[str, dict]:
     """Get all import jobs for a user safely."""
-    return safe_import_manager.get_user_jobs(user_id)
+    return safe_import_manager.get_user_jobs(str(user_id))
 
 
 def safe_delete_import_job(user_id: str, task_id: str) -> bool:
     """Delete an import job safely with user isolation."""
-    return safe_import_manager.delete_job(user_id, task_id)
+    return safe_import_manager.delete_job(str(user_id), task_id)

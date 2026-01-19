@@ -11,8 +11,16 @@ _BEST_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv('BEST_COVER_CACHE_MAX') or
 _CANDIDATE_CACHE_TTL_SECONDS = int((_os_cover_debug.getenv('COVER_CANDIDATE_CACHE_TTL') or '900'))
 _CANDIDATE_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv('COVER_CANDIDATE_CACHE_MAX') or '256'))
 
+_GOOGLE_TITLE_CACHE_TTL_SECONDS = int((_os_cover_debug.getenv('GOOGLE_TITLE_CACHE_TTL') or '3600'))
+_GOOGLE_TITLE_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv('GOOGLE_TITLE_CACHE_MAX') or '256'))
+
 _BEST_COVER_CACHE: OrderedDict[str, Tuple[float, dict]] = OrderedDict()
 _COVER_CANDIDATE_CACHE: OrderedDict[str, Tuple[float, List[dict]]] = OrderedDict()
+_GOOGLE_TITLE_SEARCH_CACHE: OrderedDict[str, Tuple[float, List[dict]]] = OrderedDict()
+
+_COVER_PROBE_CACHE_TTL_SECONDS = int((_os_cover_debug.getenv('COVER_PROBE_CACHE_TTL') or '21600'))  # 6h
+_COVER_PROBE_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv('COVER_PROBE_CACHE_MAX') or '1024'))
+_COVER_PROBE_CACHE: OrderedDict[str, Tuple[float, dict]] = OrderedDict()
 
 # Verbose flag for cover & search debug (ENV: VERBOSE, IMPORT_VERBOSE, COVER_VERBOSE)
 _COVER_VERBOSE = (
@@ -20,6 +28,32 @@ _COVER_VERBOSE = (
     or (_os_cover_debug.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
     or (_os_cover_debug.getenv('COVER_VERBOSE') or 'false').lower() == 'true'
 )
+
+# Shared placeholder image hashes (aHash 16x16) seen across providers.
+_PLACEHOLDER_IMAGE_HASHES = {
+    # OpenLibrary "image not available" placeholders
+    "0000000000000000000000000000000000000000000000004000e000ffe0fff0",
+    "00004000e000ffe0fff0fff9ffff3fc05fc802002420e3a0fff47f1430000000",
+    "00004000e000ffe0fff8fff9ffff3fc05fc802002420e3a0fff47f1430000000",
+    # Google Books "image not available" placeholders (PNG/JPEG variants)
+    "fffffffffffff3ffe007e007ffdff81ff81fffff80018001ffffffffffffffff",
+}
+
+def _cover_ahash_hex(data: bytes) -> Optional[str]:
+    try:
+        from io import BytesIO
+        from PIL import Image
+        img = Image.open(BytesIO(data)).convert('L').resize((16, 16))
+        try:
+            pixels_raw = list(img.get_flattened_data())
+        except Exception:
+            pixels_raw = list(img.getdata().tolist())
+        pixels = [int(p[0]) if isinstance(p, tuple) else int(p) for p in pixels_raw]
+        avg = sum(pixels) / len(pixels)
+        bits = ''.join('1' if p > avg else '0' for p in pixels)
+        return hex(int(bits, 2))[2:].zfill(64)
+    except Exception:
+        return None
 
 def _cache_get(key):
     rec = _PROVIDER_META_CACHE.get(key)
@@ -51,6 +85,34 @@ def _purge_ordered_dict(store: OrderedDict, ttl: int, max_entries: int) -> None:
     if max_entries > 0:
         while len(store) > max_entries:
             store.popitem(last=False)
+
+
+def _probe_cache_get(url: str) -> Optional[dict]:
+    if _COVER_PROBE_CACHE_MAX_ENTRIES <= 0:
+        return None
+    if not url:
+        return None
+    entry = _COVER_PROBE_CACHE.get(url)
+    if not entry:
+        return None
+    ts, payload = entry
+    if _time.time() - ts > _COVER_PROBE_CACHE_TTL_SECONDS:
+        _COVER_PROBE_CACHE.pop(url, None)
+        return None
+    try:
+        _COVER_PROBE_CACHE.move_to_end(url)
+    except Exception:
+        pass
+    return dict(payload)
+
+
+def _probe_cache_set(url: str, payload: dict) -> None:
+    if _COVER_PROBE_CACHE_MAX_ENTRIES <= 0:
+        return
+    if not url:
+        return
+    _COVER_PROBE_CACHE[url] = (_time.time(), dict(payload))
+    _purge_ordered_dict(_COVER_PROBE_CACHE, _COVER_PROBE_CACHE_TTL_SECONDS, _COVER_PROBE_CACHE_MAX_ENTRIES)
 
 
 def _normalized_cover_key(isbn: Optional[str], title: Optional[str], author: Optional[str]) -> str:
@@ -111,6 +173,99 @@ def _candidate_cache_set(isbn: Optional[str], title: Optional[str], author: Opti
     key = _candidate_cache_key(isbn, title, author)
     _COVER_CANDIDATE_CACHE[key] = (_time.time(), [candidate.copy() for candidate in candidates])
     _purge_ordered_dict(_COVER_CANDIDATE_CACHE, _CANDIDATE_CACHE_TTL_SECONDS, _CANDIDATE_CACHE_MAX_ENTRIES)
+
+
+def _google_title_cache_key(title: Optional[str], author: Optional[str]) -> str:
+    return "|".join([
+        (title or '').strip().lower(),
+        (author or '').strip().lower(),
+    ])
+
+
+def _google_title_cache_get(title: Optional[str], author: Optional[str]) -> Optional[List[dict]]:
+    if _GOOGLE_TITLE_CACHE_MAX_ENTRIES <= 0:
+        return None
+    key = _google_title_cache_key(title, author)
+    entry = _GOOGLE_TITLE_SEARCH_CACHE.get(key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if _time.time() - ts > _GOOGLE_TITLE_CACHE_TTL_SECONDS:
+        _GOOGLE_TITLE_SEARCH_CACHE.pop(key, None)
+        return None
+    try:
+        _GOOGLE_TITLE_SEARCH_CACHE.move_to_end(key)
+    except Exception:
+        pass
+    return [item.copy() for item in payload]
+
+
+def _google_title_cache_set(title: Optional[str], author: Optional[str], results: List[dict]) -> None:
+    if _GOOGLE_TITLE_CACHE_MAX_ENTRIES <= 0:
+        return
+    key = _google_title_cache_key(title, author)
+    _GOOGLE_TITLE_SEARCH_CACHE[key] = (_time.time(), [item.copy() for item in results])
+    _purge_ordered_dict(_GOOGLE_TITLE_SEARCH_CACHE, _GOOGLE_TITLE_CACHE_TTL_SECONDS, _GOOGLE_TITLE_CACHE_MAX_ENTRIES)
+
+
+def iter_title_search_variants(title: str) -> List[str]:
+    """Generate a small set of title variants to improve API matching.
+
+    Supports cases like:
+    - "A Pivot In Time (Alien Artifact, #2)" -> try full, then "A Pivot In Time"
+    - "Foo Bar: Baz" -> try full, then "Foo Bar"
+
+    We treat the suffix/subtitle as optional; most APIs don't support true optional
+    matching, so we attempt the full title first and fall back to the simpler form.
+    """
+    if not title:
+        return []
+    import re as _re
+
+    def _clean_spaces(s: str) -> str:
+        return " ".join((s or '').strip().split())
+
+    def _strip_trailing_parens(s: str) -> str:
+        # Only strip a single trailing (...) group (optionally followed by punctuation);
+        # keeps internal parentheses intact.
+        out = _re.sub(r"\s*\([^)]*\)\s*[\.,!\?:;]*\s*$", "", s or "").strip()
+        # Also handle trailing [...] variants some sources use.
+        out = _re.sub(r"\s*\[[^\]]*\]\s*[\.,!\?:;]*\s*$", "", out or "").strip()
+        return out
+
+    def _before_colon(s: str) -> str:
+        if not s:
+            return s
+        if ':' not in s:
+            return s
+        return s.split(':', 1)[0].strip()
+
+    base = _clean_spaces(title)
+    candidates: List[str] = []
+    seen = set()
+
+    def _add(s: str) -> None:
+        s2 = _clean_spaces(s)
+        if not s2:
+            return
+        key = s2.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(s2)
+
+    # Prefer the original full title.
+    _add(base)
+
+    # Then try removing trailing parenthetical suffix.
+    no_paren = _strip_trailing_parens(base)
+    _add(no_paren)
+
+    # Then try stripping subtitle after a colon.
+    _add(_before_colon(base))
+    _add(_before_colon(no_paren))
+
+    return candidates
 
 # --- Google Cover Utilities ---
 _GOOGLE_SIZE_ORDER = ['extraLarge','large','medium','small','thumbnail','smallThumbnail']
@@ -217,10 +372,175 @@ def normalize_cover_url(url: str | None) -> str | None:
             return upgrade_google_cover_url(url)
         if 'covers.openlibrary.org' in url:
             import re as _re
-            return _re.sub(r'-(S|M)\.(jpg|png)$', r'-L.\2', url)
+            # Prefer large images when possible
+            upgraded = _re.sub(r'-(S|M)\.(jpg|png)$', r'-L.\2', url)
+            # OpenLibrary serves a misleading "image not available" placeholder by default.
+            # Force 404 instead so the caller can fall back to another provider.
+            if 'default=' not in upgraded:
+                sep = '&' if '?' in upgraded else '?'
+                upgraded = f"{upgraded}{sep}default=false"
+            return upgraded
     except Exception:
         return url
     return url
+
+
+def _openlibrary_cover_exists(url: str) -> bool:
+    """Return True if an OpenLibrary cover URL resolves to an actual image.
+
+    With default=false, OpenLibrary returns 404 when no cover exists.
+    We use a fast HEAD and fall back to a tiny GET if needed.
+    """
+    try:
+        import requests as _requests
+        from io import BytesIO
+        from PIL import Image
+
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; MyBibliotheca/1.0)'}
+        content_len = None
+        try:
+            r = _requests.head(url, timeout=2.5, allow_redirects=True, headers=headers)
+            code = getattr(r, 'status_code', 0)
+            if code in (404, 410):
+                return False
+            if code == 200:
+                try:
+                    content_len = int(r.headers.get('Content-Length') or 0)
+                except Exception:
+                    content_len = None
+        except Exception:
+            pass
+
+        # Always confirm OpenLibrary content to avoid placeholder images.
+        try:
+            rg = _requests.get(url, timeout=4.0, stream=True, headers=headers)
+            code = getattr(rg, 'status_code', 0)
+            if code != 200:
+                try:
+                    rg.close()
+                except Exception:
+                    pass
+                return False
+            data = rg.content
+            try:
+                rg.close()
+            except Exception:
+                pass
+            # If the image is tiny or matches the known placeholder hash, reject it.
+            if data is None or len(data) < 1024:
+                return False
+            try:
+                h = _cover_ahash_hex(data)
+                if h and h in _PLACEHOLDER_IMAGE_HASHES:
+                    return False
+            except Exception:
+                # If we can't parse the image, treat as invalid
+                return False
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+def probe_cover_url_details(url: str, provider: Optional[str] = None) -> dict:
+    """Probe a cover URL and return diagnostic metadata for debugging.
+
+    Returns keys like status, content_type, content_length, bytes, size, format, error.
+    """
+    result: dict[str, object] = {
+        'url': url,
+        'provider': provider or '',
+    }
+    if not url:
+        result['error'] = 'missing_url'
+        return result
+
+    cached = _probe_cache_get(url)
+    if cached is not None:
+        # Ensure current provider is reflected (cache key is URL-only)
+        if provider and not cached.get('provider'):
+            cached['provider'] = provider
+        return cached
+    try:
+        import requests as _requests
+        from io import BytesIO
+        from PIL import Image
+    except Exception as exc:
+        result['error'] = f'imports_failed:{exc}'
+        return result
+    headers = {'User-Agent': 'Mozilla/5.0 (compatible; MyBibliotheca/1.0)'}
+    try:
+        h = _requests.head(url, timeout=1.6, allow_redirects=True, headers=headers)
+        result['status'] = getattr(h, 'status_code', None)
+        result['content_type'] = (h.headers.get('Content-Type') or '')
+        result['content_length'] = h.headers.get('Content-Length')
+    except Exception as exc:
+        result['head_error'] = str(exc)
+
+    if result.get('status') != 200:
+        return result
+
+    try:
+        r = _requests.get(url, timeout=2.8, headers=headers)
+        result['get_status'] = getattr(r, 'status_code', None)
+        data = r.content
+        result['bytes'] = len(data) if data else 0
+        if data:
+            try:
+                img = Image.open(BytesIO(data))
+                result['size'] = img.size
+                result['format'] = img.format
+                try:
+                    ah = _cover_ahash_hex(data)
+                    if ah:
+                        result['ahash'] = ah
+                except Exception:
+                    pass
+            except Exception as exc:
+                result['img_error'] = str(exc)
+        try:
+            r.close()
+        except Exception:
+            pass
+    except Exception as exc:
+        result['get_error'] = str(exc)
+    try:
+        _probe_cache_set(url, result)
+    except Exception:
+        pass
+    return result
+
+def is_placeholder_cover_url(url: str, provider: Optional[str] = None) -> bool:
+    """Detect known placeholder cover URLs based on path markers."""
+    if not url:
+        return True
+    try:
+        lowered = url.lower()
+        placeholder_markers = [
+            'image-not-available',
+            'image_not_available',
+            'image not available',
+            'no-image',
+            'no_image',
+            'noimage',
+            'nocover',
+            'no_cover',
+            'not-available',
+            'not_available',
+            'placeholder',
+            'missing.jpg',
+            'missing.png',
+            'default.jpg',
+            'default.png',
+        ]
+        if any(marker in lowered for marker in placeholder_markers):
+            return True
+        provider_lc = (provider or '').lower()
+        if provider_lc == 'openlibrary' or 'covers.openlibrary.org' in lowered:
+            return 'default=false' not in lowered
+    except Exception:
+        return False
+    return False
 
 def get_best_cover_for_book(isbn=None, title=None, author=None):
     """
@@ -251,6 +571,8 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
     if not gb_data and title:
         t_gb_title = time.perf_counter()
         gb_results = search_google_books_by_title_author(title, author, limit=1)
+        if (not gb_results) and author:
+            gb_results = search_google_books_by_title_author(title, None, limit=1)
         phase_logs.append(f"google_title={time.perf_counter()-t_gb_title:.3f}s res={len(gb_results) if gb_results else 0}")
         gb_data = gb_results[0] if gb_results else None
     cover_url = None
@@ -267,6 +589,53 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
             if 'printsec=' not in cover_url:
                 sep = '&' if '?' in cover_url else '?'
                 cover_url = f"{cover_url}{sep}printsec=frontcover"
+            # Filter out Google placeholder images by size/bytes
+            try:
+                if is_placeholder_cover_url(cover_url, provider='google'):
+                    cover_url = None
+                else:
+                    details = probe_cover_url_details(cover_url, provider='google')
+                    ah = details.get('ahash')
+                    b = details.get('bytes')
+                    fmt = (details.get('format') or '')
+                    try:
+                        bytes_int = int(b) if b is not None else 0
+                    except Exception:
+                        bytes_int = 0
+                    fmt_str = str(fmt).upper() if fmt is not None else ''
+                    # Avoid over-filtering by requiring the "tiny payload" signal in addition to aHash.
+                    if ah and ah in _PLACEHOLDER_IMAGE_HASHES:
+                        if (bytes_int and bytes_int < 30_000) or (fmt_str == 'PNG' and bytes_int and bytes_int < 60_000):
+                            cover_url = None
+            except Exception:
+                pass
+        # If ISBN-driven Google cover is invalid, try title/author Google search before OpenLibrary.
+        if not cover_url and title:
+            try:
+                gb_results = search_google_books_by_title_author(title, author, limit=1)
+                if (not gb_results) and author:
+                    gb_results = search_google_books_by_title_author(title, None, limit=1)
+                gb_fallback = gb_results[0] if gb_results else None
+            except Exception:
+                gb_fallback = None
+            if gb_fallback and gb_fallback.get('cover_url'):
+                try:
+                    cover_url = normalize_cover_url(gb_fallback['cover_url'])
+                    if cover_url:
+                        details = probe_cover_url_details(cover_url, provider='google')
+                        ah = details.get('ahash')
+                        b = details.get('bytes')
+                        fmt = (details.get('format') or '')
+                        try:
+                            bytes_int = int(b) if b is not None else 0
+                        except Exception:
+                            bytes_int = 0
+                        fmt_str = str(fmt).upper() if fmt is not None else ''
+                        if ah and ah in _PLACEHOLDER_IMAGE_HASHES:
+                            if (bytes_int and bytes_int < 30_000) or (fmt_str == 'PNG' and bytes_int and bytes_int < 60_000):
+                                cover_url = None
+                except Exception:
+                    cover_url = None
         # Determine quality tag based on known larger indicators
         if cover_url and ('extraLarge' in cover_url or 'zoom=1' in cover_url or 'large' in cover_url):
             quality = 'high'
@@ -291,8 +660,13 @@ def get_best_cover_for_book(isbn=None, title=None, author=None):
             ol_data = ol_results if isinstance(ol_results, dict) else (ol_results[0] if ol_results else None)
         if ol_data and ol_data.get('cover_url'):
             cover_url = normalize_cover_url(ol_data['cover_url'])
-            quality = 'medium' if 'L.jpg' in str(cover_url) else 'low'
-            source = 'OpenLibrary'
+            if cover_url and _openlibrary_cover_exists(cover_url):
+                quality = 'medium' if 'L.jpg' in str(cover_url) else 'low'
+                source = 'OpenLibrary'
+            else:
+                cover_url = None
+                quality = 'none'
+                source = 'none'
         else:
             source = 'none'
     else:
@@ -321,11 +695,256 @@ def get_cover_candidates(isbn=None, title=None, author=None):
     2. OpenLibrary: large (L), medium (M), small (S)
     Returns list of dicts: {'provider': 'google'|'openlibrary', 'size': label, 'url': url}
     """
+    candidates: List[dict] = []
+
+
+    def _is_placeholder_candidate(url: str, provider: str | None) -> bool:
+        """Return True when the URL is known to be a placeholder/invalid cover."""
+        try:
+            if not url:
+                return True
+            lowered = url.lower()
+            # Hard filter: common placeholder domains/paths/filenames
+            placeholder_markers = [
+                'image-not-available',
+                'image_not_available',
+                'image not available',
+                'no-image',
+                'no_image',
+                'noimage',
+                'nocover',
+                'no_cover',
+                'not-available',
+                'not_available',
+                'placeholder',
+                'missing.jpg',
+                'missing.png',
+                'default.jpg',
+                'default.png',
+            ]
+            if any(marker in lowered for marker in placeholder_markers):
+                return True
+            # OpenLibrary default placeholder; ensure default=false
+            if provider == 'openlibrary' or 'covers.openlibrary.org' in lowered:
+                return 'default=false' not in lowered
+        except Exception:
+            return True
+        return False
+
+    def _filter_candidates_list(candidates_list: List[dict]) -> List[dict]:
+        filtered_list: List[dict] = []
+        # placeholder_status:
+        #   True  => definitely a placeholder
+        #   False => definitely not a placeholder
+        #   None  => unknown (probe failure / insufficient evidence)
+        evaluated: List[tuple[dict, Optional[bool]]] = []
+        has_definitely_non_placeholder = False
+        has_unknown = False
+        # For Google, probe once per volume id to avoid N sequential network calls.
+        google_id_best_url: Dict[str, Tuple[int, str]] = {}
+        google_id_placeholder: Dict[str, Optional[bool]] = {}
+
+        def _google_volume_id(u: str) -> Optional[str]:
+            try:
+                if 'books.google' not in u:
+                    return None
+                # Fast parse for "id=..." in query string
+                if 'id=' in u:
+                    return u.split('id=', 1)[1].split('&', 1)[0] or None
+            except Exception:
+                return None
+            return None
+
+        google_rank = {
+            'zoom0': 0,
+            'extraLarge': 1,
+            'large': 2,
+            'zoom1': 3,
+            'medium': 4,
+            'zoom2': 5,
+            'small': 6,
+            'thumbnail': 7,
+            'smallThumbnail': 8,
+            'zoom3': 9,
+            'zoom4': 10,
+            'zoom5': 11,
+            'original': 20,
+        }
+        for c in candidates_list:
+            try:
+                provider = c.get('provider')
+                if not isinstance(provider, str) or provider.lower() != 'google':
+                    continue
+                url = c.get('url')
+                if not isinstance(url, str) or not url.strip():
+                    continue
+                gid = _google_volume_id(url)
+                if not gid:
+                    continue
+                size = c.get('size')
+                rank = google_rank.get(str(size), 50)
+                existing = google_id_best_url.get(gid)
+                if existing is None or rank < existing[0]:
+                    google_id_best_url[gid] = (rank, url)
+            except Exception:
+                continue
+
+        for c in candidates_list:
+            url = c.get('url')
+            provider = c.get('provider')
+            provider_lc = provider.lower() if isinstance(provider, str) else ''
+            if not isinstance(url, str) or not url.strip():
+                continue
+            try:
+                if _is_placeholder_candidate(url, provider if isinstance(provider, str) else None):
+                    continue
+                placeholder: Optional[bool] = False
+                if provider_lc == 'google':
+                    gid = _google_volume_id(url)
+                    if gid and gid in google_id_placeholder:
+                        placeholder = google_id_placeholder[gid]
+                    else:
+                        probe_url = url
+                        if gid:
+                            best = google_id_best_url.get(gid)
+                            if best and best[1]:
+                                probe_url = best[1]
+                        details = probe_cover_url_details(probe_url, provider=provider)
+                        ah = details.get('ahash')
+                        b = details.get('bytes')
+                        fmt = (details.get('format') or '')
+                        # Google placeholder images often come back as tiny (highly-compressed) PNGs.
+                        # Avoid false-positives from aHash collisions by requiring a "small payload" signal too.
+                        try:
+                            bytes_int = int(b) if b is not None else 0
+                        except Exception:
+                            bytes_int = 0
+                        fmt_str = str(fmt).upper() if fmt is not None else ''
+
+                        placeholder_eval: Optional[bool] = False
+                        if ah and ah in _PLACEHOLDER_IMAGE_HASHES:
+                            if (bytes_int and bytes_int < 30_000) or (fmt_str == 'PNG' and bytes_int and bytes_int < 60_000):
+                                placeholder_eval = True
+                            else:
+                                placeholder_eval = False
+                        if bytes_int == 0 and ah is None:
+                            placeholder_eval = None
+
+                        placeholder = placeholder_eval
+                        if gid:
+                            google_id_placeholder[gid] = placeholder_eval
+                # Skip probe for OpenLibrary candidates already validated by _openlibrary_cover_exists
+                if provider_lc not in ('openlibrary', 'google'):
+                    if not _probe_cover_url(url, provider if isinstance(provider, str) else None):
+                        continue
+                if placeholder is False:
+                    has_definitely_non_placeholder = True
+                elif placeholder is None:
+                    has_unknown = True
+                evaluated.append((c, placeholder))
+            except Exception:
+                # For Google, a probe exception should be treated as unknown (don't lose legit covers).
+                if provider_lc == 'google':
+                    evaluated.append((c, None))
+                    has_unknown = True
+                else:
+                    evaluated.append((c, False))
+
+        # Selection rules:
+        # - If we have at least one definitely-non-placeholder candidate, keep ONLY those.
+        # - Else, if we only have placeholders, return [] (hide placeholders entirely).
+        # - Else (unknown-only), keep unknowns (better to show something than nothing).
+        if has_definitely_non_placeholder:
+            filtered_list = [c for c, status in evaluated if status is False]
+        else:
+            # No definitely-good candidates.
+            any_definite_placeholder = any(status is True for _, status in evaluated)
+            if any_definite_placeholder and not has_unknown:
+                # Placeholder-only result set.
+                filtered_list = []
+            else:
+                # Unknowns exist; keep unknowns (and any non-google candidates treated as False already).
+                filtered_list = [c for c, status in evaluated if status is not True]
+
+        return filtered_list
+
     cached_candidates = _candidate_cache_get(isbn, title, author)
     if cached_candidates is not None:
-        return cached_candidates
+        filtered_cached = _filter_candidates_list(cached_candidates)
+        _candidate_cache_set(isbn, title, author, filtered_cached)
+        if filtered_cached:
+            return filtered_cached
 
-    candidates: List[dict] = []
+    def _probe_cover_url(url: str, provider: str | None) -> bool:
+        """Lightweight validation of a cover URL.
+
+        Reject non-200 responses, non-image content-types, or tiny payloads.
+        Uses HEAD first, then falls back to a small GET when needed.
+        """
+        try:
+            import requests as _requests
+        except Exception:
+            return True
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; MyBibliotheca/1.0)'}
+        min_bytes = 4096
+        provider_lc = (provider or '').lower()
+        try:
+            resp = None
+            try:
+                resp = _requests.head(url, timeout=2.0, allow_redirects=True, headers=headers)
+            except Exception:
+                resp = None
+            status = getattr(resp, 'status_code', 0) if resp is not None else 0
+            if status and status != 200:
+                return False
+            if resp is not None:
+                ctype = (resp.headers.get('Content-Type') or '').lower()
+                if ctype and not ctype.startswith('image/'):
+                    return False
+                try:
+                    clen = int(resp.headers.get('Content-Length') or 0)
+                except Exception:
+                    clen = 0
+                if provider_lc != 'google' and clen and clen < min_bytes:
+                    return False
+                # For Google, don't reject on size here; placeholder filtering happens via aHash.
+                if provider_lc == 'google':
+                    resp = None
+            # HEAD missing/blocked; do a tiny GET to validate
+            if resp is None or not getattr(resp, 'headers', None) or status == 0:
+                try:
+                    rg = _requests.get(url, timeout=3.5, stream=False, headers=headers)
+                    if getattr(rg, 'status_code', 0) != 200:
+                        try:
+                            rg.close()
+                        except Exception:
+                            pass
+                        return False
+                    ctype = (rg.headers.get('Content-Type') or '').lower()
+                    if ctype and not ctype.startswith('image/'):
+                        try:
+                            rg.close()
+                        except Exception:
+                            pass
+                        return False
+                    data = None
+                    try:
+                        data = rg.content
+                    except Exception:
+                        data = None
+                    try:
+                        rg.close()
+                    except Exception:
+                        pass
+                    if data is None:
+                        return False
+                    if provider_lc != 'google' and len(data) < min_bytes:
+                        return False
+                except Exception:
+                    return False
+        except Exception:
+            return False
+        return True
     def _expand_google_variants(url: str):
         """Generate ordered google image variants (largest first) heuristically.
 
@@ -379,10 +998,16 @@ def get_cover_candidates(isbn=None, title=None, author=None):
         if not gb_data and title:
             try:
                 gb_results = search_google_books_by_title_author(title, author, limit=1)
+                if (not gb_results) and author:
+                    # Retry without author constraint (Google can be flaky / overly strict).
+                    gb_results = search_google_books_by_title_author(title, None, limit=1)
                 gb_data = gb_results[0] if gb_results else None
             except Exception:
                 gb_data = None
         if gb_data:
+            gb_title = gb_data.get('title') or ''
+            gb_authors_list = gb_data.get('authors_list') or []
+            gb_published_date = gb_data.get('published_date') or ''
             # Include each provided size first (ordered by presumed largest to smallest)
             order = ['extraLarge','large','medium','small','thumbnail','smallThumbnail']
             links_all = gb_data.get('image_links_all') or {}
@@ -391,15 +1016,93 @@ def get_cover_candidates(isbn=None, title=None, author=None):
                 if key in links_all and links_all[key]:
                     u = links_all[key]
                     if u not in added_urls:
-                        candidates.append({'provider':'google','size':key,'url':u})
+                        try:
+                            u = normalize_cover_url(u) or u
+                        except Exception:
+                            pass
+                        candidates.append({
+                            'provider': 'google',
+                            'size': key,
+                            'url': u,
+                            'title': gb_title,
+                            'authors_list': gb_authors_list,
+                            'published_date': gb_published_date,
+                        })
                         added_urls.add(u)
             # Expand zoom variants from the largest available base
             base = gb_data.get('cover_url')
             if base:
                 for variant in _expand_google_variants(base):
                     if variant['url'] not in added_urls:
+                        try:
+                            variant['url'] = normalize_cover_url(variant['url']) or variant['url']
+                        except Exception:
+                            pass
+                        variant['title'] = gb_title
+                        variant['authors_list'] = gb_authors_list
+                        variant['published_date'] = gb_published_date
                         candidates.append(variant)
                         added_urls.add(variant['url'])
+
+        # If title/author provided, merge a title search result (often richer than ISBN lookup).
+        if title or author:
+            try:
+                gb_title_results = search_google_books_by_title_author(title or '', author, limit=1)
+                if (not gb_title_results) and author:
+                    gb_title_results = search_google_books_by_title_author(title or '', None, limit=1)
+                gb_fallback = gb_title_results[0] if gb_title_results else None
+            except Exception:
+                gb_fallback = None
+            if gb_fallback:
+                gb_title = gb_fallback.get('title') or ''
+                gb_authors_list = gb_fallback.get('authors_list') or []
+                gb_published_date = gb_fallback.get('published_date') or ''
+                order = ['extraLarge','large','medium','small','thumbnail','smallThumbnail']
+                links_all = gb_fallback.get('image_links_all') or {}
+                added_urls: set[str] = set()
+                for existing in candidates:
+                    u0 = existing.get('url')
+                    if isinstance(u0, str) and u0:
+                        added_urls.add(u0)
+                for key in order:
+                    if key in links_all and links_all[key]:
+                        u = links_all[key]
+                        if u not in added_urls:
+                            try:
+                                u = normalize_cover_url(u) or u
+                            except Exception:
+                                pass
+                            candidates.append({
+                                'provider': 'google',
+                                'size': key,
+                                'url': u,
+                                'title': gb_title,
+                                'authors_list': gb_authors_list,
+                                'published_date': gb_published_date,
+                            })
+                            added_urls.add(u)
+                base = gb_fallback.get('cover_url')
+                if base:
+                    for variant in _expand_google_variants(base):
+                        if variant['url'] not in added_urls:
+                            try:
+                                variant['url'] = normalize_cover_url(variant['url']) or variant['url']
+                            except Exception:
+                                pass
+                            variant['title'] = gb_title
+                            variant['authors_list'] = gb_authors_list
+                            variant['published_date'] = gb_published_date
+                            candidates.append(variant)
+                            added_urls.add(variant['url'])
+
+        # Performance shortcut: during imports we often call with only ISBN (title/author unset)
+        # to quickly select a good Google cover. If Google already yielded candidates, skip
+        # OpenLibrary to avoid slow/limited API calls.
+        if isbn and not title and not author and candidates:
+            filtered_google = _filter_candidates_list(candidates)
+            if filtered_google:
+                _candidate_cache_set(isbn, title, author, filtered_google)
+                return filtered_google
         # OpenLibrary candidates
         ol_data = None
         if isbn:
@@ -413,10 +1116,240 @@ def get_cover_candidates(isbn=None, title=None, author=None):
             except Exception:
                 ol_data = None
         if isinstance(ol_data, dict) and ol_data.get('cover_url'):
-            candidates.append({'provider': 'openlibrary', 'size': 'L', 'url': ol_data['cover_url']})
+            ol_title = ol_data.get('title') or ''
+            ol_authors_list = ol_data.get('authors_list') or []
+            ol_published_date = ol_data.get('published_date') or ''
+            if not ol_authors_list and isinstance(ol_data.get('authors'), str):
+                ol_authors_list = [a.strip() for a in ol_data.get('authors', '').split(',') if a.strip()]
+            ol_url = normalize_cover_url(ol_data['cover_url']) or ol_data['cover_url']
+            # Only include OpenLibrary covers that actually exist (avoid broken/placeholder tiles)
+            if isinstance(ol_url, str) and ol_url.strip() and _openlibrary_cover_exists(ol_url):
+                candidates.append({
+                    'provider': 'openlibrary',
+                    'size': 'L',
+                    'url': ol_url,
+                    'title': ol_title,
+                    'authors_list': ol_authors_list,
+                    'published_date': ol_published_date,
+                })
     except Exception:
         pass
-    _candidate_cache_set(isbn, title, author, candidates)
+
+    # Filter placeholders/invalid candidates (especially OpenLibrary default placeholder images)
+    filtered = _filter_candidates_list(candidates)
+
+    _candidate_cache_set(isbn, title, author, filtered)
+    return filtered
+
+
+def get_cover_candidates_fast(isbn: Optional[str] = None, title: Optional[str] = None, author: Optional[str] = None) -> List[dict]:
+    """Return cover candidates quickly without network probing.
+
+    Intended for UI flows where we want to open the modal immediately and then
+    validate candidates progressively client-side via a probe endpoint.
+
+    Still applies cheap URL normalization and placeholder URL marker checks.
+    """
+    candidates: List[dict] = []
+
+    def _is_placeholder_candidate(url: str, provider: str | None) -> bool:
+        try:
+            if not url:
+                return True
+            lowered = url.lower()
+            placeholder_markers = [
+                'image-not-available',
+                'image_not_available',
+                'image not available',
+                'no-image',
+                'no_image',
+                'noimage',
+                'nocover',
+                'no_cover',
+                'not-available',
+                'not_available',
+                'placeholder',
+                'missing.jpg',
+                'missing.png',
+                'default.jpg',
+                'default.png',
+            ]
+            if any(marker in lowered for marker in placeholder_markers):
+                return True
+            if provider == 'openlibrary' or 'covers.openlibrary.org' in lowered:
+                return 'default=false' not in lowered
+        except Exception:
+            return True
+        return False
+
+    def _expand_google_variants(url: str) -> List[dict]:
+        # Reuse the same logic as get_cover_candidates (kept duplicated to avoid refactor risk)
+        import re
+        base = url
+        if base.startswith('http:'):
+            base = base.replace('http:', 'https:')
+        base_no_zoom = re.sub(r'([&?])zoom=\d', r'\1', base)
+        base_no_zoom = base_no_zoom.replace('?&', '?').rstrip('&')
+        base_no_edge = re.sub(r'(&|\?)edge=curl', r'\1', base_no_zoom)
+        zoom_levels = [0, 1, 2, 3, 4, 5]
+        variants: List[dict] = []
+        seen: set[str] = set()
+        for z in zoom_levels:
+            sep = '&' if ('?' in base_no_edge and not base_no_edge.endswith('?')) else '?'
+            variant = f"{base_no_edge}{sep}zoom={z}"
+            if 'printsec=' not in variant:
+                variant += '&printsec=frontcover'
+            if 'img=1' not in variant:
+                variant += '&img=1'
+            while '&&' in variant:
+                variant = variant.replace('&&', '&')
+            variant = variant.replace('?&', '?')
+            if variant not in seen:
+                variants.append({'provider': 'google', 'size': f'zoom{z}', 'url': variant})
+                seen.add(variant)
+        if url not in seen:
+            variants.append({'provider': 'google', 'size': 'original', 'url': url})
+        return variants
+
+    try:
+        gb_data = None
+        if isbn:
+            try:
+                gb_data = get_google_books_cover(isbn, fetch_title_author=True)
+            except Exception:
+                gb_data = None
+        if not gb_data and title:
+            try:
+                gb_results = search_google_books_by_title_author(title, author, limit=1)
+                if (not gb_results) and author:
+                    gb_results = search_google_books_by_title_author(title, None, limit=1)
+                gb_data = gb_results[0] if gb_results else None
+            except Exception:
+                gb_data = None
+        if gb_data:
+            gb_title = gb_data.get('title') or ''
+            gb_authors_list = gb_data.get('authors_list') or []
+            gb_published_date = gb_data.get('published_date') or ''
+            order = ['extraLarge', 'large', 'medium', 'small', 'thumbnail', 'smallThumbnail']
+            links_all = gb_data.get('image_links_all') or {}
+            added_urls: set[str] = set()
+            for key in order:
+                if key in links_all and links_all[key]:
+                    u = links_all[key]
+                    if u in added_urls:
+                        continue
+                    try:
+                        u = normalize_cover_url(u) or u
+                    except Exception:
+                        pass
+                    if _is_placeholder_candidate(u, 'google'):
+                        continue
+                    candidates.append({'provider': 'google', 'size': key, 'url': u, 'title': gb_title, 'authors_list': gb_authors_list, 'published_date': gb_published_date})
+                    added_urls.add(u)
+            base = gb_data.get('cover_url')
+            if base:
+                for variant in _expand_google_variants(base):
+                    u = variant.get('url')
+                    if not isinstance(u, str) or u in added_urls:
+                        continue
+                    try:
+                        u = normalize_cover_url(u) or u
+                    except Exception:
+                        pass
+                    if _is_placeholder_candidate(u, 'google'):
+                        continue
+                    variant['url'] = u
+                    variant['title'] = gb_title
+                    variant['authors_list'] = gb_authors_list
+                    variant['published_date'] = gb_published_date
+                    candidates.append(variant)
+                    added_urls.add(u)
+
+        # Merge title/author result as a fallback source of a different Google volume id
+        if title or author:
+            try:
+                gb_title_results = search_google_books_by_title_author(title or '', author, limit=1)
+                if (not gb_title_results) and author:
+                    gb_title_results = search_google_books_by_title_author(title or '', None, limit=1)
+                gb_fallback = gb_title_results[0] if gb_title_results else None
+            except Exception:
+                gb_fallback = None
+            if gb_fallback:
+                gb_title = gb_fallback.get('title') or ''
+                gb_authors_list = gb_fallback.get('authors_list') or []
+                gb_published_date = gb_fallback.get('published_date') or ''
+                order = ['extraLarge', 'large', 'medium', 'small', 'thumbnail', 'smallThumbnail']
+                links_all = gb_fallback.get('image_links_all') or {}
+                added_urls: set[str] = set()
+                for existing in candidates:
+                    u0 = existing.get('url')
+                    if isinstance(u0, str) and u0:
+                        added_urls.add(u0)
+                for key in order:
+                    if key in links_all and links_all[key]:
+                        u = links_all[key]
+                        if u in added_urls:
+                            continue
+                        try:
+                            u = normalize_cover_url(u) or u
+                        except Exception:
+                            pass
+                        if _is_placeholder_candidate(u, 'google'):
+                            continue
+                        candidates.append({'provider': 'google', 'size': key, 'url': u, 'title': gb_title, 'authors_list': gb_authors_list, 'published_date': gb_published_date})
+                        added_urls.add(u)
+                base = gb_fallback.get('cover_url')
+                if base:
+                    for variant in _expand_google_variants(base):
+                        u = variant.get('url')
+                        if not isinstance(u, str) or u in added_urls:
+                            continue
+                        try:
+                            u = normalize_cover_url(u) or u
+                        except Exception:
+                            pass
+                        if _is_placeholder_candidate(u, 'google'):
+                            continue
+                        variant['url'] = u
+                        variant['title'] = gb_title
+                        variant['authors_list'] = gb_authors_list
+                        variant['published_date'] = gb_published_date
+                        candidates.append(variant)
+                        added_urls.add(u)
+    except Exception:
+        pass
+
+    # OpenLibrary: include cover_url if present, but do not validate the cover image.
+    try:
+        ol_data = None
+        if isbn:
+            try:
+                ol_data = fetch_book_data(isbn)
+            except Exception:
+                ol_data = None
+        if not ol_data and title:
+            try:
+                ol_data = search_book_by_title_author(title, author)
+            except Exception:
+                ol_data = None
+        if isinstance(ol_data, dict) and ol_data.get('cover_url'):
+            ol_title = ol_data.get('title') or ''
+            ol_authors_list = ol_data.get('authors_list') or []
+            ol_published_date = ol_data.get('published_date') or ''
+            if not ol_authors_list and isinstance(ol_data.get('authors'), str):
+                ol_authors_list = [a.strip() for a in ol_data.get('authors', '').split(',') if a.strip()]
+            ol_url = normalize_cover_url(ol_data['cover_url']) or ol_data['cover_url']
+            if isinstance(ol_url, str) and ol_url.strip() and not _is_placeholder_candidate(ol_url, 'openlibrary'):
+                candidates.append({
+                    'provider': 'openlibrary',
+                    'size': 'L',
+                    'url': ol_url,
+                    'title': ol_title,
+                    'authors_list': ol_authors_list,
+                    'published_date': ol_published_date,
+                })
+    except Exception:
+        pass
     return candidates
 
 # USAGE INSTRUCTIONS:
@@ -666,7 +1599,7 @@ def fetch_book_data(isbn):
             cover_url = None
             for size in ['large', 'medium', 'small']:
                 if size in cover_data:
-                    cover_url = cover_data[size]
+                    cover_url = normalize_cover_url(cover_data[size])
                     break
             
             # Enhanced description handling
@@ -1256,279 +2189,286 @@ def search_multiple_books_by_title_author(title, author=None, limit=10):
 
 def _search_openlibrary_multiple(title, author=None, limit=10):
     """Internal function to search OpenLibrary (extracted from original function)."""
-    if not title:
+    title_str = '' if title is None else str(title).strip()
+    title_variants = iter_title_search_variants(title_str)
+    if not title_variants:
         print(f"[OPENLIBRARY] No title provided for book search")
         return []
-    
-    # Build search query
-    query_parts = [title]
-    if author:
-        query_parts.append(author)
-    
-    query = ' '.join(query_parts)
-    url = f"https://openlibrary.org/search.json?q={query}&limit={limit}"
-    
-    print(f"[OPENLIBRARY] Searching for multiple books: title='{title}', author='{author}' at {url}")
-    
-    try:
-        response = requests.get(url, timeout=15)
-        print(f"[OPENLIBRARY] Multiple book search response status: {response.status_code}")
-        
-        # Handle different response codes more gracefully
-        if response.status_code == 404:
-            print(f"[OPENLIBRARY] OpenLibrary API returned 404 for query: {query}")
-            return []
-        elif response.status_code != 200:
-            print(f"[OPENLIBRARY] OpenLibrary API returned {response.status_code}")
-            return []
-            
-        data = response.json()
-        
-        docs = data.get('docs', [])
-        if not docs:
-            print(f"[OPENLIBRARY] No search results found for '{title}' by '{author}'")
-            return []
-            
-        print(f"[OPENLIBRARY] Found {len(docs)} book search results")
-        
-        # Score matches based on title similarity and author match
-        scored_matches = []
-        
-        for i, doc in enumerate(docs):
-            doc_title = doc.get('title', '')
-            doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
-            doc_isbn = doc.get('isbn', [])
-            
-            # Get best ISBN (prefer 13-digit)
-            best_isbn = None
-            if doc_isbn:
-                for isbn in doc_isbn:
-                    if len(isbn) == 13:
-                        best_isbn = isbn
-                        break
-                if not best_isbn and doc_isbn:
-                    best_isbn = doc_isbn[0]
-            
-            print(f"[OPENLIBRARY] Result {i}: title='{doc_title}', authors={doc_authors}, isbn={best_isbn}")
-            
-            # Calculate match score
-            score = 0
-            
-            # Title similarity (basic)
-            if title.lower() in doc_title.lower() or doc_title.lower() in title.lower():
-                score += 50
-            if title.lower().strip() == doc_title.lower().strip():
-                score += 50  # Exact title match bonus
-            
-            # Author similarity
-            if author:
-                for doc_author in doc_authors:
-                    if doc_author and author.lower() in doc_author.lower():
-                        score += 30
-                    if doc_author and author.lower().strip() == doc_author.lower().strip():
-                        score += 20  # Exact author match bonus
-            
-            # Prefer results with ISBN
-            if best_isbn:
-                score += 10
-            
-            # Prefer more recent publications (if available)
-            if doc.get('first_publish_year'):
-                try:
-                    year = int(doc.get('first_publish_year'))
-                    if year > 1950:  # Reasonable cutoff
-                        score += min((year - 1950) // 10, 5)  # Up to 5 bonus points for newer books
-                except:
-                    pass
-            
-            # Build book data from search result
-            result = {
-                'title': doc_title,
-                'author': ', '.join(doc_authors) if doc_authors else '',
-                'authors_list': doc_authors,
-                'isbn': best_isbn,
-                'isbn13': best_isbn if best_isbn and len(best_isbn) == 13 else '',
-                'isbn10': best_isbn if best_isbn and len(best_isbn) == 10 else '',
-                'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
-                'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
-                'page_count': doc.get('number_of_pages_median'),
-                'cover': None,
-                'cover_url': None,
-                'description': '',  # Search results don't include descriptions
-                'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
-                'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None,
-                'categories': [],
-                'score': score
-            }
-            
-            # Try to get cover image if we have an OpenLibrary work ID
-            if result.get('openlibrary_id'):
-                cover_url = f"https://covers.openlibrary.org/w/id/{result['openlibrary_id']}-L.jpg"
-                try:
-                    cover_response = requests.head(cover_url, timeout=5)
-                    if cover_response.status_code == 200:
-                        result['cover'] = cover_url
-                        result['cover_url'] = cover_url
-                except:
-                    pass
-            
-            scored_matches.append(result)
-        
-        # Sort by score (highest first)
-        scored_matches.sort(key=lambda x: x['score'], reverse=True)
-        
-        print(f"[OPENLIBRARY] Returning {len(scored_matches)} book results")
-        return scored_matches
-        
-    except Exception as e:
-        print(f"[OPENLIBRARY] Failed to search for multiple books '{title}' by '{author}': {e}")
-        return []
+
+    for t_variant in title_variants:
+        if not t_variant:
+            continue
+
+        query_parts = [t_variant]
+        if author:
+            query_parts.append(author)
+
+        query = ' '.join(query_parts)
+        url = f"https://openlibrary.org/search.json?q={query}&limit={limit}"
+
+        print(f"[OPENLIBRARY] Searching for multiple books: title='{t_variant}', author='{author}' at {url}")
+
+        try:
+            response = requests.get(url, timeout=15)
+            print(f"[OPENLIBRARY] Multiple book search response status: {response.status_code}")
+
+            if response.status_code == 404:
+                print(f"[OPENLIBRARY] OpenLibrary API returned 404 for query: {query}")
+                continue
+            elif response.status_code != 200:
+                print(f"[OPENLIBRARY] OpenLibrary API returned {response.status_code}")
+                continue
+
+            data = response.json()
+
+            docs = data.get('docs', [])
+            if not docs:
+                continue
+
+            print(f"[OPENLIBRARY] Found {len(docs)} book search results")
+
+            scored_matches = []
+
+            for i, doc in enumerate(docs):
+                doc_title = doc.get('title', '')
+                doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
+                doc_isbn = doc.get('isbn', [])
+
+                best_isbn = None
+                if doc_isbn:
+                    for isbn in doc_isbn:
+                        if len(isbn) == 13:
+                            best_isbn = isbn
+                            break
+                    if not best_isbn and doc_isbn:
+                        best_isbn = doc_isbn[0]
+
+                print(f"[OPENLIBRARY] Result {i}: title='{doc_title}', authors={doc_authors}, isbn={best_isbn}")
+
+                score = 0
+
+                if t_variant.lower() in doc_title.lower() or doc_title.lower() in t_variant.lower():
+                    score += 50
+                if t_variant.lower().strip() == doc_title.lower().strip():
+                    score += 50
+
+                if author:
+                    for doc_author in doc_authors:
+                        if doc_author and author.lower() in doc_author.lower():
+                            score += 30
+                        if doc_author and author.lower().strip() == doc_author.lower().strip():
+                            score += 20
+
+                if best_isbn:
+                    score += 10
+
+                if doc.get('first_publish_year'):
+                    try:
+                        year = int(doc.get('first_publish_year'))
+                        if year > 1950:
+                            score += min((year - 1950) // 10, 5)
+                    except Exception:
+                        pass
+
+                result = {
+                    'title': doc_title,
+                    'author': ', '.join(doc_authors) if doc_authors else '',
+                    'authors_list': doc_authors,
+                    'isbn': best_isbn,
+                    'isbn13': best_isbn if best_isbn and len(best_isbn) == 13 else '',
+                    'isbn10': best_isbn if best_isbn and len(best_isbn) == 10 else '',
+                    'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                    'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                    'page_count': doc.get('number_of_pages_median'),
+                    'cover': None,
+                    'cover_url': None,
+                    'description': '',
+                    'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
+                    'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None,
+                    'categories': [],
+                    'score': score
+                }
+
+                cover_id = doc.get('cover_i')
+                if cover_id:
+                    cover_url = normalize_cover_url(f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg")
+                    try:
+                        if cover_url and _openlibrary_cover_exists(cover_url):
+                            result['cover'] = cover_url
+                            result['cover_url'] = cover_url
+                    except Exception:
+                        pass
+
+                scored_matches.append(result)
+
+            scored_matches.sort(key=lambda x: x['score'], reverse=True)
+            print(f"[OPENLIBRARY] Returning {len(scored_matches)} book results")
+            return scored_matches
+
+        except Exception as e:
+            print(f"[OPENLIBRARY] Failed to search for multiple books '{t_variant}' by '{author}': {e}")
+            continue
+
+    return []
 
 
 def search_book_by_title_author(title, author=None):
     """Search for books on OpenLibrary by title and optionally author, return the best match."""
-    if not title:
+    title_str = '' if title is None else str(title).strip()
+    title_variants = iter_title_search_variants(title_str)
+    if not title_variants:
         print(f"[OPENLIBRARY] No title provided for book search")
         return None
-    
-    # Build search query
-    query_parts = [title]
-    if author:
-        query_parts.append(author)
-    
-    query = ' '.join(query_parts)
-    url = f"https://openlibrary.org/search.json?q={query}&limit=10"
-    
-    print(f"[OPENLIBRARY] Searching for book: title='{title}', author='{author}' at {url}")
-    
-    try:
-        response = requests.get(url, timeout=15)
-        print(f"[OPENLIBRARY] Book search response status: {response.status_code}")
-        
-        # Handle different response codes more gracefully
-        if response.status_code == 404:
-            print(f"[OPENLIBRARY] OpenLibrary API returned 404 for query: {query}")
-            return None
-        elif response.status_code != 200:
-            print(f"[OPENLIBRARY] OpenLibrary API returned {response.status_code}")
-            return None
-            
-        data = response.json()
-        
-        docs = data.get('docs', [])
-        if not docs:
-            print(f"[OPENLIBRARY] No search results found for '{title}' by '{author}'")
-            return None
-            
-        print(f"[OPENLIBRARY] Found {len(docs)} book search results")
-        
-        # Score matches based on title similarity and author match
-        scored_matches = []
-        
-        for i, doc in enumerate(docs):
-            doc_title = doc.get('title', '')
-            doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
-            doc_isbn = doc.get('isbn', [])
-            
-            # Get best ISBN (prefer 13-digit)
-            best_isbn = None
-            if doc_isbn:
-                for isbn in doc_isbn:
-                    if len(isbn) == 13:
-                        best_isbn = isbn
-                        break
-                if not best_isbn and doc_isbn:
-                    best_isbn = doc_isbn[0]
-            
-            print(f"[OPENLIBRARY] Result {i}: title='{doc_title}', authors={doc_authors}, isbn={best_isbn}")
-            
-            # Calculate match score
-            score = 0
-            
-            # Title similarity (basic)
-            if title.lower() in doc_title.lower() or doc_title.lower() in title.lower():
-                score += 50
-            if title.lower().strip() == doc_title.lower().strip():
-                score += 50  # Exact title match bonus
-            
-            # Author similarity
-            if author:
-                for doc_author in doc_authors:
-                    if doc_author and author.lower() in doc_author.lower():
-                        score += 30
-                    if doc_author and author.lower().strip() == doc_author.lower().strip():
-                        score += 20  # Exact author match bonus
-            
-            # Prefer results with ISBN
-            if best_isbn:
-                score += 10
-            
-            # Prefer more recent publications (if available)
-            if doc.get('first_publish_year'):
-                try:
-                    year = int(doc.get('first_publish_year'))
-                    if year > 1950:  # Reasonable cutoff
-                        score += min((year - 1950) // 10, 5)  # Up to 5 bonus points for newer books
-                except:
-                    pass
-            
-            scored_matches.append({
-                'doc': doc,
-                'score': score,
-                'title': doc_title,
-                'authors': doc_authors,
-                'isbn': best_isbn
-            })
-        
-        # Sort by score (highest first)
-        scored_matches.sort(key=lambda x: x['score'], reverse=True)
-        
-        if scored_matches:
-            best_match = scored_matches[0]
-            print(f"[OPENLIBRARY] Best match: '{best_match['title']}' by {best_match['authors']} (score: {best_match['score']}, ISBN: {best_match['isbn']})")
-            
-            # If we have an ISBN, fetch full book data using existing function
-            if best_match['isbn']:
-                print(f"[OPENLIBRARY] Fetching full data using ISBN: {best_match['isbn']}")
-                full_data = fetch_book_data(best_match['isbn'])
-                if full_data:
-                    return full_data
-            
-            # Otherwise, build book data from search result
-            doc = best_match['doc']
-            result = {
-                'title': best_match['title'],
-                'author': ', '.join(best_match['authors']) if best_match['authors'] else '',
-                'authors_list': best_match['authors'],
-                'isbn': best_match['isbn'],
-                'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
-                'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
-                'page_count': doc.get('number_of_pages_median'),
-                'cover': None,  # Search results don't include cover URLs
-                'description': '',  # Search results don't include descriptions
-                'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
-                'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None
-            }
-            
-            # Try to get cover image if we have an OpenLibrary work ID
-            if result.get('openlibrary_id'):
-                cover_url = f"https://covers.openlibrary.org/w/id/{result['openlibrary_id']}-L.jpg"
-                try:
-                    cover_response = requests.head(cover_url, timeout=5)
-                    if cover_response.status_code == 200:
-                        result['cover'] = cover_url
-                        result['cover_url'] = cover_url
-                except:
-                    pass
-            
-            print(f"[OPENLIBRARY] Returning book data: {result}")
-            return result
-        
-    except Exception as e:
-        print(f"[OPENLIBRARY] Failed to search for book '{title}' by '{author}': {e}")
-        return None
-    
-    return None
+
+    best_fallback_result = None
+    best_fallback_score = None
+
+    for t_variant in title_variants:
+        if not t_variant:
+            continue
+
+        query_parts = [t_variant]
+        if author:
+            query_parts.append(author)
+
+        query = ' '.join(query_parts)
+        url = f"https://openlibrary.org/search.json?q={query}&limit=10"
+
+        print(f"[OPENLIBRARY] Searching for book: title='{t_variant}', author='{author}' at {url}")
+
+        try:
+            response = requests.get(url, timeout=15)
+            print(f"[OPENLIBRARY] Book search response status: {response.status_code}")
+
+            if response.status_code == 404:
+                print(f"[OPENLIBRARY] OpenLibrary API returned 404 for query: {query}")
+                continue
+            elif response.status_code != 200:
+                print(f"[OPENLIBRARY] OpenLibrary API returned {response.status_code}")
+                continue
+
+            data = response.json()
+
+            docs = data.get('docs', [])
+            if not docs:
+                continue
+
+            print(f"[OPENLIBRARY] Found {len(docs)} book search results")
+
+            scored_matches = []
+
+            for i, doc in enumerate(docs):
+                doc_title = doc.get('title', '')
+                doc_authors = doc.get('author_name', []) if isinstance(doc.get('author_name'), list) else [doc.get('author_name', '')]
+                doc_isbn = doc.get('isbn', [])
+
+                best_isbn = None
+                if doc_isbn:
+                    for isbn in doc_isbn:
+                        if len(isbn) == 13:
+                            best_isbn = isbn
+                            break
+                    if not best_isbn and doc_isbn:
+                        best_isbn = doc_isbn[0]
+
+                print(f"[OPENLIBRARY] Result {i}: title='{doc_title}', authors={doc_authors}, isbn={best_isbn}")
+
+                score = 0
+
+                if t_variant.lower() in doc_title.lower() or doc_title.lower() in t_variant.lower():
+                    score += 50
+                if t_variant.lower().strip() == doc_title.lower().strip():
+                    score += 50
+
+                if author:
+                    for doc_author in doc_authors:
+                        if doc_author and author.lower() in doc_author.lower():
+                            score += 30
+                        if doc_author and author.lower().strip() == doc_author.lower().strip():
+                            score += 20
+
+                if best_isbn:
+                    score += 10
+
+                if doc.get('first_publish_year'):
+                    try:
+                        year = int(doc.get('first_publish_year'))
+                        if year > 1950:
+                            score += min((year - 1950) // 10, 5)
+                    except Exception:
+                        pass
+
+                scored_matches.append({
+                    'doc': doc,
+                    'score': score,
+                    'title': doc_title,
+                    'authors': doc_authors,
+                    'isbn': best_isbn
+                })
+
+            scored_matches.sort(key=lambda x: x['score'], reverse=True)
+
+            if scored_matches:
+                # Prefer candidates that can yield full metadata (ISBN) or at least a cover.
+                for candidate in scored_matches[:3]:
+                    print(f"[OPENLIBRARY] Best match: '{candidate['title']}' by {candidate['authors']} (score: {candidate['score']}, ISBN: {candidate['isbn']})")
+
+                    if candidate['isbn']:
+                        print(f"[OPENLIBRARY] Fetching full data using ISBN: {candidate['isbn']}")
+                        full_data = fetch_book_data(candidate['isbn'])
+                        if full_data:
+                            return full_data
+
+                    doc = candidate['doc']
+                    cover_id = doc.get('cover_i')
+                    if cover_id:
+                        result = {
+                            'title': candidate['title'],
+                            'author': ', '.join(candidate['authors']) if candidate['authors'] else '',
+                            'authors_list': candidate['authors'],
+                            'isbn': candidate['isbn'],
+                            'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                            'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                            'page_count': doc.get('number_of_pages_median'),
+                            'cover': None,
+                            'description': '',
+                            'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
+                            'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None
+                        }
+                        cover_url = normalize_cover_url(f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg")
+                        try:
+                            if cover_url and _openlibrary_cover_exists(cover_url):
+                                result['cover'] = cover_url
+                                result['cover_url'] = cover_url
+                                print(f"[OPENLIBRARY] Returning book data: {result}")
+                                return result
+                        except Exception:
+                            pass
+
+                # Keep the best result as a fallback, but continue to next title variant.
+                best_match = scored_matches[0]
+                if best_fallback_result is None or (best_fallback_score is None) or (best_match.get('score', 0) > best_fallback_score):
+                    doc = best_match['doc']
+                    best_fallback_score = best_match.get('score', 0)
+                    best_fallback_result = {
+                        'title': best_match['title'],
+                        'author': ', '.join(best_match['authors']) if best_match['authors'] else '',
+                        'authors_list': best_match['authors'],
+                        'isbn': best_match['isbn'],
+                        'publisher': ', '.join(doc.get('publisher', [])) if isinstance(doc.get('publisher'), list) else doc.get('publisher', ''),
+                        'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                        'page_count': doc.get('number_of_pages_median'),
+                        'cover': None,
+                        'description': '',
+                        'language': doc.get('language', [''])[0] if doc.get('language') else 'en',
+                        'openlibrary_id': doc.get('key', '').replace('/works/', '') if doc.get('key') else None
+                    }
+
+        except Exception as e:
+            print(f"[OPENLIBRARY] Failed to search for book '{t_variant}' by '{author}': {e}")
+            continue
+
+    return best_fallback_result
 
 
 def search_google_books_by_title_author(title, author=None, limit=10):
@@ -1539,115 +2479,133 @@ def search_google_books_by_title_author(title, author=None, limit=10):
         or (_os.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
         or (_os.getenv('COVER_VERBOSE') or 'false').lower() == 'true'
     )
-    if not title:
+    title_str = '' if title is None else str(title).strip()
+    title_variants = iter_title_search_variants(title_str)
+    if not title_variants:
         if _VERBOSE:
             print(f"[GOOGLE_BOOKS] No title provided for book search")
         return []
-    
-    # Build search query for Google Books
-    query_parts = [f'intitle:"{title}"']
-    if author:
-        query_parts.append(f'inauthor:"{author}"')
-    
-    query = '+'.join(query_parts)
-    url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={min(limit, 40)}"
-    
-    if _VERBOSE:
-        print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{title}', author='{author}' at {url}")
-    
-    try:
-        response = requests.get(url, timeout=10)
-        if _VERBOSE:
-            print(f"[GOOGLE_BOOKS] Multiple book search response status: {response.status_code}")
-        
-        if response.status_code != 200:
-            if _VERBOSE:
-                print(f"[GOOGLE_BOOKS] Google Books API returned {response.status_code}")
-            return []
-            
-        data = response.json()
-        
-        items = data.get('items', [])
-        if not items:
-            if _VERBOSE:
-                print(f"[GOOGLE_BOOKS] No search results found for '{title}' by '{author}'")
-            return []
-            
-        if _VERBOSE:
-            print(f"[GOOGLE_BOOKS] Found {len(items)} book search results")
 
-        
-        from .book_utils import select_highest_google_image, upgrade_google_cover_url as _upgrade
-        results = []
-        for i, item in enumerate(items):
-            try:
-                volume_info = item.get('volumeInfo', {})
-                
-                book_title = volume_info.get('title', '')
-                book_authors = volume_info.get('authors', [])
-                book_description = volume_info.get('description', '')
-                book_publisher = volume_info.get('publisher', '')
-                book_published_date = volume_info.get('publishedDate', '')
-                book_page_count = volume_info.get('pageCount', 0)
-                book_language = volume_info.get('language', 'en')
-                book_categories = volume_info.get('categories', [])
-                
-                # Get ISBNs
-                isbn13 = None
-                isbn10 = None
-                industry_identifiers = volume_info.get('industryIdentifiers', [])
-                for identifier in industry_identifiers:
-                    if identifier.get('type') == 'ISBN_13':
-                        isbn13 = identifier.get('identifier')
-                    elif identifier.get('type') == 'ISBN_10':
-                        isbn10 = identifier.get('identifier')
-                
-                # Get cover image
-                image_links = volume_info.get('imageLinks', {}) or {}
-                raw_cover = select_highest_google_image(image_links)
-                cover_url = _upgrade(raw_cover) if raw_cover else None
-                
-                result = {
-                    'title': book_title,
-                    'author': ', '.join(book_authors) if book_authors else '',
-                    'authors_list': book_authors,
-                    'description': book_description,
-                    'publisher': book_publisher,
-                    'published_date': book_published_date,
-                    'page_count': book_page_count,
-                    'isbn13': isbn13,
-                    'isbn10': isbn10,
-                    'isbn': isbn13 or isbn10,  # Prefer ISBN13
-                    'cover_url': cover_url,
-                    'cover': cover_url,
-                    'language': book_language,
-                    'categories': book_categories,
-                    'google_books_id': item.get('id'),
-                    'source': 'Google Books'
-                }
-                
+    cached = _google_title_cache_get(title_variants[0], author)
+    if cached is not None:
+        return cached[:limit]
+
+    # Always fetch more than the desired limit because Google can return "stub" items
+    # (e.g. empty titles) early in the list; we filter and then truncate.
+    try:
+        fetch_n = min(max(int(limit) * 5, 10), 40)
+    except Exception:
+        fetch_n = 10
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (compatible; MyBibliotheca/1.0)',
+        'Accept': 'application/json',
+    }
+
+    _upgrade = upgrade_google_cover_url
+    for t_variant in title_variants:
+        safe_title = str(t_variant).replace('"', '')
+        query_parts = [f'intitle:"{safe_title}"']
+        if author:
+            safe_author = str(author).replace('"', '')
+            query_parts.append(f'inauthor:"{safe_author}"')
+        query = '+'.join(query_parts)
+        url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={fetch_n}"
+
+        if _VERBOSE:
+            print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{t_variant}', author='{author}' at {url}")
+
+        try:
+            response = None
+            for attempt in range(2):
+                try:
+                    response = requests.get(url, timeout=10, headers=headers)
+                except Exception:
+                    response = None
+                code = getattr(response, 'status_code', 0) if response is not None else 0
+                if code in (429, 500, 502, 503, 504) or code == 0:
+                    try:
+                        import time as _t
+                        _t.sleep(0.5 * (attempt + 1))
+                    except Exception:
+                        pass
+                    continue
+                break
+
+            if response is None:
+                continue
+            if response.status_code != 200:
                 if _VERBOSE:
-                    print(f"[GOOGLE_BOOKS] Result {i}: title='{book_title}', authors={book_authors}, isbn={isbn13 or isbn10}")
-                
-                # Only add if we have at least a title
-                if result['title']:
-                    results.append(result)
-                
-                # Limit results
-                if len(results) >= limit:
-                    break
-                    
-            except Exception as item_error:
-                if _VERBOSE:
-                    print(f"[GOOGLE_BOOKS] Error processing item {i}: {item_error}")
+                    print(f"[GOOGLE_BOOKS] Google Books API returned {response.status_code}")
                 continue
 
-        if _VERBOSE:
-            print(f"[GOOGLE_BOOKS] Returning {len(results)} valid results")
-        return results
+            data = response.json()
+            items = data.get('items', [])
+            if not items:
+                continue
 
-    except Exception as e:
-        # Ensure _VERBOSE defined
-        if _VERBOSE:
-            print(f"[GOOGLE_BOOKS] Failed to search for book '{title}' by '{author}': {e}")
-        return []
+            results = []
+            for i, item in enumerate(items):
+                try:
+                    volume_info = item.get('volumeInfo', {})
+
+                    book_title = volume_info.get('title', '')
+                    book_authors = volume_info.get('authors', [])
+                    book_description = volume_info.get('description', '')
+                    book_publisher = volume_info.get('publisher', '')
+                    book_published_date = volume_info.get('publishedDate', '')
+                    book_page_count = volume_info.get('pageCount', 0)
+                    book_language = volume_info.get('language', 'en')
+                    book_categories = volume_info.get('categories', [])
+
+                    isbn13 = None
+                    isbn10 = None
+                    industry_identifiers = volume_info.get('industryIdentifiers', [])
+                    for identifier in industry_identifiers:
+                        if identifier.get('type') == 'ISBN_13':
+                            isbn13 = identifier.get('identifier')
+                        elif identifier.get('type') == 'ISBN_10':
+                            isbn10 = identifier.get('identifier')
+
+                    image_links = volume_info.get('imageLinks', {}) or {}
+                    raw_cover = select_highest_google_image(image_links)
+                    cover_url = _upgrade(raw_cover) if raw_cover else None
+
+                    result = {
+                        'title': book_title,
+                        'author': ', '.join(book_authors) if book_authors else '',
+                        'authors_list': book_authors,
+                        'description': book_description,
+                        'publisher': book_publisher,
+                        'published_date': book_published_date,
+                        'page_count': book_page_count,
+                        'isbn13': isbn13,
+                        'isbn10': isbn10,
+                        'isbn': isbn13 or isbn10,
+                        'cover_url': cover_url,
+                        'cover': cover_url,
+                        'language': book_language,
+                        'categories': book_categories,
+                        'google_books_id': item.get('id'),
+                        'source': 'Google Books'
+                    }
+
+                    if result['title']:
+                        results.append(result)
+                    if len(results) >= limit:
+                        break
+                except Exception as item_error:
+                    if _VERBOSE:
+                        print(f"[GOOGLE_BOOKS] Error processing item {i}: {item_error}")
+                    continue
+
+            if results:
+                _google_title_cache_set(title_variants[0], author, results)
+                return results[:limit]
+
+        except Exception as e:
+            if _VERBOSE:
+                print(f"[GOOGLE_BOOKS] Failed variant search for '{t_variant}' by '{author}': {e}")
+            continue
+
+    return []

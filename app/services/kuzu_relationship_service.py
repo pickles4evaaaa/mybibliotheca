@@ -230,7 +230,7 @@ class KuzuRelationshipService:
                         custom_blob = json.loads(custom_blob)
                     for k, v in custom_blob.items():
                         # Promote known keys; keep others as custom_*
-                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
+                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage', 'needs_review'] and v not in (None, ''):
                             combined[k] = v
                 except Exception:
                     pass
@@ -254,6 +254,8 @@ class KuzuRelationshipService:
         # Optional progress fields for UI hints
         setattr(book, 'progress_ms', combined.get('progress_ms'))
         setattr(book, 'last_listened_at', combined.get('last_listened_at'))
+        # Custom import QC flag: rows imported without ISBN are tagged Needs Review
+        setattr(book, 'needs_review', combined.get('needs_review'))
         # Expose progress percentage if present
         if 'progress_percentage' in combined:
             setattr(book, 'progress_percentage', combined.get('progress_percentage'))
@@ -769,7 +771,7 @@ class KuzuRelationshipService:
                             break
 
                     # Accept direct fields if present
-                    for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
+                    for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date', 'needs_review']:
                         if key in personal_meta and personal_meta[key] not in (None, ''):
                             book_dict[key] = personal_meta[key]
 
@@ -782,7 +784,7 @@ class KuzuRelationshipService:
                                 custom_blob = json.loads(custom_blob)
                             if isinstance(custom_blob, dict):
                                 for k, v in custom_blob.items():
-                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
+                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage', 'needs_review'] and v not in (None, ''):
                                         book_dict[k] = v
                         except Exception:
                             pass
@@ -909,7 +911,7 @@ class KuzuRelationshipService:
                             personal_meta = merged
                             break
 
-                    for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
+                    for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date', 'needs_review']:
                         if key in personal_meta and personal_meta[key] not in (None, ''):
                             book_dict[key] = personal_meta[key]
 
@@ -921,7 +923,7 @@ class KuzuRelationshipService:
                                 custom_blob = json.loads(custom_blob)
                             if isinstance(custom_blob, dict):
                                 for k, v in custom_blob.items():
-                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
+                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage', 'needs_review'] and v not in (None, ''):
                                         book_dict[k] = v
                         except Exception:
                             pass

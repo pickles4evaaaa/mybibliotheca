@@ -96,6 +96,14 @@
                             <button type="button" class="btn btn-outline-secondary action-icon-btn" id="metadataSearchBtn" title="Search Metadata">
                                 <i class="bi bi-upc-scan"></i>
                             </button>
+                            {% if book.needs_review %}
+                            <form method="post" action="{{ url_for('book.clear_needs_review', uid=book.uid) }}" class="d-inline" onsubmit="return confirm('Clear the Needs Review flag for this book?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <button type="submit" class="btn btn-outline-warning action-icon-btn" title="Clear Needs Review">
+                                    <i class="bi bi-flag-fill"></i>
+                                </button>
+                            </form>
+                            {% endif %}
                             <form method="post" action="{{ url_for('book.delete_book', uid=book.uid) }}" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this book? This action cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" class="btn btn-outline-danger action-icon-btn" title="Delete Book">
@@ -124,7 +132,19 @@
                             <!-- View Mode -->
                             <div class="view-mode">
                                 <!-- Title & Subtitle -->
-                                <h1 class="h2 mb-2 fw-bold">{{ book.title }}</h1>
+                                <div class="d-flex align-items-start justify-content-between gap-3">
+                                    <div>
+                                        <h1 class="h2 mb-2 fw-bold">{{ book.title }}</h1>
+                                        {% if book.needs_review %}
+                                        <div class="mb-2">
+                                            <span class="badge bg-warning text-dark">
+                                                <i class="bi bi-flag-fill me-1"></i>Needs Review
+                                            </span>
+                                            <span class="text-muted small ms-2">Use the flag button in the top-right to clear.</span>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
                                 {% if book.subtitle %}
                                     <h2 class="h5 text-muted mb-3">{{ book.subtitle }}</h2>
                                 {% endif %}
@@ -464,6 +484,7 @@
                             <div class="edit-mode" style="display: none;">
                                 <form id="book-edit-form" method="post" action="{{ url_for('book.edit_book', uid=book.uid) }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    <input type="hidden" name="clear_needs_review" id="clear-needs-review" value="0"/>
                                     
                                     <!-- Title -->
                                     <div class="mb-3">
@@ -2386,7 +2407,7 @@ function showCoverEditOptions() {
         if (searchTitleBtn) {
             searchTitleBtn.addEventListener('click', function() {
                 // Don't remove dropdown yet so we can show loading state on the button
-                fetchCoverFromAPI(`${title} ${author}`, 'title');
+                fetchCoverFromAPI({ title, author }, 'title');
             });
         }
     }
@@ -2408,6 +2429,73 @@ function showCoverEditOptions() {
     });
 }
 
+function fetchCoverCandidatesFast(params, modalCtx) {
+    const ctx = modalCtx || ensureCoverSelectionModal();
+    const isbn = params && params.isbn ? String(params.isbn).trim() : '';
+    const title = params && params.title ? String(params.title).trim() : '';
+    const author = params && params.author ? String(params.author).trim() : '';
+
+    ctx.clearOptions();
+    ctx.setLoadMoreVisible(false);
+    ctx.setStatus('Searching cover options…');
+    ctx.setLoading(true);
+
+    let endpoint = `{{ url_for('book.cover_candidates') }}?fast=1`;
+    if (isbn) endpoint += `&isbn=${encodeURIComponent(isbn)}`;
+    if (title) endpoint += `&title=${encodeURIComponent(title)}`;
+    if (author) endpoint += `&author=${encodeURIComponent(author)}`;
+
+    return fetch(endpoint, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: {
+            'Accept': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+        .then(async (response) => {
+            const contentType = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
+            if (!response.ok) {
+                let message = `HTTP error! status: ${response.status}`;
+                if (contentType.includes('application/json')) {
+                    try {
+                        const body = await response.json();
+                        message = (body && (body.message || body.error)) ? (body.message || body.error) : message;
+                    } catch (e) {}
+                }
+                const err = new Error(message);
+                err.status = response.status;
+                throw err;
+            }
+            if (!contentType.includes('application/json')) {
+                const err = new Error('Unexpected response type');
+                err.status = response.status;
+                throw err;
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data && data.success && Array.isArray(data.results) && data.results.length > 0) {
+                showCoverSelectionModalProgressive(data.results);
+            } else {
+                const message = (data && data.message) ? data.message : 'No cover options found.';
+                ctx.setLoading(false);
+                ctx.setStatus(message);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching cover:', error);
+            ctx.setLoading(false);
+            const status = (error && typeof error.status === 'number') ? error.status : null;
+            if (status === 401) {
+                ctx.setStatus('Your session has expired. Refresh the page and try again.');
+            } else {
+                const msg = (error && error.message) ? String(error.message) : '';
+                ctx.setStatus(msg ? `Failed to fetch cover options: ${msg}` : 'Failed to fetch cover options. Please try again.');
+            }
+        });
+}
+
 function fetchCoverFromAPI(query, type) {
     const fetchBtn = type === 'isbn' ? document.getElementById('searchByISBN') : document.getElementById('searchByTitle');
     let originalText = '';
@@ -2419,72 +2507,484 @@ function fetchCoverFromAPI(query, type) {
         fetchBtn.disabled = true;
     }
     
-    let endpoint;
-    let fetchOptions = {
-        method: 'GET'
-    };
+    // Open the modal immediately in a loading state (progressive UX).
+    const modalCtx = ensureCoverSelectionModal();
+
+    // Prefill modal search inputs so the user can tweak and retry.
+    try {
+        const ctxTitle = (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title) ? String(BOOK_METADATA_CONTEXT.title) : '';
+        const ctxAuthor = (() => {
+            if (!BOOK_METADATA_CONTEXT) return '';
+            if (BOOK_METADATA_CONTEXT.primary_author) return String(BOOK_METADATA_CONTEXT.primary_author);
+            const parts = Array.isArray(BOOK_METADATA_CONTEXT.authors) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
+            return parts.join(', ');
+        })();
+        modalCtx.setSearchValues(ctxTitle, ctxAuthor);
+    } catch (e) {}
     
     if (type === 'isbn') {
-        // Use new cover candidates endpoint for richer selection when searching by ISBN
         const cleanIsbn = String(query || '').replace(/[^0-9Xx]/g, '');
-        endpoint = `{{ url_for('book.cover_candidates') }}?isbn=${cleanIsbn}`;
+        const title = (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title) ? String(BOOK_METADATA_CONTEXT.title) : '';
+        const author = (() => {
+            if (!BOOK_METADATA_CONTEXT) return '';
+            if (BOOK_METADATA_CONTEXT.primary_author) return String(BOOK_METADATA_CONTEXT.primary_author);
+            const parts = Array.isArray(BOOK_METADATA_CONTEXT.authors) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
+            return parts.join(', ');
+        })();
+        fetchCoverCandidatesFast({ isbn: cleanIsbn, title, author }, modalCtx)
+            .finally(() => {
+                if (fetchBtn) {
+                    fetchBtn.innerHTML = originalText;
+                    fetchBtn.disabled = false;
+                }
+                const dropdown = document.getElementById('coverEditDropdown');
+                if (dropdown) dropdown.remove();
+            });
+        return;
     } else {
-        // For title/author searches, use the search_book_details endpoint
-        endpoint = `{{ url_for('book.search_book_details') }}`;
-        fetchOptions = {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': '{{ csrf_token() }}'
-            },
-            body: JSON.stringify({
-                'title': '{{ book.title|e }}',
-                'author': '{{ (book.authors[0].name if book.authors else "")|e }}'
-            })
-        };
+        // Title/author cover search uses cover candidates directly (same flow as ISBN).
+        const title = (query && typeof query === 'object' && query.title) ? String(query.title) : ((BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title) ? String(BOOK_METADATA_CONTEXT.title) : '');
+        const author = (query && typeof query === 'object' && query.author) ? String(query.author) : (() => {
+            if (!BOOK_METADATA_CONTEXT) return '';
+            if (BOOK_METADATA_CONTEXT.primary_author) return String(BOOK_METADATA_CONTEXT.primary_author);
+            const parts = Array.isArray(BOOK_METADATA_CONTEXT.authors) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
+            return parts.join(', ');
+        })();
+
+        modalCtx.setSearchValues(title, author);
+        fetchCoverCandidatesFast({ title, author }, modalCtx)
+            .finally(() => {
+                if (fetchBtn) {
+                    fetchBtn.innerHTML = originalText;
+                    fetchBtn.disabled = false;
+                }
+                const dropdown = document.getElementById('coverEditDropdown');
+                if (dropdown) dropdown.remove();
+            });
+        return;
     }
-    
-    fetch(endpoint, fetchOptions)
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            // For both paths now, prefer showing a selection modal with candidates
-            if (data && data.success && Array.isArray(data.results) && data.results.length > 0) {
-                showCoverSelectionModal(data.results);
-            } else {
-                const message = (data && data.message) ? data.message : (type === 'isbn' ? 'No cover image found for this ISBN.' : 'No cover options found for this book.');
-                alert(message);
-            }
-        })
-        .catch(error => {
-            console.error('Error fetching cover:', error);
-            alert('Failed to fetch cover image. Please try again.');
-        })
-        .finally(() => {
-            // Restore button state
-            if (fetchBtn) {
-                fetchBtn.innerHTML = originalText;
-                fetchBtn.disabled = false;
-            }
-            // Close dropdown if it exists
-            const dropdown = document.getElementById('coverEditDropdown');
-            if (dropdown) {
-                dropdown.remove();
-            }
-        });
 }
 
-function applyCoverUrl(coverUrl) {
+function ensureCoverSelectionModal() {
+    const existing = document.getElementById('coverSelectionModal');
+    if (existing) {
+        const modal = bootstrap.Modal.getOrCreateInstance(existing);
+        modal.show();
+        // Ensure in-modal search handlers are bound.
+        try {
+            const btn = document.getElementById('coverSearchBtn');
+            if (btn && btn.dataset.bound !== '1') {
+                btn.dataset.bound = '1';
+                const runSearch = () => {
+                    const title = (document.getElementById('coverSearchTitle')?.value || '').trim();
+                    const author = (document.getElementById('coverSearchAuthor')?.value || '').trim();
+                    fetchCoverCandidatesFast({ title, author }, ensureCoverSelectionModal());
+                };
+                btn.addEventListener('click', (e) => { e.preventDefault(); runSearch(); });
+                const t = document.getElementById('coverSearchTitle');
+                const a = document.getElementById('coverSearchAuthor');
+                const onKey = (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        runSearch();
+                    }
+                };
+                if (t) t.addEventListener('keydown', onKey);
+                if (a) a.addEventListener('keydown', onKey);
+            }
+        } catch (e) {}
+        return {
+            modal,
+            optionsEl: document.getElementById('coverOptions'),
+            statusEl: document.getElementById('coverSelectionStatus'),
+            loadingEl: document.getElementById('coverSelectionLoading'),
+            loadMoreBtn: document.getElementById('coverLoadMoreBtn'),
+            searchTitleEl: document.getElementById('coverSearchTitle'),
+            searchAuthorEl: document.getElementById('coverSearchAuthor'),
+            searchBtn: document.getElementById('coverSearchBtn'),
+            clearOptions() {
+                const el = document.getElementById('coverOptions');
+                if (el) el.innerHTML = '';
+            },
+            setLoading(isLoading) {
+                const el = document.getElementById('coverSelectionLoading');
+                if (!el) return;
+                // Bootstrap's `d-flex` uses `display:flex !important`, so plain
+                // `el.style.display = 'none'` won't reliably hide it.
+                try {
+                    el.style.setProperty('display', isLoading ? 'flex' : 'none', 'important');
+                } catch (e) {
+                    el.style.display = isLoading ? 'flex' : 'none';
+                }
+            },
+            setStatus(text) {
+                const el = document.getElementById('coverSelectionStatus');
+                if (el) el.textContent = text || '';
+            },
+            setLoadMoreVisible(isVisible, label) {
+                const btn = document.getElementById('coverLoadMoreBtn');
+                if (!btn) return;
+                btn.style.display = isVisible ? '' : 'none';
+                if (label) btn.innerHTML = `<i class="bi bi-plus-circle me-1"></i>${String(label)}`;
+            },
+            setSearchValues(title, author) {
+                try {
+                    const t = document.getElementById('coverSearchTitle');
+                    const a = document.getElementById('coverSearchAuthor');
+                    if (t) t.value = title || '';
+                    if (a) a.value = author || '';
+                } catch (e) {}
+            }
+        };
+    }
+
+    const modalHTML = `
+        <div class="modal fade" id="coverSelectionModal" tabindex="-1" aria-labelledby="coverSelectionModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="coverSelectionModalLabel">
+                            <i class="bi bi-images me-2"></i>Select Cover Image
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-2">Choose a cover image from the search results:</p>
+                        <div class="row g-2 align-items-end mb-3" id="coverSearchBar">
+                            <div class="col-md-5">
+                                <label class="form-label mb-1 small text-muted" for="coverSearchTitle">Title</label>
+                                <input type="text" class="form-control form-control-sm" id="coverSearchTitle" placeholder="Title">
+                            </div>
+                            <div class="col-md-5">
+                                <label class="form-label mb-1 small text-muted" for="coverSearchAuthor">Author</label>
+                                <input type="text" class="form-control form-control-sm" id="coverSearchAuthor" placeholder="Author">
+                            </div>
+                            <div class="col-md-2 d-grid">
+                                <button type="button" class="btn btn-sm btn-primary" id="coverSearchBtn">
+                                    <i class="bi bi-search me-1"></i>Search
+                                </button>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 mb-3" id="coverSelectionLoading" style="display:none;">
+                            <div class="spinner-border spinner-border-sm text-secondary" role="status" aria-hidden="true"></div>
+                            <div class="text-muted small">Loading…</div>
+                        </div>
+                        <div class="text-muted small mb-3" id="coverSelectionStatus"></div>
+                        <div class="row g-3" id="coverOptions"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-primary" id="coverLoadMoreBtn" style="display:none;">
+                            <i class="bi bi-plus-circle me-1"></i>Load more
+                        </button>
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    const modal = new bootstrap.Modal(document.getElementById('coverSelectionModal'));
+    modal.show();
+
+    // Wire up in-modal title/author search (avoid double-binding).
+    try {
+        const btn = document.getElementById('coverSearchBtn');
+        if (btn && btn.dataset.bound !== '1') {
+            btn.dataset.bound = '1';
+            const runSearch = () => {
+                const title = (document.getElementById('coverSearchTitle')?.value || '').trim();
+                const author = (document.getElementById('coverSearchAuthor')?.value || '').trim();
+                fetchCoverCandidatesFast({ title, author }, ensureCoverSelectionModal());
+            };
+            btn.addEventListener('click', (e) => { e.preventDefault(); runSearch(); });
+            const t = document.getElementById('coverSearchTitle');
+            const a = document.getElementById('coverSearchAuthor');
+            const onKey = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    runSearch();
+                }
+            };
+            if (t) t.addEventListener('keydown', onKey);
+            if (a) a.addEventListener('keydown', onKey);
+        }
+    } catch (e) {}
+
+    return {
+        modal,
+        optionsEl: document.getElementById('coverOptions'),
+        statusEl: document.getElementById('coverSelectionStatus'),
+        loadingEl: document.getElementById('coverSelectionLoading'),
+        loadMoreBtn: document.getElementById('coverLoadMoreBtn'),
+        clearOptions() {
+            const el = document.getElementById('coverOptions');
+            if (el) el.innerHTML = '';
+        },
+        setLoading(isLoading) {
+            const el = document.getElementById('coverSelectionLoading');
+            if (!el) return;
+            // Bootstrap's `d-flex` uses `display:flex !important`, so plain
+            // `el.style.display = 'none'` won't reliably hide it.
+            try {
+                el.style.setProperty('display', isLoading ? 'flex' : 'none', 'important');
+            } catch (e) {
+                el.style.display = isLoading ? 'flex' : 'none';
+            }
+        },
+        setStatus(text) {
+            const el = document.getElementById('coverSelectionStatus');
+            if (el) el.textContent = text || '';
+        },
+        setLoadMoreVisible(visible, labelText) {
+            const btn = document.getElementById('coverLoadMoreBtn');
+            if (!btn) return;
+            btn.style.display = visible ? '' : 'none';
+            if (labelText) btn.innerHTML = `<i class="bi bi-plus-circle me-1"></i>${labelText}`;
+        },
+        setSearchValues(title, author) {
+            try {
+                const t = document.getElementById('coverSearchTitle');
+                const a = document.getElementById('coverSearchAuthor');
+                if (t) t.value = title || '';
+                if (a) a.value = author || '';
+            } catch (e) {}
+        }
+    };
+}
+
+function showCoverSelectionModalProgressive(results) {
+    const modalCtx = ensureCoverSelectionModal();
+    modalCtx.clearOptions();
+    modalCtx.setLoading(false);
+    modalCtx.setStatus('');
+    modalCtx.setLoadMoreVisible(false);
+
+    // Cheap client-side filtering of obvious URL markers.
+    const resultsWithCovers = (Array.isArray(results) ? results : []).filter(result => {
+        if (!result || !result.cover_url || String(result.cover_url).trim() === '') return false;
+        const url = String(result.cover_url).toLowerCase();
+        if (url.includes('placeholder') || url.includes('no-image') || url.includes('not-available') || url.includes('default.jpg') || url.includes('missing.jpg')) {
+            return false;
+        }
+        return true;
+    });
+
+    if (resultsWithCovers.length === 0) {
+        modalCtx.setStatus('No cover images found in the search results.');
+        return;
+    }
+
+    // Order candidates: first show up to 2 (one per provider), then the rest.
+    const byProvider = {};
+    resultsWithCovers.forEach(r => {
+        const p = (r && r.source) ? String(r.source).toLowerCase() : 'unknown';
+        if (!byProvider[p]) byProvider[p] = [];
+        byProvider[p].push(r);
+    });
+    const ordered = [];
+    if (byProvider.google && byProvider.google.length) ordered.push(byProvider.google.shift());
+    if (byProvider.openlibrary && byProvider.openlibrary.length) ordered.push(byProvider.openlibrary.shift());
+    Object.keys(byProvider).forEach(k => {
+        byProvider[k].forEach(r => ordered.push(r));
+    });
+
+    // Save state for load-more.
+    window.__coverModalState = {
+        ordered,
+        nextIndex: 0,
+    };
+
+    const renderNextBatch = (batchSize) => {
+        const state = window.__coverModalState;
+        if (!state || !Array.isArray(state.ordered)) return;
+        const start = state.nextIndex;
+        const end = Math.min(state.ordered.length, start + batchSize);
+        for (let i = start; i < end; i++) {
+            appendCoverOptionCard(state.ordered[i], i);
+        }
+        // As soon as we have rendered any cards, hide the loading indicator.
+        // (Images may be cached and not fire load events after listeners attach.)
+        if (end > start) {
+            try { modalCtx.setLoading(false); } catch (e) {}
+        }
+        const newlyRendered = state.ordered.slice(start, end);
+        state.nextIndex = end;
+        // Validate only the newly rendered items.
+        validateCoverCandidatesProgressively(newlyRendered);
+
+        const remaining = state.ordered.length - state.nextIndex;
+        if (remaining > 0) {
+            modalCtx.setLoadMoreVisible(true, `Load more (${remaining} left)`);
+        } else {
+            modalCtx.setLoadMoreVisible(false);
+        }
+    };
+
+    // Render initial 2 (or fewer if not available).
+    renderNextBatch(2);
+
+    // Wire up load-more button.
+    const btn = document.getElementById('coverLoadMoreBtn');
+    if (btn) {
+        btn.onclick = (e) => {
+            e.preventDefault();
+            renderNextBatch(6);
+        };
+    }
+}
+
+function appendCoverOptionCard(result, index) {
+    const container = document.getElementById('coverOptions');
+    if (!container) return;
+
+    const title = (result.title || 'Unknown Title').toString().replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const authors = (result.authors_list ? result.authors_list.join(', ') : (result.authors || 'Unknown Author')).toString().replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const publishedDate = (result.published_date || '').toString().replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const coverUrl = String(result.cover_url).replace(/"/g, '&quot;');
+    const sourceLabel = (result.source || 'Unknown').toString().replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const provider = (result.source || '').toString();
+
+    const cardId = `cover-option-${index}-${Math.random().toString(16).slice(2)}`;
+
+    const html = `
+        <div class="col-md-4 col-sm-6" id="${cardId}">
+            <div class="card h-100 cover-option" data-cover-url="${coverUrl}" data-provider="${provider}" style="cursor: pointer;">
+                <div class="card-img-top d-flex align-items-center justify-content-center position-relative" style="height: 250px; background-color: #f8f9fa;">
+                    <span class="position-absolute top-0 start-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Source: ${sourceLabel}">
+                        <i class="bi bi-link-45deg me-1"></i>${sourceLabel}
+                    </span>
+                    <img src="${coverUrl}"
+                         alt="Cover ${index + 1}"
+                         class="img-fluid rounded"
+                         style="max-height: 240px; max-width: 100%; object-fit: contain;">
+                </div>
+                <div class="card-body p-2">
+                    <h6 class="card-title small mb-1" title="${title}">${title.length > 50 ? title.substring(0, 50) + '...' : title}</h6>
+                    <p class="card-text small text-muted mb-0" title="${authors}">${authors.length > 40 ? authors.substring(0, 40) + '...' : authors}</p>
+                    ${publishedDate ? `<p class="card-text small text-muted mb-0">${publishedDate}</p>` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+
+    container.insertAdjacentHTML('beforeend', html);
+
+    const card = document.querySelector(`#${cardId} .cover-option`);
+    if (!card) return;
+
+    // Click handler
+    card.addEventListener('click', function() {
+        const coverUrlSel = this.dataset.coverUrl;
+        const modalEl = document.getElementById('coverSelectionModal');
+        if (modalEl) {
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modal.hide();
+        }
+        applyCoverUrl(coverUrlSel);
+    });
+
+    // Hover effect
+    card.addEventListener('mouseenter', function() {
+        this.style.transform = 'scale(1.02)';
+        this.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        this.style.transition = 'all 0.2s ease';
+    });
+    card.addEventListener('mouseleave', function() {
+        this.style.transform = 'scale(1)';
+        this.style.boxShadow = '';
+    });
+
+    // Remove broken images quickly.
+    const img = card.querySelector('img');
+    if (img) {
+        // Hide loading indicator as soon as we have any image load/error event.
+        const hideLoading = () => {
+            try {
+                const ctx = ensureCoverSelectionModal();
+                ctx.setLoading(false);
+            } catch (e) {}
+        };
+        img.addEventListener('load', hideLoading);
+        img.addEventListener('error', () => {
+            const wrapper = document.getElementById(cardId);
+            if (wrapper) wrapper.remove();
+            hideLoading();
+        });
+
+        // If the image is already cached, load may not fire after we attach listeners.
+        try {
+            if (img.complete) {
+                hideLoading();
+            }
+        } catch (e) {}
+    }
+}
+
+function validateCoverCandidatesProgressively(results) {
+    const probeEndpointBase = `{{ url_for('book.cover_candidate_probe') }}`;
+    const maxConcurrent = 4;
+    let inFlight = 0;
+    let idx = 0;
+
+    const next = () => {
+        while (inFlight < maxConcurrent && idx < results.length) {
+            const r = results[idx++];
+            const url = r && r.cover_url ? String(r.cover_url) : '';
+            const provider = r && r.source ? String(r.source) : '';
+            if (!url) continue;
+            inFlight++;
+            const probeUrl = `${probeEndpointBase}?url=${encodeURIComponent(url)}&provider=${encodeURIComponent(provider)}`;
+            fetch(probeUrl, {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+                .then(resp => resp.ok ? resp.json() : null)
+                .then(data => {
+                    if (!data || !data.success) return;
+                    if (data.is_placeholder) {
+                        // Remove matching card(s) safely (avoid selector escaping issues)
+                        document.querySelectorAll('.cover-option').forEach(el => {
+                            try {
+                                if (el && el.dataset && el.dataset.coverUrl === url) {
+                                    const wrapper = el.closest('.col-md-4') || el.closest('.col-sm-6') || el.parentElement;
+                                    if (wrapper) wrapper.remove();
+                                }
+                            } catch (e) {}
+                        });
+                    }
+                })
+                .catch(() => {})
+                .finally(() => {
+                    inFlight--;
+                    next();
+                    // If this batch is done, ensure loading spinner is hidden.
+                    try {
+                        if (idx >= results.length && inFlight === 0) {
+                            const ctx = ensureCoverSelectionModal();
+                            ctx.setLoading(false);
+                        }
+                    } catch (e) {}
+                });
+        }
+    };
+
+    next();
+}
+
+function applyCoverUrl(coverUrl, options = {}) {
     // Show loading state
     const currentCover = document.getElementById('coverEditBtn');
     if (currentCover) {
         currentCover.innerHTML = '<i class="bi bi-hourglass-split"></i>';
         currentCover.disabled = true;
     }
+
+    const allowDowngrade = !!(options && (options.allowDowngrade || options.allow_downgrade));
     
     // Send request to replace the current cover file with new image
     fetch('{{ url_for("book.replace_cover", uid=book.uid) }}', {
@@ -2494,7 +2994,8 @@ function applyCoverUrl(coverUrl) {
             'X-CSRFToken': '{{ csrf_token() }}'
         },
         body: JSON.stringify({
-            'new_cover_url': coverUrl
+            'new_cover_url': coverUrl,
+            'allow_downgrade': allowDowngrade
         })
     })
     .then(response => response.json())
@@ -2513,15 +3014,14 @@ function applyCoverUrl(coverUrl) {
                          onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='bookshelf.png') }}';">`;
                 }
             }
-            
-            alert('Cover updated successfully!');
+            // Success: silently update the UI (no blocking popup)
         } else {
-            alert('Failed to update cover: ' + (data.error || 'Unknown error'));
+            showMetadataNotice('Failed to update cover: ' + (data.error || 'Unknown error'), 'danger');
         }
     })
     .catch(error => {
         console.error('Error updating cover:', error);
-        alert('Failed to update cover. Please try again.');
+        showMetadataNotice('Failed to update cover. Please try again.', 'danger');
     })
     .finally(() => {
         // Restore button state
@@ -2564,9 +3064,36 @@ function openMetadataSearchModal() {
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <div class="modal-body">
+                        <div class="mb-3">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-5">
+                                    <label for="metadataSearchTitle" class="form-label mb-1">Title</label>
+                                    <input type="text" class="form-control" id="metadataSearchTitle" placeholder="e.g. 2001: A Space Odyssey">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="metadataSearchAuthor" class="form-label mb-1">Author</label>
+                                    <input type="text" class="form-control" id="metadataSearchAuthor" placeholder="e.g. Arthur C. Clarke">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="metadataSearchIsbn" class="form-label mb-1">ISBN (optional)</label>
+                                    <input type="text" class="form-control" id="metadataSearchIsbn" placeholder="ISBN-10/13">
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2 mt-2">
+                                <button type="button" class="btn btn-primary" id="metadataSearchGoBtn">
+                                    <i class="bi bi-search me-1"></i>Search
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" id="metadataSearchResetBtn">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Book
+                                </button>
+                            </div>
+                            <div class="small text-muted mt-2">
+                                You can broaden the search by clearing the author or pasting an ISBN.
+                            </div>
+                        </div>
                         <div id="metadataSearchStatus" class="alert alert-info d-flex align-items-center" role="alert">
-                            <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                            Searching for the best match...
+                            <i class="bi bi-info-circle me-2"></i>
+                            Ready to search.
                         </div>
                         <div id="metadataResultsContainer" class="mt-3"></div>
                     </div>
@@ -2580,16 +3107,76 @@ function openMetadataSearchModal() {
 
     document.body.insertAdjacentHTML('beforeend', modalHTML);
     const modalEl = document.getElementById('metadataSearchModal');
+
+    const titleInput = modalEl.querySelector('#metadataSearchTitle');
+    const authorInput = modalEl.querySelector('#metadataSearchAuthor');
+    const isbnInput = modalEl.querySelector('#metadataSearchIsbn');
+    const goBtn = modalEl.querySelector('#metadataSearchGoBtn');
+    const resetBtn = modalEl.querySelector('#metadataSearchResetBtn');
+
+    function getDefaultSearch() {
+        const title = (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title ? String(BOOK_METADATA_CONTEXT.title) : '').trim();
+        const authorParts = (BOOK_METADATA_CONTEXT && Array.isArray(BOOK_METADATA_CONTEXT.authors)) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
+        if (!authorParts.length && BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.primary_author) {
+            authorParts.push(BOOK_METADATA_CONTEXT.primary_author);
+        }
+        const author = authorParts.join(', ').trim();
+        const isbn = (BOOK_METADATA_CONTEXT && (BOOK_METADATA_CONTEXT.isbn13 || BOOK_METADATA_CONTEXT.isbn10))
+            ? String(BOOK_METADATA_CONTEXT.isbn13 || BOOK_METADATA_CONTEXT.isbn10).trim()
+            : '';
+        return { title, author, isbn };
+    }
+
+    function setInputsFromDefault() {
+        const defaults = getDefaultSearch();
+        if (titleInput) titleInput.value = defaults.title || '';
+        if (authorInput) authorInput.value = defaults.author || '';
+        if (isbnInput) isbnInput.value = defaults.isbn || '';
+    }
+
+    function getUserSearch() {
+        return {
+            title: (titleInput ? titleInput.value : '').trim(),
+            author: (authorInput ? authorInput.value : '').trim(),
+            isbn: (isbnInput ? isbnInput.value : '').trim()
+        };
+    }
+
+    setInputsFromDefault();
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            setInputsFromDefault();
+        });
+    }
+
+    const triggerSearch = () => runMetadataSearch(modalEl, getUserSearch());
+
+    if (goBtn) {
+        goBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            triggerSearch();
+        });
+    }
+    [titleInput, authorInput, isbnInput].forEach(el => {
+        if (!el) return;
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                triggerSearch();
+            }
+        });
+    });
+
     metadataModalInstance = new bootstrap.Modal(modalEl);
     modalEl.addEventListener('hidden.bs.modal', function() {
         metadataModalInstance = null;
         this.remove();
     });
     metadataModalInstance.show();
-    runMetadataSearch(modalEl);
 }
 
-async function runMetadataSearch(modalEl) {
+async function runMetadataSearch(modalEl, searchOverrides = null) {
     const statusEl = modalEl.querySelector('#metadataSearchStatus');
     const resultsContainer = modalEl.querySelector('#metadataResultsContainer');
     if (statusEl) {
@@ -2618,13 +3205,18 @@ async function runMetadataSearch(modalEl) {
     };
 
     const isbnCandidates = [];
-    if (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.isbn13) {
-        isbnCandidates.push(String(BOOK_METADATA_CONTEXT.isbn13));
-    }
-    if (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.isbn10) {
-        const isbn10 = String(BOOK_METADATA_CONTEXT.isbn10);
-        if (!isbnCandidates.includes(isbn10)) {
-            isbnCandidates.push(isbn10);
+    const overrideIsbn = (searchOverrides && typeof searchOverrides.isbn === 'string') ? searchOverrides.isbn.trim() : '';
+    if (overrideIsbn) {
+        isbnCandidates.push(overrideIsbn);
+    } else {
+        if (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.isbn13) {
+            isbnCandidates.push(String(BOOK_METADATA_CONTEXT.isbn13));
+        }
+        if (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.isbn10) {
+            const isbn10 = String(BOOK_METADATA_CONTEXT.isbn10);
+            if (!isbnCandidates.includes(isbn10)) {
+                isbnCandidates.push(isbn10);
+            }
         }
     }
 
@@ -2661,12 +3253,28 @@ async function runMetadataSearch(modalEl) {
         }
     }
 
-    const title = (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title ? BOOK_METADATA_CONTEXT.title : '').trim();
-    const authorParts = (BOOK_METADATA_CONTEXT && Array.isArray(BOOK_METADATA_CONTEXT.authors)) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
-    if (!authorParts.length && BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.primary_author) {
-        authorParts.push(BOOK_METADATA_CONTEXT.primary_author);
+    const title = (searchOverrides && typeof searchOverrides.title === 'string')
+        ? searchOverrides.title.trim()
+        : (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title ? String(BOOK_METADATA_CONTEXT.title) : '').trim();
+
+    let author = '';
+    if (searchOverrides && typeof searchOverrides.author === 'string') {
+        author = searchOverrides.author.trim();
+    } else {
+        const authorParts = (BOOK_METADATA_CONTEXT && Array.isArray(BOOK_METADATA_CONTEXT.authors)) ? BOOK_METADATA_CONTEXT.authors.filter(Boolean) : [];
+        if (!authorParts.length && BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.primary_author) {
+            authorParts.push(BOOK_METADATA_CONTEXT.primary_author);
+        }
+        author = authorParts.join(', ').trim();
     }
-    const author = authorParts.join(', ').trim();
+
+    if (!isbnCandidates.length && !title && !author) {
+        if (statusEl) {
+            statusEl.className = 'alert alert-warning d-flex align-items-center';
+            statusEl.innerHTML = '<i class="bi bi-exclamation-triangle me-2"></i>Enter a title, author, or ISBN to search.';
+        }
+        return;
+    }
 
     if (title || author) {
         try {
@@ -2677,7 +3285,7 @@ async function runMetadataSearch(modalEl) {
             if (author) {
                 payload.author = author;
             }
-            const response = await fetch(METADATA_ENDPOINTS.search, {
+            const response = await fetchWithTimeout(METADATA_ENDPOINTS.search, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -2773,6 +3381,22 @@ function normalizeMetadataResult(raw, fallbackSource) {
         return null;
     }
 
+    function extractIsbn(value, targetLength) {
+        if (value == null) return '';
+        const digits = String(value).replace(/\D/g, '');
+        if (!digits) return '';
+        if (digits.length === targetLength) return digits;
+        // Common case: ISBN-13 + ISBN-10 concatenated
+        if (digits.length === 23) {
+            return targetLength === 13 ? digits.slice(0, 13) : digits.slice(13);
+        }
+        if (digits.length > targetLength) {
+            const match = digits.match(new RegExp(`\\d{${targetLength}}`));
+            return match ? match[0] : '';
+        }
+        return '';
+    }
+
     const authors = [];
     if (Array.isArray(raw.authors_list)) {
         raw.authors_list.forEach(name => {
@@ -2810,9 +3434,9 @@ function normalizeMetadataResult(raw, fallbackSource) {
     const description = typeof descriptionCandidate === 'string' ? descriptionCandidate : '';
     const cleanDescription = description.replace(/<[^>]*>/g, '');
 
-    const isbnList = Array.isArray(raw.isbn_list) ? raw.isbn_list.map(String) : [];
-    const isbn13 = raw.isbn13 || raw.isbn_13 || raw.isbn || isbnList.find(code => code && code.replace(/\D/g, '').length === 13) || '';
-    const isbn10 = raw.isbn10 || raw.isbn_10 || isbnList.find(code => code && code.replace(/\D/g, '').length === 10) || '';
+    const isbnList = Array.isArray(raw.isbn_list) ? raw.isbn_list.map(v => (v == null ? '' : String(v))) : [];
+    const isbn13 = extractIsbn(raw.isbn13, 13) || extractIsbn(raw.isbn_13, 13) || extractIsbn(raw.isbn, 13) || (isbnList.map(v => extractIsbn(v, 13)).find(Boolean) || '');
+    const isbn10 = extractIsbn(raw.isbn10, 10) || extractIsbn(raw.isbn_10, 10) || extractIsbn(raw.isbn, 10) || (isbnList.map(v => extractIsbn(v, 10)).find(Boolean) || '');
     const publishedDate = raw.published_date || raw.publication_date || raw.publication_year || raw.release_date || '';
     const language = raw.language || raw.language_code || raw.lang || '';
     const googleId = raw.google_books_id || raw.google_id || '';
@@ -2929,20 +3553,61 @@ function renderMetadataResults(results, container) {
     }
 }
 
-function applyMetadataResult(index) {
-    const result = metadataSearchResults[index];
-    if (!result) {
+async function applyMetadataResult(index) {
+    const baseResult = metadataSearchResults[index];
+    if (!baseResult) {
         return;
     }
+
+    // If we have an ISBN from the selected result, hydrate it via the ISBN lookup endpoint
+    // so we apply the same richer metadata we'd get from an ISBN fetch.
+    let result = baseResult;
+    const rawIsbn = (baseResult.isbn13 || baseResult.isbn10 || '').toString();
+    const cleanIsbn = rawIsbn.replace(/[^0-9Xx]/g, '');
+    if (cleanIsbn) {
+        try {
+            const templateUrl = '{{ url_for("api_book.api_quick_isbn", isbn="__ISBN__") }}';
+            const url = templateUrl.replace('__ISBN__', encodeURIComponent(cleanIsbn));
+            const resp = await fetch(url, { method: 'GET' });
+            if (resp.ok) {
+                const isbnData = await resp.json();
+                if (isbnData && typeof isbnData === 'object') {
+                    // Normalize, then merge over the base result (ISBN result wins for richness).
+                    const normalized = normalizeMetadataResult(isbnData, 'ISBN Lookup');
+                    if (normalized) {
+                        normalized._viaIsbn = true;
+                        // Preserve the cover the user actually selected in the results list.
+                        // ISBN lookup can return a different edition and sometimes a placeholder cover.
+                        const merged = { ...baseResult, ...normalized };
+                        merged.cover_url = (baseResult.cover_url && String(baseResult.cover_url).trim()) ? baseResult.cover_url : (normalized.cover_url || '');
+                        result = merged;
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('[MetadataApply] ISBN hydration failed; applying base result instead', err);
+        }
+    }
+
     applyMetadataToForms(result);
+
+    // If we have a cover URL, apply it immediately using the existing cover replace endpoint.
+    // This keeps "Apply Metadata" behavior consistent with an ISBN-based enrichment.
+    if (result.cover_url && typeof applyCoverUrl === 'function') {
+        try {
+            // User explicitly picked this result; allow replacing even if smaller than existing.
+            applyCoverUrl(result.cover_url, { allowDowngrade: true });
+        } catch (err) {
+            console.warn('[MetadataApply] cover apply failed', err);
+        }
+    }
+
     if (metadataModalInstance) {
         metadataModalInstance.hide();
     }
-    if (result.cover_url) {
-        window.metadataCoverCandidate = result.cover_url;
-    }
-    const noticeMessage = result.cover_url
-        ? 'Metadata applied to the edit form. Review and save changes to keep them. Need a new cover? Re-run the cover search to apply the suggested artwork.'
+
+    const noticeMessage = result._viaIsbn
+        ? 'Metadata applied using ISBN lookup. Review and save changes to keep them.'
         : 'Metadata applied to the edit form. Review and save changes to keep them.';
     showMetadataNotice(noticeMessage, 'success');
 }
@@ -2959,7 +3624,14 @@ function applyMetadataToForms(result) {
         if (value === undefined || value === null || value === '') {
             return;
         }
-        const input = document.getElementById(id);
+        let input = document.getElementById(id);
+        if (!input) {
+            try {
+                input = document.querySelector(`[name="${CSS && CSS.escape ? CSS.escape(id) : id}"]`);
+            } catch (e) {
+                // ignore selector failures
+            }
+        }
         if (!input) {
             return;
         }
@@ -2967,6 +3639,44 @@ function applyMetadataToForms(result) {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
     };
+
+    // If user is applying metadata from search results, clear Needs Review on next save.
+    const clearFlagInput = document.getElementById('clear-needs-review');
+    if (clearFlagInput) {
+        clearFlagInput.value = '1';
+    }
+
+    // Also ensure the flag is included if the user saves via another form (e.g. Additional Details save).
+    const basicInfoForm = document.getElementById('basic-info-form');
+    if (basicInfoForm) {
+        let basicClear = basicInfoForm.querySelector('input[name="clear_needs_review"]');
+        if (!basicClear) {
+            basicClear = document.createElement('input');
+            basicClear.type = 'hidden';
+            basicClear.name = 'clear_needs_review';
+            basicClear.value = '1';
+            basicInfoForm.appendChild(basicClear);
+        } else {
+            basicClear.value = '1';
+        }
+    }
+
+    // Series fallback: parse patterns like "Title (Series Name #1)" if providers didn't supply series fields.
+    const parsed = (() => {
+        const titleRaw = (result && result.title) ? String(result.title) : '';
+        // Example: "2001: a Space Odyssey (Space Odyssey Saga #1)."
+        const m = titleRaw.match(/^(.*?)(?:\s*[\(\[]\s*([^\]#\)\]]+?)\s*#\s*([0-9]+(?:\.[0-9]+)?)\s*[\)\]]\s*\.?\s*)$/);
+        if (!m) return null;
+        const cleanTitle = (m[1] || '').trim();
+        const seriesName = (m[2] || '').trim();
+        const seriesOrder = (m[3] || '').trim();
+        if (!cleanTitle || !seriesName) return null;
+        return { cleanTitle, seriesName, seriesOrder };
+    })();
+
+    if (parsed && !result.series) {
+        result = { ...result, series: parsed.seriesName, series_order: parsed.seriesOrder, title: parsed.cleanTitle };
+    }
 
     setValue('edit-title', result.title || (BOOK_METADATA_CONTEXT && BOOK_METADATA_CONTEXT.title) || '');
     setValue('edit-subtitle', result.subtitle || '');
@@ -3022,8 +3732,8 @@ function applyMetadataToForms(result) {
 }
 
 function setSelectValue(selectId, value) {
-    const select = document.getElementById(selectId);
-    if (!select || value === undefined || value === null) {
+    const el = document.getElementById(selectId);
+    if (!el || value === undefined || value === null) {
         return;
     }
     const languageMap = {
@@ -3042,13 +3752,22 @@ function setSelectValue(selectId, value) {
     };
     const normalized = String(value).trim();
     const mapped = languageMap[normalized.toLowerCase()] || normalized;
-    let option = Array.from(select.options).find(opt => opt.value === mapped);
-    if (!option) {
-        option = new Option(mapped.toUpperCase(), mapped, true, true);
-        select.appendChild(option);
+    // Support both <select> elements and <input list="..."> elements.
+    if (el.tagName && el.tagName.toLowerCase() === 'select') {
+        const select = el;
+        let option = Array.from(select.options || []).find(opt => opt.value === mapped);
+        if (!option) {
+            option = new Option(mapped.toUpperCase(), mapped, true, true);
+            select.appendChild(option);
+        }
+        select.value = mapped;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return;
     }
-    select.value = mapped;
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    // Fallback: treat it like a normal input.
+    el.value = mapped;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 function replaceContributors(type, names) {
@@ -3248,11 +3967,15 @@ function showCoverSelectionModal(results) {
                                 const publishedDate = result.published_date ? 
                                     result.published_date.replace(/"/g, '&quot;').replace(/'/g, '&#39;') : '';
                                 const coverUrl = result.cover_url.replace(/"/g, '&quot;');
+                                const sourceLabel = (result.source || 'Unknown').toString().replace(/"/g, '&quot;').replace(/'/g, '&#39;');
                                 
                                 return `
                                 <div class="col-md-4 col-sm-6">
                                     <div class="card h-100 cover-option" data-cover-url="${coverUrl}" style="cursor: pointer;">
-                                        <div class="card-img-top d-flex align-items-center justify-content-center" style="height: 250px; background-color: #f8f9fa;" id="img-container-${index}">
+                                        <div class="card-img-top d-flex align-items-center justify-content-center position-relative" style="height: 250px; background-color: #f8f9fa;" id="img-container-${index}">
+                                            <span class="position-absolute top-0 start-0 m-2 badge rounded-pill bg-dark text-white opacity-75" title="Source: ${sourceLabel}">
+                                                <i class="bi bi-link-45deg me-1"></i>${sourceLabel}
+                                            </span>
                                             <img src="${coverUrl}" 
                                                  alt="Cover ${index + 1}" 
                                                  class="img-fluid rounded"
