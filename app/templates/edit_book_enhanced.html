@@ -337,6 +337,19 @@
             </nav>
         </div>
         <div class="col-auto">
+            {% if book.needs_review %}
+                <form method="post" action="{{ url_for('book.clear_needs_review', uid=book.uid) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <span class="badge bg-warning text-dark me-2">Needs Review</span>
+                    <button type="submit" class="btn btn-outline-warning" title="Clear the Needs Review flag for this book">
+                        <i class="bi bi-check2-circle me-1"></i>Clear Flag
+                    </button>
+                </form>
+            {% endif %}
+
+            <button type="button" class="btn btn-outline-info" data-bs-toggle="modal" data-bs-target="#refreshMetadataModal">
+                <i class="bi bi-arrow-clockwise me-1"></i>Refresh Metadata
+            </button>
             <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left me-1"></i>Back to Book
             </a>
@@ -439,19 +452,14 @@
                                                     <label for="language" class="form-label fw-medium">
                                                         <i class="bi bi-translate me-1"></i>Language
                                                     </label>
-                                                    <select class="form-select" id="language" name="language">
-                                                        <option value="en" {% if book.language == 'en' or not book.language %}selected{% endif %}>English</option>
-                                                        <option value="es" {% if book.language == 'es' %}selected{% endif %}>Spanish</option>
-                                                        <option value="fr" {% if book.language == 'fr' %}selected{% endif %}>French</option>
-                                                        <option value="de" {% if book.language == 'de' %}selected{% endif %}>German</option>
-                                                        <option value="it" {% if book.language == 'it' %}selected{% endif %}>Italian</option>
-                                                        <option value="pt" {% if book.language == 'pt' %}selected{% endif %}>Portuguese</option>
-                                                        <option value="ru" {% if book.language == 'ru' %}selected{% endif %}>Russian</option>
-                                                        <option value="ja" {% if book.language == 'ja' %}selected{% endif %}>Japanese</option>
-                                                        <option value="ko" {% if book.language == 'ko' %}selected{% endif %}>Korean</option>
-                                                        <option value="zh" {% if book.language == 'zh' %}selected{% endif %}>Chinese</option>
-                                                        <option value="other" {% if book.language == 'other' %}selected{% endif %}>Other</option>
-                                                    </select>
+                                                    <div class="position-relative" id="language-autocomplete-wrapper">
+                                                        <input type="text" class="form-control" id="language" name="language" autocomplete="off"
+                                                               value="{{ language_label(book.language) or '' }}"
+                                                               placeholder="Type to search or enter a language">
+                                                        <div id="language-autocomplete-dropdown" class="list-group shadow-sm"
+                                                             style="position:absolute; top:100%; left:0; right:0; z-index:1030; max-height:260px; overflow-y:auto; display:none;"></div>
+                                                    </div>
+                                                    <div class="form-text">Start typing to search. Press Enter to create if no match.</div>
                                                 </div>
                                             </div>
                                         </div>
@@ -914,6 +922,9 @@
                             <button type="submit" class="btn btn-primary btn-lg">
                                 <i class="bi bi-check-lg me-1"></i> Save Changes
                             </button>
+                            <button type="button" class="btn btn-outline-info btn-lg" data-bs-toggle="modal" data-bs-target="#refreshMetadataModal">
+                                <i class="bi bi-arrow-clockwise me-1"></i> Refresh Metadata
+                            </button>
                             <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" class="btn btn-secondary btn-lg">
                                 <i class="bi bi-x-circle me-1"></i>Cancel
                             </a>
@@ -928,6 +939,107 @@
         
         <!-- Hidden inputs for categories -->
         <div id="categoryInputs"></div>
+    </form>
+
+    <!-- Separate form so we don't nest forms inside the main edit form -->
+    <form id="refreshMetadataForm" method="POST" action="{{ url_for('book.refresh_book_metadata', uid=book.uid) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="modal fade" id="refreshMetadataModal" tabindex="-1" aria-labelledby="refreshMetadataModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="refreshMetadataModalLabel">
+                            <i class="bi bi-arrow-clockwise me-2"></i>Refresh Metadata
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">
+                            Pulls metadata from online providers (if possible) and updates this book according to your metadata settings.
+                        </p>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Refresh mode</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="refresh_mode" id="refreshModeMissing" value="missing" checked>
+                                <label class="form-check-label" for="refreshModeMissing">
+                                    Fill missing only (recommended)
+                                </label>
+                                <div class="form-text">Only updates fields that are currently empty on this book.</div>
+                            </div>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="radio" name="refresh_mode" id="refreshModeFull" value="full">
+                                <label class="form-check-label" for="refreshModeFull">
+                                    Full refresh (overwrite)
+                                </label>
+                                <div class="form-text">Overwrites fields with the latest provider data (based on your metadata settings).</div>
+                            </div>
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="radio" name="refresh_mode" id="refreshModeSelect" value="select">
+                                <label class="form-check-label" for="refreshModeSelect">
+                                    Choose fields
+                                </label>
+                                <div class="form-text">Select which fields should be pulled from metadata; unchecked fields are kept as-is.</div>
+                            </div>
+                        </div>
+
+                        <div id="refreshFieldsSection" class="border rounded p-3 bg-light" style="display:none;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label fw-semibold mb-0">Fields to refresh</label>
+                                <div class="btn-group btn-group-sm" role="group" aria-label="Select fields">
+                                    <button type="button" class="btn btn-outline-secondary" id="refreshSelectAll">All</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="refreshSelectNone">None</button>
+                                </div>
+                            </div>
+
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="title" id="rf_title"><label class="form-check-label" for="rf_title">Title</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="subtitle" id="rf_subtitle"><label class="form-check-label" for="rf_subtitle">Subtitle</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="description" id="rf_description"><label class="form-check-label" for="rf_description">Description</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="publisher" id="rf_publisher"><label class="form-check-label" for="rf_publisher">Publisher</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="published_date" id="rf_published_date"><label class="form-check-label" for="rf_published_date">Published date</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="page_count" id="rf_page_count"><label class="form-check-label" for="rf_page_count">Page count</label></div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="language" id="rf_language"><label class="form-check-label" for="rf_language">Language</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="series" id="rf_series"><label class="form-check-label" for="rf_series">Series</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="cover_url" id="rf_cover_url"><label class="form-check-label" for="rf_cover_url">Cover</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="raw_categories" id="rf_categories"><label class="form-check-label" for="rf_categories">Categories</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="isbn10" id="rf_isbn10"><label class="form-check-label" for="rf_isbn10">ISBN-10</label></div>
+                                    <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="isbn13" id="rf_isbn13"><label class="form-check-label" for="rf_isbn13">ISBN-13</label></div>
+                                </div>
+                            </div>
+
+                            <details class="mt-3">
+                                <summary class="text-muted">Advanced fields</summary>
+                                <div class="row g-2 mt-1">
+                                    <div class="col-md-6">
+                                        <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="google_books_id" id="rf_google_books_id"><label class="form-check-label" for="rf_google_books_id">Google Books ID</label></div>
+                                        <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="openlibrary_id" id="rf_openlibrary_id"><label class="form-check-label" for="rf_openlibrary_id">OpenLibrary ID</label></div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="average_rating" id="rf_average_rating"><label class="form-check-label" for="rf_average_rating">Average rating</label></div>
+                                        <div class="form-check"><input class="form-check-input refresh-field" type="checkbox" name="refresh_fields" value="rating_count" id="rf_rating_count"><label class="form-check-label" for="rf_rating_count">Rating count</label></div>
+                                    </div>
+                                </div>
+                            </details>
+
+                            <div class="form-text mt-2">
+                                Tip: If you want to keep your edits, only check fields you want to overwrite.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary" onclick="return confirm('Run metadata refresh now?');">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </form>
 </div>
 
@@ -973,10 +1085,42 @@ function initEditPageEnhancements(){
     
     // Initialize custom metadata functionality
     initializeCustomMetadata();
+
+    // Refresh metadata modal behavior
+    const refreshFieldsSection = document.getElementById('refreshFieldsSection');
+    const refreshModeSelect = document.getElementById('refreshModeSelect');
+    const refreshModeMissing = document.getElementById('refreshModeMissing');
+    const refreshModeFull = document.getElementById('refreshModeFull');
+    const selectAllBtn = document.getElementById('refreshSelectAll');
+    const selectNoneBtn = document.getElementById('refreshSelectNone');
+
+    function updateRefreshFieldsVisibility(){
+        if (!refreshFieldsSection) return;
+        const show = refreshModeSelect && refreshModeSelect.checked;
+        refreshFieldsSection.style.display = show ? '' : 'none';
+    }
+
+    if (refreshModeSelect) refreshModeSelect.addEventListener('change', updateRefreshFieldsVisibility);
+    if (refreshModeMissing) refreshModeMissing.addEventListener('change', updateRefreshFieldsVisibility);
+    if (refreshModeFull) refreshModeFull.addEventListener('change', updateRefreshFieldsVisibility);
+
+    if (selectAllBtn) {
+        selectAllBtn.addEventListener('click', function(){
+            document.querySelectorAll('#refreshFieldsSection .refresh-field').forEach(cb => cb.checked = true);
+        });
+    }
+    if (selectNoneBtn) {
+        selectNoneBtn.addEventListener('click', function(){
+            document.querySelectorAll('#refreshFieldsSection .refresh-field').forEach(cb => cb.checked = false);
+        });
+    }
+
+    updateRefreshFieldsVisibility();
     
     // Initialize accordion behavior
     initializeAccordion();
     initializeSeriesAutocompleteEdit();
+    initializeLanguageAutocomplete();
     console.debug('[EditPageInit] Enhancements initialized');
 }
 if(document.readyState === 'loading'){
@@ -1006,6 +1150,125 @@ function initializeAccordion() {
             });
         });
     });
+}
+
+// ----- Language Autocomplete (simple, local) -----
+function initializeLanguageAutocomplete() {
+    const LANGUAGE_CHOICES = {{ language_choices | tojson | safe }};
+    const languagePairs = Array.isArray(LANGUAGE_CHOICES) ? LANGUAGE_CHOICES : [];
+    const languageChoices = languagePairs
+        .filter(x => Array.isArray(x) && x.length >= 2)
+        .map(([token, label]) => ({ token: String(token || '').trim(), label: String(label || '').trim() }))
+        .filter(x => x.token || x.label);
+
+    const input = document.getElementById('language');
+    const dropdown = document.getElementById('language-autocomplete-dropdown');
+    const form = document.getElementById('editBookForm');
+    if (!input || !dropdown) return;
+
+    const normalizeText = (s) => String(s || '').trim().toLowerCase();
+
+    function hide() {
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+    }
+
+    function setActive(nextIndex) {
+        const items = Array.from(dropdown.querySelectorAll('.list-group-item'));
+        items.forEach(i => i.classList.remove('active'));
+        if (nextIndex >= 0 && nextIndex < items.length) items[nextIndex].classList.add('active');
+    }
+
+    function render() {
+        const rawQuery = (input.value || '').trim();
+        const q = normalizeText(rawQuery);
+        if (!q) {
+            hide();
+            return;
+        }
+
+        const matches = languageChoices
+            .map(c => {
+                const tokenN = normalizeText(c.token);
+                const labelN = normalizeText(c.label);
+                const starts = labelN.startsWith(q) || tokenN.startsWith(q);
+                const includes = labelN.includes(q) || tokenN.includes(q);
+                return { ...c, _starts: starts, _includes: includes };
+            })
+            .filter(c => c._includes)
+            .sort((a, b) => {
+                if (a._starts !== b._starts) return a._starts ? -1 : 1;
+                return a.label.localeCompare(b.label);
+            })
+            .slice(0, 8);
+
+        dropdown.innerHTML = '';
+        matches.forEach(choice => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'list-group-item list-group-item-action';
+            btn.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>${choice.label || choice.token}</span>
+                    ${choice.label && choice.token && normalizeText(choice.label) !== normalizeText(choice.token)
+                        ? `<small class="text-muted">${choice.token}</small>`
+                        : ''}
+                </div>
+            `;
+            btn.dataset.label = choice.label || choice.token;
+            btn.addEventListener('mousedown', () => {
+                input.value = btn.dataset.label || '';
+                hide();
+            });
+            dropdown.appendChild(btn);
+        });
+
+        const exact = languageChoices.some(c => normalizeText(c.label) === q || normalizeText(c.token) === q);
+        if (!exact && rawQuery.length >= 2) {
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'list-group-item list-group-item-action';
+            addBtn.innerHTML = `<i class="bi bi-plus-circle me-1"></i> Add "${rawQuery}" as new language`;
+            addBtn.dataset.value = rawQuery;
+            addBtn.addEventListener('mousedown', () => {
+                input.value = addBtn.dataset.value || '';
+                hide();
+            });
+            dropdown.appendChild(addBtn);
+        }
+
+        dropdown.style.display = dropdown.children.length ? 'block' : 'none';
+    }
+
+    input.addEventListener('input', render);
+    input.addEventListener('focus', render);
+    input.addEventListener('blur', () => setTimeout(hide, 200));
+    input.addEventListener('keydown', (e) => {
+        const items = Array.from(dropdown.querySelectorAll('.list-group-item'));
+        const idx = items.findIndex(i => i.classList.contains('active'));
+        if (e.key === 'ArrowDown' && items.length) {
+            e.preventDefault();
+            setActive(Math.min(idx + 1, items.length - 1));
+        } else if (e.key === 'ArrowUp' && items.length) {
+            e.preventDefault();
+            setActive(Math.max(idx - 1, 0));
+        } else if (e.key === 'Enter' && items.length && idx >= 0) {
+            e.preventDefault();
+            items[idx].dispatchEvent(new MouseEvent('mousedown'));
+        } else if (e.key === 'Escape') {
+            hide();
+        }
+    });
+
+    if (form) {
+        form.addEventListener('submit', () => {
+            const typed = (input.value || '').trim();
+            if (!typed) return;
+            const typedN = normalizeText(typed);
+            const match = languageChoices.find(c => normalizeText(c.label) === typedN || normalizeText(c.token) === typedN);
+            if (match && match.token) input.value = match.token;
+        });
+    }
 }
 
 // ----- Series Autocomplete (Edit Form) -----
@@ -1560,7 +1823,7 @@ function loadLocations() {
     
     const currentLocationId = locationSelect.dataset.currentLocation;
     
-    fetch('/locations/api/list')
+    fetch('{{ url_for("locations.api_user_locations") }}')
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 import uuid
-from flask import current_app, request, has_request_context
+import logging
+from flask import current_app, request, has_request_context, has_app_context
 
 from app.utils.book_utils import get_best_cover_for_book, get_cover_candidates
 from app.utils.image_processing import process_image_from_url
@@ -115,6 +116,7 @@ class CoverService:
         t0 = time.perf_counter()
         steps: list[str] = []
         sel = None
+        log = current_app.logger if has_app_context() else logging.getLogger(__name__)
         # Global processing deadline (seconds) after which we short‑circuit and return original URL unprocessed
         try:
             deadline = float(os.getenv('COVER_PROCESS_DEADLINE', '2.5'))
@@ -227,7 +229,7 @@ class CoverService:
                                 _record_processed_cache(cover_url, cached_url)
                 except Exception as e:
                     steps.append(f'download:fail={e.__class__.__name__}')
-                    current_app.logger.warning(f"[COVER][SERVICE] Download/process failed url={cover_url} err={e}")
+                    log.warning(f"[COVER][SERVICE] Download/process failed url={cover_url} err={e}")
             elapsed = time.perf_counter() - t0
             # Determine source & quality
             source = 'none'
@@ -241,12 +243,12 @@ class CoverService:
                     source = sel.get('source')
                     quality = sel.get('quality')
             result = CoverResult(source=source, quality=quality, original_url=cover_url, cached_url=cached_url, elapsed=elapsed, steps='|'.join(steps))
-            log_fn = current_app.logger.info if cached_url else current_app.logger.warning
+            log_fn = log.info if cached_url else log.warning
             log_fn(f"[COVER][SERVICE] isbn={isbn} title='{(title or '')[:40]}' elapsed={elapsed:.3f}s steps={result.steps} cached={bool(cached_url)}")
             return result
         except Exception as e:
             elapsed = time.perf_counter() - t0
-            current_app.logger.error(f"[COVER][SERVICE] FATAL isbn={isbn} title='{(title or '')[:40]}' err={e} elapsed={elapsed:.3f}s")
+            log.error(f"[COVER][SERVICE] FATAL isbn={isbn} title='{(title or '')[:40]}' err={e} elapsed={elapsed:.3f}s")
             return CoverResult(source='error', quality='none', original_url=None, cached_url=None, elapsed=elapsed, steps='fatal')
 
     # --- New async / staged selection API ---
@@ -347,7 +349,10 @@ class CoverService:
                     job_record['error'] = str(e)
                     job_record['completed'] = time.time()
                     try:
-                        current_app.logger.error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
+                        if has_app_context():
+                            current_app.logger.error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
+                        else:
+                            logging.getLogger(__name__).error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
                     except Exception:
                         pass
             finally:

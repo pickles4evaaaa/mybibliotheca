@@ -55,33 +55,109 @@
 [data-theme="dark"] .text-muted {
     color: #b0b0b0 !important;
 }
+
+.import-metrics {
+    font-variant-numeric: tabular-nums;
+}
+
+.activity-list {
+    max-height: 220px;
+    overflow: auto;
+}
+
+.errors-list {
+    max-height: 220px;
+    overflow: auto;
+}
+
+/* Progress bar styling (higher contrast in light mode) */
+.import-progress-wrap {
+    max-width: 720px;
+    width: 100%;
+}
+
+#importProgressBar {
+    background-color: #6f42c1; /* Bootstrap-ish purple, higher contrast than default blue */
+    transition: width 0.4s ease;
+}
+
+[data-theme="dark"] #importProgressBar {
+    background-color: #8b5cf6;
+}
 </style>
 {% endblock %}
 
 {% block content %}
-<!-- Progress Indicator -->
-<div class="card mb-4">
-    <div class="card-body">
-        <div class="progress mb-2">
-            <div class="progress-bar progress-bar-striped progress-bar-animated" 
-                 role="progressbar" style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
-        </div>
-        <small class="text-muted">Step 5 of 5: Importing Your Books</small>
-    </div>
-</div>
-
 <div class="splash-container">
     <div class="spinner"></div>
+
+    <!-- Progress Indicator (placed under spinner, same width as main card) -->
+    <div class="card mb-3 import-progress-wrap">
+        <div class="card-body">
+            <div class="progress mb-2">
+                <div id="importProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" style="width: 5%" aria-valuenow="5" aria-valuemin="0" aria-valuemax="100">5%</div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center">
+                <small class="text-muted">Step 5 of 5: Importing Your Books</small>
+                <small class="text-muted"><span id="importStatusBadge" class="badge bg-secondary">Starting…</span></small>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-1">
+                <small class="text-muted" id="importLastUpdate">Last update: —</small>
+                <small class="text-muted" id="importStallHint"></small>
+            </div>
+        </div>
+    </div>
     
     <h2 class="mb-4 pulse">📚 Importing Your Library</h2>
     
-    <div class="card" style="max-width: 500px;">
+    <div class="card" style="max-width: 720px; width: 100%;">
         <div class="card-body">
             <h5 class="card-title">Please Be Patient</h5>
             <p class="card-text">
                 We're setting up your personal library and importing your books. 
                 This process may take a few minutes depending on the size of your collection.
             </p>
+            <div class="row g-2 import-metrics">
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><small class="text-muted">Processed</small><div id="metricProcessed" class="fw-semibold">0</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><small class="text-muted">Success</small><div id="metricSuccess" class="fw-semibold">0</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><small class="text-muted">Merged</small><div id="metricMerged" class="fw-semibold">0</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><small class="text-muted">Errors</small><div id="metricErrors" class="fw-semibold">0</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><small class="text-muted">Skipped</small><div id="metricSkipped" class="fw-semibold">0</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-2"><small class="text-muted">Unmatched</small><div id="metricUnmatched" class="fw-semibold">0</div></div></div>
+                <div class="col-12 col-md-6"><div class="border rounded p-2"><small class="text-muted">Current</small><div id="metricCurrent" class="fw-semibold text-truncate">—</div></div></div>
+            </div>
+
+            <div class="mt-3 d-flex flex-wrap gap-2 justify-content-center">
+                <a id="downloadErrorsLink" class="btn btn-outline-danger btn-sm" href="/import/api/import/errors/{{ task_id }}" style="display:none;">Download errors (CSV)</a>
+                <a id="downloadFailedIsbnsLink" class="btn btn-outline-warning btn-sm" href="/import/api/import/failed-isbns/{{ task_id }}" style="display:none;">Download failed ISBNs (CSV)</a>
+            </div>
+
+            <div class="mt-3 row g-2" style="width:100%;">
+                <div class="col-12 col-md-6">
+                    <div class="border rounded p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <small class="text-muted">Recent activity</small>
+                            <small class="text-muted" id="activityCount">0</small>
+                        </div>
+                        <ul id="recentActivity" class="list-group list-group-flush activity-list">
+                            <li class="list-group-item text-muted">Waiting for updates…</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-12 col-md-6">
+                    <div class="border rounded p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <small class="text-muted">Latest errors</small>
+                            <small class="text-muted" id="errorCount">0</small>
+                        </div>
+                        <ul id="recentErrors" class="list-group list-group-flush errors-list">
+                            <li class="list-group-item text-muted">No errors yet.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <p class="text-muted">
                 <small>
                     💡 We're fetching book details, creating your default locations, 
@@ -103,8 +179,172 @@
 <script>
 // Auto-check for completion and redirect
 let checkInterval;
-let maxWaitTime = 60000; // 1 minute max wait
+let maxWaitTime = 30 * 60 * 1000; // 30 minutes max wait (large imports can take a while)
 let checkStartTime = Date.now();
+
+let lastProgressSignature = null;
+let lastMeaningfulChangeAt = Date.now();
+let lastRenderedPercent = 0;
+
+function clamp(n, min, max) {
+    return Math.max(min, Math.min(max, n));
+}
+
+function setBadge(text, cls) {
+    const el = document.getElementById('importStatusBadge');
+    if (!el) return;
+    el.className = `badge ${cls}`;
+    el.textContent = text;
+}
+
+function setMetric(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = (val === null || val === undefined || val === '') ? '—' : String(val);
+}
+
+function renderList(listEl, items, emptyText) {
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (!items || !items.length) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item text-muted';
+        li.textContent = emptyText;
+        listEl.appendChild(li);
+        return;
+    }
+    for (const item of items) {
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        li.textContent = String(item);
+        listEl.appendChild(li);
+    }
+}
+
+function parseIsoToMs(iso) {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : null;
+}
+
+function setLastUpdateText(text) {
+    const el = document.getElementById('importLastUpdate');
+    if (!el) return;
+    el.textContent = text;
+}
+
+function setStallHint(text) {
+    const el = document.getElementById('importStallHint');
+    if (!el) return;
+    el.textContent = text || '';
+}
+
+function updateProgressUI(data) {
+    const processed = Number(data.processed || 0);
+    const total = Number(data.total || 0);
+
+    // Progress bar must always be relative to the overall import file (rows processed / total rows).
+    // Do NOT use scan/prefetch counters for the bar; those phases can legitimately reach 100% early
+    // and would cause the bar to jump backwards when row-processing begins.
+    let percent = total > 0
+        ? clamp(Math.round((processed / total) * 100), 0, 100)
+        : 5;
+
+    const status = (data.status || 'pending').toString().toLowerCase();
+    if (status === 'completed' || status === 'success') {
+        percent = 100;
+    }
+
+    // Defensive: never render a lower % than we already showed.
+    percent = Math.max(lastRenderedPercent, percent);
+    lastRenderedPercent = percent;
+
+    const bar = document.getElementById('importProgressBar');
+    if (bar) {
+        bar.style.width = `${percent}%`;
+        bar.setAttribute('aria-valuenow', String(percent));
+        bar.textContent = `${percent}%`;
+    }
+
+    if (status === 'completed' || status === 'success') setBadge('Completed', 'bg-success');
+    else if (status === 'failed' || status === 'error') setBadge('Completed (with errors)', 'bg-warning text-dark');
+    else if (status === 'running') setBadge('Importing…', 'bg-primary');
+    else if (status === 'cancelling') setBadge('Cancelling…', 'bg-warning text-dark');
+    else setBadge('Starting…', 'bg-secondary');
+
+    setMetric('metricProcessed', processed);
+    setMetric('metricSuccess', Number(data.success || 0));
+    setMetric('metricMerged', Number(data.merged || 0));
+    setMetric('metricErrors', Number(data.errors || 0));
+    setMetric('metricSkipped', Number(data.skipped || 0));
+    setMetric('metricUnmatched', Number(data.unmatched || 0));
+    setMetric('metricCurrent', data.current_book || '—');
+
+    // Freshness + perceived-stall handling
+    const signatureObj = {
+        status,
+        processed: Number(data.processed || 0),
+        scan_processed: Number(data.scan_processed || 0),
+        prefetch_processed: Number(data.prefetch_processed || 0),
+        success: Number(data.success || 0),
+        merged: Number(data.merged || 0),
+        errors: Number(data.errors || 0),
+        skipped: Number(data.skipped || 0),
+        unmatched: Number(data.unmatched || 0),
+        current_book: String(data.current_book || ''),
+    };
+    const signature = JSON.stringify(signatureObj);
+    if (lastProgressSignature === null) {
+        lastProgressSignature = signature;
+        lastMeaningfulChangeAt = Date.now();
+    } else if (signature !== lastProgressSignature) {
+        lastProgressSignature = signature;
+        lastMeaningfulChangeAt = Date.now();
+    }
+
+    const serverNowMs = parseIsoToMs(data.server_time) || Date.now();
+    const updatedAtMs = parseIsoToMs(data.updated_at) || parseIsoToMs(data.created_at);
+    if (updatedAtMs) {
+        const ageSec = Math.max(0, Math.round((serverNowMs - updatedAtMs) / 1000));
+        setLastUpdateText(`Last update: ${ageSec}s ago`);
+    } else {
+        setLastUpdateText('Last update: —');
+    }
+
+    const idleSec = Math.max(0, Math.round((Date.now() - lastMeaningfulChangeAt) / 1000));
+    if (status === 'running' && idleSec >= 15) {
+        setStallHint('Still working (may be throttling to respect API rate limits)…');
+    } else {
+        setStallHint('');
+    }
+
+    const activity = (data.recent_activity || []).slice(-10).reverse();
+    const errors = (data.error_messages || []).slice(-10).reverse().map(e => {
+        if (typeof e === 'string') return e;
+        if (e && typeof e === 'object') {
+            const title = e.title || e.raw_title || e.isbn || '';
+            const msg = e.message || e.error || '';
+            if (title && msg) return `${title}: ${msg}`;
+            return title || msg || 'Error';
+        }
+        return String(e);
+    });
+
+    renderList(document.getElementById('recentActivity'), activity, 'Waiting for updates…');
+    renderList(document.getElementById('recentErrors'), errors, 'No errors yet.');
+
+    const activityCount = document.getElementById('activityCount');
+    if (activityCount) activityCount.textContent = String((data.recent_activity || []).length || 0);
+    const errorCount = document.getElementById('errorCount');
+    if (errorCount) errorCount.textContent = String((data.errors || 0));
+
+    // Show download links once there are errors (or after completion, if any).
+    const dlErrors = document.getElementById('downloadErrorsLink');
+    const dlIsbns = document.getElementById('downloadFailedIsbnsLink');
+    const hasErrors = Number(data.errors || 0) > 0 || ((data.error_messages || []).length > 0);
+    if (dlErrors) dlErrors.style.display = hasErrors ? 'inline-block' : 'none';
+    if (dlIsbns) dlIsbns.style.display = hasErrors ? 'inline-block' : 'none';
+}
 
 function checkImportStatus() {
     // Check if we've been waiting too long
@@ -130,6 +370,8 @@ function checkImportStatus() {
             if (!data) return; // Skip if no data (redirect case)
             
             console.log('Import status:', data);
+
+            try { updateProgressUI(data); } catch (e) { /* ignore UI errors */ }
             
             // Check if import is complete
             if (data.status === 'completed' || data.status === 'success') {
@@ -164,17 +406,17 @@ function checkImportStatus() {
         });
 }
 
-// Start checking import status every 2 seconds
-checkInterval = setInterval(checkImportStatus, 2000);
+// Start checking import status every 1.25 seconds (fast feedback, but cheap payload)
+checkInterval = setInterval(checkImportStatus, 1250);
 
 // Initial check after 1 second
 setTimeout(checkImportStatus, 1000);
 
-// Fallback: redirect to library after 2 minutes no matter what
+// Fallback: redirect to library after 30 minutes no matter what
 setTimeout(() => {
     console.log('Fallback timeout reached, redirecting to library');
     clearInterval(checkInterval);
     window.location.href = '/library';
-}, 120000); // 2 minutes
+}, 30 * 60 * 1000);
 </script>
 {% endblock %}

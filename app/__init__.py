@@ -13,6 +13,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, session, request, jsonify, redirect, url_for
 from flask_login import LoginManager
+
+# Compatibility shim: Flask 2.3+ no longer re-exports Markup from flask.
+# Some versions of Flask-WTF still import it as `from flask import Markup`.
+try:
+    import flask as _flask
+    from markupsafe import Markup as _Markup
+    if not hasattr(_flask, 'Markup'):
+        _flask.Markup = _Markup  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+# Compatibility shim: Werkzeug 3.x removed `werkzeug.urls.url_encode`.
+# Some versions of Flask-WTF still import it.
+try:
+    import werkzeug.urls as _wz_urls
+    from urllib.parse import urlencode as _stdlib_urlencode
+
+    if not hasattr(_wz_urls, 'url_encode'):
+        def url_encode(obj, charset: str = 'utf-8', sort: bool = False, key=None, separator: str = '&') -> str:  # type: ignore[override]
+            # Minimal drop-in replacement for Flask-WTF usage.
+            return _stdlib_urlencode(obj, doseq=True)
+
+        _wz_urls.url_encode = url_encode  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 from flask_wtf.csrf import CSRFProtect
 from flask_session import Session
 try:
@@ -46,8 +72,24 @@ def load_user(user_id):
 @login_manager.unauthorized_handler
 def unauthorized():
     """Custom unauthorized handler that returns JSON for API requests."""
+    # Treat API paths and XHR/JSON requests as API-like, so the frontend can
+    # handle auth expiry gracefully (instead of fetching HTML login pages).
+    wants_json = False
+    try:
+        if request.headers.get('X-Requested-With', '').lower() == 'xmlhttprequest':
+            wants_json = True
+    except Exception:
+        wants_json = False
+    if not wants_json:
+        try:
+            accept = getattr(request, 'accept_mimetypes', None)
+            if accept is not None:
+                wants_json = accept['application/json'] >= accept['text/html']
+        except Exception:
+            wants_json = False
+
     # Check if this is an API request
-    if request.path.startswith('/api/'):
+    if request.path.startswith('/api/') or wants_json:
         return jsonify({
             'error': 'Authentication required',
             'message': 'This API endpoint requires authentication. Provide an API token or login.',
