@@ -44,3 +44,45 @@ test = [
     "pytest-flask>=1.3.0",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.pytest]
+minversion = "9.0"
+
+# Test discovery (include both package tests directory and root-level test_*.py files)
+# Removed explicit testpaths previously limiting discovery; pytest will search current dir.
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Output options
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--color=yes",
+]
+
+filterwarnings = [
+    "ignore:ast.Str is deprecated and will be removed in Python 3.14:DeprecationWarning",
+    "ignore:Attribute s is deprecated and will be removed in Python 3.14:DeprecationWarning",
+    "ignore:Constant.__init__ got an unexpected keyword argument 's':DeprecationWarning",
+    "ignore:Constant.__init__ missing 1 required positional argument:DeprecationWarning",
+    "ignore:'before_first_request' is deprecated:DeprecationWarning",
+]
+
+markers = [
+    "unit: Unit tests for individual components",
+    "integration: Integration tests between components",
+    "facade: Tests specific to the KuzuServiceFacade",
+    "compatibility: Backward compatibility tests",
+    "performance: Performance-related tests",
+    "error_handling: Error handling and edge case tests",
+    "asyncio: Async tests using event loop",
+]
+
+# Coverage settings (if pytest-cov is available)
+# addopts = [
+#     "--cov=app.services",
+#     "--cov-report=term-missing",
+#     "--cov-report=html"
+# ]
