@@ -32,12 +32,15 @@ dependencies = [
     # Graph Database Dependencies
     "kuzu>=0.11.3",
     "psycopg[binary]>=3.2.12",
-    # Testing dependencies
-    "pytest>=9.0.1",
-    "pytest-flask>=1.3.0",
-    "pytest-cov>=7.0.0",
     # AI Service Dependencies
     "pystache>=0.6.8",
     # Markdown support for personal notes
     "mistune==3.0.2",
+]
+
+[dependency-groups]
+test = [
+    "pytest>=9.0.1",
+    "pytest-flask>=1.3.0",
+    "pytest-cov>=7.0.0",
 ]
