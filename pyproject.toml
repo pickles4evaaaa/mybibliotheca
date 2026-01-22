@@ -1,7 +1,7 @@
 [project]
 name = "bibliotheca"
-version = "0.1.0"
-description = "Add your description here"
+version = "2.1.0"
+description = " Track your reading habits, log books, and visualize your library—all in your own space. "
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
