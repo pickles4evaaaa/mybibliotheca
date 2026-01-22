@@ -1,4 +1,5 @@
 """Service responsible for probing an OPDS feed and collecting samples."""
+
 from __future__ import annotations
 
 import asyncio
@@ -112,7 +113,9 @@ def _normalize_description_text(text: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
-def extract_summary_metadata(summary: Optional[str]) -> Tuple[Optional[str], Optional[float], List[str]]:
+def extract_summary_metadata(
+    summary: Optional[str],
+) -> Tuple[Optional[str], Optional[float], List[str]]:
     """Split Calibre-style metadata lines from the top of a summary.
 
     Returns the cleaned summary, a rating value (0-5 scale), and any tags extracted.
@@ -189,7 +192,9 @@ class OPDSProbeService:
                 normalized_max_samples = candidate
 
         config = ProbeConfig(
-            max_depth=max_depth if max_depth is not None else self._default_config.max_depth,
+            max_depth=max_depth
+            if max_depth is not None
+            else self._default_config.max_depth,
             max_samples=normalized_max_samples,
             timeout=self._default_config.timeout,
         )
@@ -283,7 +288,9 @@ class OPDSProbeService:
         }
 
         try:
-            while queue and (config.max_samples is None or len(content_samples) < config.max_samples):
+            while queue and (
+                config.max_samples is None or len(content_samples) < config.max_samples
+            ):
                 url, depth = queue.pop(0)
                 if url in visited or depth > config.max_depth:
                     continue
@@ -291,12 +298,14 @@ class OPDSProbeService:
                 try:
                     response = session.get(url, timeout=config.timeout)
                 except Exception as err:
-                    attempts.append({
-                        "url": url,
-                        "depth": depth,
-                        "status": "error",
-                        "error": str(err),
-                    })
+                    attempts.append(
+                        {
+                            "url": url,
+                            "depth": depth,
+                            "status": "error",
+                            "error": str(err),
+                        }
+                    )
                     continue
 
                 attempt_record: Dict[str, Any] = {
@@ -305,7 +314,10 @@ class OPDSProbeService:
                     "status_code": response.status_code,
                 }
 
-                if response.status_code == 401 and "digest" in response.headers.get("WWW-Authenticate", "").lower():
+                if (
+                    response.status_code == 401
+                    and "digest" in response.headers.get("WWW-Authenticate", "").lower()
+                ):
                     # Retry once with digest auth if credentials provided.
                     if username and password:
                         session.auth = HTTPDigestAuth(username, password)
@@ -329,7 +341,9 @@ class OPDSProbeService:
                     continue
 
                 try:
-                    parsed = self._parse_feed(response, field_inventory, response.url or url)
+                    parsed = self._parse_feed(
+                        response, field_inventory, response.url or url
+                    )
                 except Exception as parse_err:
                     attempt_record["status"] = "parse_error"
                     attempt_record["error"] = str(parse_err)
@@ -343,12 +357,20 @@ class OPDSProbeService:
                         continue
                     seen_identifiers.add(identifier)
                     if self._entry_has_acquisition(entry):
-                        if config.max_samples is None or len(content_samples) < config.max_samples:
+                        if (
+                            config.max_samples is None
+                            or len(content_samples) < config.max_samples
+                        ):
                             content_samples.append(entry)
                     else:
-                        if config.max_samples is not None and len(navigation_samples) < (config.max_samples * 2):
+                        if config.max_samples is not None and len(
+                            navigation_samples
+                        ) < (config.max_samples * 2):
                             navigation_samples.append(entry)
-                    if config.max_samples is not None and len(content_samples) >= config.max_samples:
+                    if (
+                        config.max_samples is not None
+                        and len(content_samples) >= config.max_samples
+                    ):
                         break
 
                 if depth < config.max_depth:
@@ -390,7 +412,12 @@ class OPDSProbeService:
         acquisition_links: List[str]
         catalog_links: List[str]
 
-    def _parse_feed(self, response: Response, field_inventory: Dict[str, List[str]], response_url: Optional[str]) -> "OPDSProbeService.ParsedFeed":
+    def _parse_feed(
+        self,
+        response: Response,
+        field_inventory: Dict[str, List[str]],
+        response_url: Optional[str],
+    ) -> "OPDSProbeService.ParsedFeed":
         content = response.content
         if not content:
             return self.ParsedFeed(entries=[], acquisition_links=[], catalog_links=[])
@@ -436,7 +463,9 @@ class OPDSProbeService:
             catalog_links=list(catalog_links),
         )
 
-    def _is_acquisition_link(self, rel: Optional[str], link_type: Optional[str]) -> bool:
+    def _is_acquisition_link(
+        self, rel: Optional[str], link_type: Optional[str]
+    ) -> bool:
         rel_lower = (rel or "").lower()
         type_lower = (link_type or "").lower()
         if rel_lower.startswith("http://opds-spec.org/acquisition"):
@@ -475,7 +504,9 @@ class OPDSProbeService:
                 return True
         return False
 
-    def _parse_entry(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> Dict[str, Any]:
+    def _parse_entry(
+        self, elem: ET.Element, field_inventory: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
         entry: Dict[str, Any] = {}
         entry_id = elem.findtext(f"{ATOM_NS}id")
         title = elem.findtext(f"{ATOM_NS}title")
@@ -485,7 +516,9 @@ class OPDSProbeService:
         content_elem = elem.find(f"{ATOM_NS}content")
         content_value = _extract_element_text(content_elem)
         if content_value:
-            cleaned_content, content_rating, content_tags = extract_summary_metadata(content_value)
+            cleaned_content, content_rating, content_tags = extract_summary_metadata(
+                content_value
+            )
             content_value = cleaned_content
             if rating_value is None and content_rating is not None:
                 rating_value = content_rating
@@ -514,15 +547,19 @@ class OPDSProbeService:
                 "categories": self._extract_categories(elem, field_inventory),
                 "identifiers": self._extract_identifiers(elem, field_inventory),
                 "raw_links": self._extract_links(elem, field_inventory),
-                "published": self._first_nonempty([
-                    elem.findtext(f"{ATOM_NS}published"),
-                    elem.findtext(f"{DC_NS}date"),
-                    elem.findtext(f"{DCTERMS_NS}issued"),
-                ]),
-                "updated": self._first_nonempty([
-                    elem.findtext(f"{ATOM_NS}updated"),
-                    elem.findtext(f"{DCTERMS_NS}modified"),
-                ]),
+                "published": self._first_nonempty(
+                    [
+                        elem.findtext(f"{ATOM_NS}published"),
+                        elem.findtext(f"{DC_NS}date"),
+                        elem.findtext(f"{DCTERMS_NS}issued"),
+                    ]
+                ),
+                "updated": self._first_nonempty(
+                    [
+                        elem.findtext(f"{ATOM_NS}updated"),
+                        elem.findtext(f"{DCTERMS_NS}modified"),
+                    ]
+                ),
             }
         )
 
@@ -533,7 +570,9 @@ class OPDSProbeService:
             entry["tags"] = tags_value
             _record_entry_field(field_inventory, "tags")
 
-        dc_publisher = elem.findtext(f"{DC_NS}publisher") or elem.findtext(f"{DCTERMS_NS}publisher")
+        dc_publisher = elem.findtext(f"{DC_NS}publisher") or elem.findtext(
+            f"{DCTERMS_NS}publisher"
+        )
         if dc_publisher:
             entry["dc:publisher"] = dc_publisher
             _record_entry_field(field_inventory, "dc:publisher")
@@ -554,7 +593,9 @@ class OPDSProbeService:
 
         return entry
 
-    def _extract_authors(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[str]:
+    def _extract_authors(
+        self, elem: ET.Element, field_inventory: Dict[str, List[str]]
+    ) -> List[str]:
         authors: List[str] = []
         for author in elem.findall(f"{ATOM_NS}author"):
             name = author.findtext(f"{ATOM_NS}name")
@@ -564,7 +605,9 @@ class OPDSProbeService:
             _record_entry_field(field_inventory, "authors")
         return authors
 
-    def _extract_categories(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[str]:
+    def _extract_categories(
+        self, elem: ET.Element, field_inventory: Dict[str, List[str]]
+    ) -> List[str]:
         categories: List[str] = []
         for cat in elem.findall(f"{ATOM_NS}category"):
             term = cat.get("term") or cat.text
@@ -574,7 +617,9 @@ class OPDSProbeService:
             _record_entry_field(field_inventory, "categories")
         return categories
 
-    def _extract_identifiers(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[str]:
+    def _extract_identifiers(
+        self, elem: ET.Element, field_inventory: Dict[str, List[str]]
+    ) -> List[str]:
         identifiers: List[str] = []
         for tag in (f"{DC_NS}identifier", f"{DCTERMS_NS}identifier"):
             for ident in elem.findall(tag):
@@ -584,7 +629,9 @@ class OPDSProbeService:
             _record_entry_field(field_inventory, "identifier")
         return identifiers
 
-    def _extract_links(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    def _extract_links(
+        self, elem: ET.Element, field_inventory: Dict[str, List[str]]
+    ) -> List[Dict[str, Any]]:
         links: List[Dict[str, Any]] = []
         rels = set(field_inventory.get("link_rels", []))
         types = set(field_inventory.get("link_types", []))
@@ -633,19 +680,29 @@ class OPDSProbeService:
             suggestions.setdefault("categories", "entry.categories")
         elif "tags" in entry_fields:
             suggestions.setdefault("categories", "entry.tags")
-        if "dc:publisher" in entry_fields or "dcterms:publisher" in entry_fields or "publisher" in entry_fields:
+        if (
+            "dc:publisher" in entry_fields
+            or "dcterms:publisher" in entry_fields
+            or "publisher" in entry_fields
+        ):
             suggestions.setdefault("publisher", "entry.dc:publisher")
         if "dcterms:issued" in entry_fields or "published" in entry_fields:
             suggestions.setdefault("published_date", "entry.dcterms:issued")
         if "http://opds-spec.org/image" in link_rels:
-            suggestions.setdefault("cover_url", "link[rel=http://opds-spec.org/image].href")
+            suggestions.setdefault(
+                "cover_url", "link[rel=http://opds-spec.org/image].href"
+            )
         if "http://opds-spec.org/image/thumbnail" in link_rels:
-            suggestions.setdefault("cover_thumbnail", "link[rel=http://opds-spec.org/image/thumbnail].href")
+            suggestions.setdefault(
+                "cover_thumbnail", "link[rel=http://opds-spec.org/image/thumbnail].href"
+            )
         if "rating" in entry_fields:
             suggestions.setdefault("average_rating", "entry.rating")
         return suggestions
 
-    def probe_async(self, *args: Any, **kwargs: Any) -> "asyncio.Future[Dict[str, Any]]":
+    def probe_async(
+        self, *args: Any, **kwargs: Any
+    ) -> "asyncio.Future[Dict[str, Any]]":
         raise NotImplementedError("Use probe() coroutine instead")
 
 

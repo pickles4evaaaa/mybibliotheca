@@ -12,10 +12,10 @@ Steps:
 
 Non-destructive: OWNS is not dropped here; separate maintenance task can drop it.
 """
+
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Dict, Any
 import logging
 
@@ -40,7 +40,7 @@ def _migration_already_done() -> bool:
                 return True
             if isinstance(row, dict):
                 return any(row.values())
-        elif hasattr(res, 'has_next') and res.has_next():  # type: ignore[attr-defined]
+        elif hasattr(res, "has_next") and res.has_next():  # type: ignore[attr-defined]
             row = res.get_next()  # type: ignore[attr-defined]
             try:
                 if isinstance(row, (list, tuple)) and row and row[0]:
@@ -68,7 +68,7 @@ def _mark_done():
 
 def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
     # Fast path: if OWNS schema disabled skip entirely
-    if os.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() not in ('1', 'true', 'yes'):
+    if os.getenv("ENABLE_OWNS_SCHEMA", "false").lower() not in ("1", "true", "yes"):
         return {"status": "skipped", "reason": "owns_schema_disabled"}
     if _migration_already_done():
         return {"status": "skipped", "reason": "already_completed"}
@@ -84,7 +84,7 @@ def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
                 count = int(first[0])
             elif isinstance(first, dict) and first:
                 count = int(list(first.values())[0])
-        elif hasattr(count_res, 'has_next') and count_res.has_next():  # type: ignore[attr-defined]
+        elif hasattr(count_res, "has_next") and count_res.has_next():  # type: ignore[attr-defined]
             row = count_res.get_next()  # type: ignore[attr-defined]
             try:
                 if isinstance(row, (list, tuple)) and row:
@@ -116,23 +116,46 @@ def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
         rows = []
         if isinstance(res, list):
             rows = res
-        elif hasattr(res, 'has_next') and hasattr(res, 'get_next'):
+        elif hasattr(res, "has_next") and hasattr(res, "get_next"):
             while res.has_next():  # type: ignore[attr-defined]
                 rows.append(res.get_next())  # type: ignore[attr-defined]
         for row in rows:
             try:
                 # Support dict or positional
                 if isinstance(row, dict):
-                    vals = [row.get(f'col_{i}') for i in range(11)]
+                    vals = [row.get(f"col_{i}") for i in range(11)]
                 elif isinstance(row, (list, tuple)):
                     vals = list(row) + [None] * (11 - len(row))
                 else:
                     continue
                 user_id, book_id = vals[0], vals[1]
-                if not isinstance(user_id, str) or not isinstance(book_id, str) or not user_id or not book_id:
+                if (
+                    not isinstance(user_id, str)
+                    or not isinstance(book_id, str)
+                    or not user_id
+                    or not book_id
+                ):
                     continue
-                personal_notes, user_review, start_date, finish_date, reading_status, ownership_status, user_rating, media_type, custom_metadata_raw = (
-                    vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], vals[8], vals[9], vals[10]
+                (
+                    personal_notes,
+                    user_review,
+                    start_date,
+                    finish_date,
+                    reading_status,
+                    ownership_status,
+                    user_rating,
+                    media_type,
+                    custom_metadata_raw,
+                ) = (
+                    vals[2],
+                    vals[3],
+                    vals[4],
+                    vals[5],
+                    vals[6],
+                    vals[7],
+                    vals[8],
+                    vals[9],
+                    vals[10],
                 )
                 custom_updates = {}
                 for k, v in [
@@ -141,7 +164,7 @@ def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
                     ("user_rating", user_rating),
                     ("media_type", media_type),
                 ]:
-                    if v not in (None, ''):
+                    if v not in (None, ""):
                         custom_updates[k] = v
                 # Merge legacy custom_metadata JSON
                 if custom_metadata_raw and isinstance(custom_metadata_raw, str):
@@ -149,30 +172,37 @@ def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
                         legacy_meta = json.loads(custom_metadata_raw)
                         if isinstance(legacy_meta, dict):
                             for k, v in legacy_meta.items():
-                                if v not in (None, ''):
+                                if v not in (None, ""):
                                     custom_updates[k] = v
                     except Exception:
                         pass
                 # Dates go into custom updates unless handled specially
                 if start_date:
-                    custom_updates['start_date'] = start_date
+                    custom_updates["start_date"] = start_date
                 if finish_date:
-                    custom_updates['finish_date'] = finish_date
+                    custom_updates["finish_date"] = finish_date
                 kwargs = {}
                 if personal_notes:
-                    kwargs['personal_notes'] = personal_notes
+                    kwargs["personal_notes"] = personal_notes
                 if user_review:
-                    kwargs['user_review'] = user_review
+                    kwargs["user_review"] = user_review
                 if custom_updates:
-                    kwargs['custom_updates'] = custom_updates
-                personal_metadata_service.update_personal_metadata(user_id, book_id, **kwargs)
+                    kwargs["custom_updates"] = custom_updates
+                personal_metadata_service.update_personal_metadata(
+                    user_id, book_id, **kwargs
+                )
                 migrated += 1
             except Exception as ie:
                 errors += 1
                 logger.warning(f"Failed to migrate OWNS row: {ie}")
     except Exception as e:
         logger.error(f"Error iterating OWNS relationships: {e}")
-        return {"status": "error", "migrated": migrated, "errors": errors, "error": str(e)}
+        return {
+            "status": "error",
+            "migrated": migrated,
+            "errors": errors,
+            "error": str(e),
+        }
 
     _mark_done()
     return {"status": "completed", "migrated": migrated, "errors": errors}
@@ -181,7 +211,7 @@ def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
 def auto_run_migration_if_needed():
     try:
         result = migrate_owns_to_personal(limit=None)
-        if result.get('status') == 'completed':
+        if result.get("status") == "completed":
             logger.info(f"OWNS migration completed: {result}")
         else:
             # Use info level once OWNS fully deprecated to surface skip reason

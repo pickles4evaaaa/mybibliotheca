@@ -1,4 +1,5 @@
 """OPDS sync orchestration helpers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -109,7 +110,9 @@ def _to_kuzu_date(value: Any) -> Optional[date]:
     return None
 
 
-def _build_set_clause(alias: str, properties: Dict[str, Any], *, prefix: str) -> Tuple[str, Dict[str, Any]]:
+def _build_set_clause(
+    alias: str, properties: Dict[str, Any], *, prefix: str
+) -> Tuple[str, Dict[str, Any]]:
     assignments: List[str] = []
     params: Dict[str, Any] = {}
     for key, value in properties.items():
@@ -235,7 +238,7 @@ def _to_date_str(value: Any) -> Optional[str]:
             dt_obj = datetime.fromisoformat(candidate)
             return dt_obj.date().isoformat()
         except ValueError:
-            if len(text) >= 10 and text[4] == '-' and text[7] == '-':
+            if len(text) >= 10 and text[4] == "-" and text[7] == "-":
                 return text[:10]
     return None
 
@@ -251,7 +254,7 @@ def _resolve_source(sample: Dict[str, Any], expression: str) -> Any:
         inner = expr[len("link[") : expr.index("]")]
         attribute, _, value = inner.partition("=")
         attribute = attribute.strip()
-        value = value.strip().strip('"\'')
+        value = value.strip().strip("\"'")
         for link in sample.get("raw_links", []) or []:
             if str(link.get(attribute)) == value:
                 return link.get("href")
@@ -272,12 +275,14 @@ def _assign_contributors(entry: Dict[str, Any], role: str, value: Any) -> None:
     contributors = _ensure_contributors(entry)
     start_index = len(contributors)
     for offset, name in enumerate(names):
-        contributors.append({
-            "id": str(uuid.uuid4()),
-            "name": name,
-            "role": role_upper,
-            "order": start_index + offset,
-        })
+        contributors.append(
+            {
+                "id": str(uuid.uuid4()),
+                "name": name,
+                "role": role_upper,
+                "order": start_index + offset,
+            }
+        )
     if role_upper == "AUTHORED":
         entry["authors"] = names
 
@@ -304,14 +309,18 @@ def apply_mapping_to_samples(
             "raw_links": sample.get("raw_links") or [],
             "published": sample.get("published"),
             "updated": sample.get("updated"),
-            "published_date": _to_date_str(sample.get("published_date") or sample.get("published")),
+            "published_date": _to_date_str(
+                sample.get("published_date") or sample.get("published")
+            ),
             "detected_formats": _detect_formats(sample),
             "page_count": _to_int(sample.get("page_count")),
             "series": sample.get("series"),
             "series_order": _to_int(sample.get("series_order")),
             "publisher": sample.get("publisher"),
             "rating": sample.get("rating"),
-            "average_rating": _to_float(sample.get("average_rating") or sample.get("rating")),
+            "average_rating": _to_float(
+                sample.get("average_rating") or sample.get("rating")
+            ),
             "tags": _ensure_list(sample.get("tags")),
         }
 
@@ -358,7 +367,10 @@ def apply_mapping_to_samples(
                 href_val = link.get("href")
                 if not href_val:
                     continue
-                if rel_val in {"http://opds-spec.org/image", "http://opds-spec.org/cover"} or ("image" in type_val and "thumbnail" not in type_val):
+                if rel_val in {
+                    "http://opds-spec.org/image",
+                    "http://opds-spec.org/cover",
+                } or ("image" in type_val and "thumbnail" not in type_val):
                     entry["cover_url"] = href_val
                     break
 
@@ -369,7 +381,10 @@ def apply_mapping_to_samples(
                 href_val = link.get("href")
                 if not href_val:
                     continue
-                if rel_val in {"http://opds-spec.org/image/thumbnail", "http://opds-spec.org/thumbnail"} or ("thumbnail" in type_val and "image" in type_val):
+                if rel_val in {
+                    "http://opds-spec.org/image/thumbnail",
+                    "http://opds-spec.org/thumbnail",
+                } or ("thumbnail" in type_val and "image" in type_val):
                     entry["cover_thumbnail"] = href_val
                     break
 
@@ -388,7 +403,9 @@ def apply_mapping_to_samples(
             entry["id"] = entry.get("entry_id")
         entry["media_type"] = _infer_media_type(entry.get("detected_formats", []))
         original_published = entry.get("published")
-        normalized_published = _to_date_str(entry.get("published_date") or original_published)
+        normalized_published = _to_date_str(
+            entry.get("published_date") or original_published
+        )
         if normalized_published is not None:
             entry["published_date"] = normalized_published
             entry["published"] = normalized_published
@@ -496,7 +513,11 @@ class OPDSSyncService:
         return candidate if candidate > 0 else None
 
     def _resolve_effective_limit(self, requested_limit: Optional[int]) -> Optional[int]:
-        limit = requested_limit if requested_limit is not None and requested_limit > 0 else None
+        limit = (
+            requested_limit
+            if requested_limit is not None and requested_limit > 0
+            else None
+        )
         if self._max_sync is not None:
             limit = min(limit, self._max_sync) if limit is not None else self._max_sync
         return limit
@@ -526,7 +547,9 @@ class OPDSSyncService:
         )
         entries = apply_mapping_to_samples(probe.get("samples", []), mapping)
         limited_entries = entries[:max_samples]
-        preview_payload = await asyncio.to_thread(self._simulate_entries, limited_entries)
+        preview_payload = await asyncio.to_thread(
+            self._simulate_entries, limited_entries
+        )
         return {
             "probe": probe,
             "preview": preview_payload.get("preview", []),
@@ -563,20 +586,29 @@ class OPDSSyncService:
         location_checked = False
         location_user_id = user_id or "__system__"
 
-        context_manager = flask_app.app_context() if flask_app is not None else nullcontext()
+        context_manager = (
+            flask_app.app_context() if flask_app is not None else nullcontext()
+        )
 
         with context_manager:
             with safe_get_connection(operation="opds_sync") as conn:
                 for entry in entries:
                     entry["opds_source_entry_hash"] = _compute_entry_hash(entry)
-                    entry["opds_source_updated_at"] = _normalize_timestamp(entry.get("updated") or entry.get("published"))
+                    entry["opds_source_updated_at"] = _normalize_timestamp(
+                        entry.get("updated") or entry.get("published")
+                    )
                     oid = entry.get("opds_source_id")
                     if not oid:
                         skipped += 1
                         continue
                     book_id = self._find_book_id(conn, oid)
                     if book_id:
-                        self._cache_cover_if_needed(entry, book_id, cover_auth=cover_auth, cover_headers=cover_headers)
+                        self._cache_cover_if_needed(
+                            entry,
+                            book_id,
+                            cover_auth=cover_auth,
+                            cover_headers=cover_headers,
+                        )
                         success = self._update_book(conn, book_id, entry, now)
                         if success:
                             updated += 1
@@ -584,16 +616,27 @@ class OPDSSyncService:
                             try:
                                 self._sync_relationships(book_id, entry)
                             except Exception:
-                                logger.exception("Failed to reconcile relationships for updated OPDS book %s", book_id)
+                                logger.exception(
+                                    "Failed to reconcile relationships for updated OPDS book %s",
+                                    book_id,
+                                )
                             try:
                                 self._sync_contributors(book_id, entry)
                             except Exception:
-                                logger.exception("Failed to reconcile contributors for updated OPDS book %s", book_id)
+                                logger.exception(
+                                    "Failed to reconcile contributors for updated OPDS book %s",
+                                    book_id,
+                                )
                         else:
                             skipped += 1
                     else:
                         new_id = str(uuid.uuid4())
-                        self._cache_cover_if_needed(entry, new_id, cover_auth=cover_auth, cover_headers=cover_headers)
+                        self._cache_cover_if_needed(
+                            entry,
+                            new_id,
+                            cover_auth=cover_auth,
+                            cover_headers=cover_headers,
+                        )
                         success = self._create_book(conn, new_id, entry, now)
                         if success:
                             created += 1
@@ -601,42 +644,76 @@ class OPDSSyncService:
                             try:
                                 self._sync_relationships(new_id, entry)
                             except Exception:
-                                logger.exception("Failed to create relationships for new OPDS book %s", new_id)
+                                logger.exception(
+                                    "Failed to create relationships for new OPDS book %s",
+                                    new_id,
+                                )
                             try:
                                 self._sync_contributors(new_id, entry)
                             except Exception:
-                                logger.exception("Failed to create contributors for new OPDS book %s", new_id)
+                                logger.exception(
+                                    "Failed to create contributors for new OPDS book %s",
+                                    new_id,
+                                )
                             if not location_checked or not default_location_id:
                                 try:
-                                    location_service = location_service or self._get_location_service()
-                                    default_location = location_service.get_default_location()
+                                    location_service = (
+                                        location_service or self._get_location_service()
+                                    )
+                                    default_location = (
+                                        location_service.get_default_location()
+                                    )
                                     if not default_location:
                                         try:
                                             location_service.setup_default_locations()
-                                            default_location = location_service.get_default_location()
+                                            default_location = (
+                                                location_service.get_default_location()
+                                            )
                                         except Exception:
-                                            logger.exception("Failed to initialize default location for OPDS book %s", new_id)
-                                    default_location_id = getattr(default_location, "id", None) if default_location else None
+                                            logger.exception(
+                                                "Failed to initialize default location for OPDS book %s",
+                                                new_id,
+                                            )
+                                    default_location_id = (
+                                        getattr(default_location, "id", None)
+                                        if default_location
+                                        else None
+                                    )
                                 except Exception:
-                                    logger.exception("Failed to resolve default location for OPDS book %s", new_id)
+                                    logger.exception(
+                                        "Failed to resolve default location for OPDS book %s",
+                                        new_id,
+                                    )
                                     default_location_id = None
                                 location_checked = True
                             if default_location_id:
-                                assigned = self._assign_default_location(conn, new_id, default_location_id)
+                                assigned = self._assign_default_location(
+                                    conn, new_id, default_location_id
+                                )
                                 if not assigned and location_service:
                                     try:
-                                        location_service.add_book_to_location(new_id, default_location_id, location_user_id)
+                                        location_service.add_book_to_location(
+                                            new_id,
+                                            default_location_id,
+                                            location_user_id,
+                                        )
                                     except Exception:
-                                        logger.exception("Failed to assign default location for OPDS book %s", new_id)
+                                        logger.exception(
+                                            "Failed to assign default location for OPDS book %s",
+                                            new_id,
+                                        )
                         else:
                             skipped += 1
-        return SyncResult(created=created, updated=updated, skipped=skipped, entries=book_ids)
+        return SyncResult(
+            created=created, updated=updated, skipped=skipped, entries=book_ids
+        )
 
     def _simulate_entries(self, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         would_create = 0
         would_update = 0
         skipped = 0
         preview: List[PreviewRow] = []
+
         def _process(conn) -> None:
             nonlocal would_create, would_update, skipped
             for entry in entries:
@@ -730,7 +807,9 @@ class OPDSSyncService:
             return
         try:
             try:
-                cached_url = process_image_from_url(str(cover_url), auth=cover_auth, headers=cover_headers)
+                cached_url = process_image_from_url(
+                    str(cover_url), auth=cover_auth, headers=cover_headers
+                )
             except TypeError as exc:
                 if "unexpected keyword argument" in str(exc):
                     cached_url = process_image_from_url(str(cover_url))
@@ -767,15 +846,21 @@ class OPDSSyncService:
                 return None
         return None
 
-    def _create_book(self, conn, book_id: str, entry: Dict[str, Any], now: datetime) -> bool:  # type: ignore[no-untyped-def]
+    def _create_book(
+        self, conn, book_id: str, entry: Dict[str, Any], now: datetime
+    ) -> bool:  # type: ignore[no-untyped-def]
         raw_categories_value = entry.get("raw_categories")
         normalized_raw_categories = self._normalize_categories(raw_categories_value)
         if normalized_raw_categories is None:
-            normalized_raw_categories = self._normalize_categories(entry.get("categories"))
+            normalized_raw_categories = self._normalize_categories(
+                entry.get("categories")
+            )
         raw_categories_json = json.dumps(normalized_raw_categories or [])
 
         title_value = entry.get("title")
-        published_date_value = _to_kuzu_date(entry.get("published_date") or entry.get("published"))
+        published_date_value = _to_kuzu_date(
+            entry.get("published_date") or entry.get("published")
+        )
         props = {
             "title": title_value,
             "normalized_title": _normalize_title(title_value),
@@ -822,12 +907,20 @@ class OPDSSyncService:
                     operation="opds_sync_clear_categories",
                 )
             except Exception:
-                logger.exception("Failed to clear category relationships for book %s", book_id)
+                logger.exception(
+                    "Failed to clear category relationships for book %s", book_id
+                )
             if normalized_categories:
                 try:
-                    run_async(self._book_repo._create_category_relationships_from_raw(book_id, normalized_categories))
+                    run_async(
+                        self._book_repo._create_category_relationships_from_raw(
+                            book_id, normalized_categories
+                        )
+                    )
                 except Exception:
-                    logger.exception("Failed to create category relationships for book %s", book_id)
+                    logger.exception(
+                        "Failed to create category relationships for book %s", book_id
+                    )
 
         publisher = entry.get("publisher")
         if publisher is not None:
@@ -839,12 +932,20 @@ class OPDSSyncService:
                     operation="opds_sync_clear_publisher",
                 )
             except Exception:
-                logger.exception("Failed to clear publisher relationship for book %s", book_id)
+                logger.exception(
+                    "Failed to clear publisher relationship for book %s", book_id
+                )
             if normalized_publisher:
                 try:
-                    run_async(self._book_repo._create_publisher_relationship(book_id, normalized_publisher))
+                    run_async(
+                        self._book_repo._create_publisher_relationship(
+                            book_id, normalized_publisher
+                        )
+                    )
                 except Exception:
-                    logger.exception("Failed to create publisher relationship for book %s", book_id)
+                    logger.exception(
+                        "Failed to create publisher relationship for book %s", book_id
+                    )
 
     def _sync_contributors(self, book_id: str, entry: Dict[str, Any]) -> None:
         """Rebuild contributor relationships for the given book based on the entry payload."""
@@ -859,7 +960,9 @@ class OPDSSyncService:
                         return member
             return ContributionType.AUTHORED
 
-        def _extract_person(payload: Dict[str, Any], fallback_name: Optional[str]) -> Optional[Person]:
+        def _extract_person(
+            payload: Dict[str, Any], fallback_name: Optional[str]
+        ) -> Optional[Person]:
             name = (payload.get("name") or fallback_name or "").strip()
             if not name:
                 return None
@@ -907,7 +1010,9 @@ class OPDSSyncService:
                 operation="opds_sync_clear_contributors",
             )
         except Exception:
-            logger.exception("Failed to clear contributor relationships for book %s", book_id)
+            logger.exception(
+                "Failed to clear contributor relationships for book %s", book_id
+            )
 
         prepared_contributions: List[BookContribution] = []
         for raw in contributors_payload:
@@ -928,12 +1033,17 @@ class OPDSSyncService:
                 elif person_payload is None:
                     person_obj = _extract_person(payload, payload.get("name"))
                 else:
-                    person_obj = _extract_person(getattr(person_payload, "__dict__", {}) or {}, payload.get("name"))
+                    person_obj = _extract_person(
+                        getattr(person_payload, "__dict__", {}) or {},
+                        payload.get("name"),
+                    )
 
                 if not person_obj:
                     continue
 
-                contribution_type = payload.get("contribution_type") or payload.get("role")
+                contribution_type = payload.get("contribution_type") or payload.get(
+                    "role"
+                )
                 contribution_enum = _resolve_contribution_type(contribution_type)
                 order_value = payload.get("order")
                 notes = payload.get("notes")
@@ -958,9 +1068,15 @@ class OPDSSyncService:
             if getattr(contribution, "auto_fetch_metadata", None) is None:
                 setattr(contribution, "auto_fetch_metadata", True)
             try:
-                run_async(self._book_repo._create_contributor_relationship(book_id, contribution, contribution.order))
+                run_async(
+                    self._book_repo._create_contributor_relationship(
+                        book_id, contribution, contribution.order
+                    )
+                )
             except Exception:
-                contributor_name = getattr(getattr(contribution, "person", None), "name", "<unknown>")
+                contributor_name = getattr(
+                    getattr(contribution, "person", None), "name", "<unknown>"
+                )
                 logger.exception(
                     "Failed to create contributor relationship for book %s (contributor %s)",
                     book_id,
@@ -984,19 +1100,26 @@ class OPDSSyncService:
             return True
         except Exception:
             logger.exception(
-                "Failed to assign default location via direct query for OPDS book %s", book_id
+                "Failed to assign default location via direct query for OPDS book %s",
+                book_id,
             )
             return False
 
-    def _update_book(self, conn, book_id: str, entry: Dict[str, Any], now: datetime) -> bool:  # type: ignore[no-untyped-def]
+    def _update_book(
+        self, conn, book_id: str, entry: Dict[str, Any], now: datetime
+    ) -> bool:  # type: ignore[no-untyped-def]
         raw_categories_value = entry.get("raw_categories")
         normalized_raw_categories = self._normalize_categories(raw_categories_value)
         if normalized_raw_categories is None:
-            normalized_raw_categories = self._normalize_categories(entry.get("categories"))
+            normalized_raw_categories = self._normalize_categories(
+                entry.get("categories")
+            )
         raw_categories_json = json.dumps(normalized_raw_categories or [])
 
         title_value = entry.get("title")
-        published_date_value = _to_kuzu_date(entry.get("published_date") or entry.get("published"))
+        published_date_value = _to_kuzu_date(
+            entry.get("published_date") or entry.get("published")
+        )
         update_fields = {
             "title": title_value,
             "normalized_title": _normalize_title(title_value),
@@ -1049,7 +1172,9 @@ class OPDSSyncService:
             try:
                 decoded = json.loads(text)
             except json.JSONDecodeError:
-                parts = [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+                parts = [
+                    part.strip() for part in re.split(r"[;,|]", text) if part.strip()
+                ]
                 return parts or []
             else:
                 if isinstance(decoded, list):

@@ -9,8 +9,8 @@ See MIGRATION.md for details.
 Run this script to add the new fields for account lockout and privacy settings
 """
 
-import os
 import sys
+
 
 def main():
     print("⚠️  WARNING: This migration script is deprecated.")
@@ -20,8 +20,10 @@ def main():
     print("The automatic migration system includes all security and privacy features!")
     return True
 
+
 if __name__ == "__main__":
     main()
+
 
 def migrate_database():
     """This function is deprecated - migrations now run automatically"""
@@ -29,14 +31,15 @@ def migrate_database():
     print("Database migrations now run automatically when the application starts.")
     return True
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     print("MyBibliotheca - Security & Privacy Features Migration")
     print("=" * 60)
     print("⚠️  WARNING: This migration script is deprecated.")
     print("Database migrations now run automatically when the application starts.")
     print("See MIGRATION.md for details.")
     print("=" * 60)
-    
+
     if migrate_database():
         print("\n🎉 Migration completed successfully!")
         print("New features available:")

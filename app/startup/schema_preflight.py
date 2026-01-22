@@ -18,6 +18,7 @@ Environment flags:
     PREFLIGHT_REL_ONLY=true        -> only process relationships
     PREFLIGHT_NODES_ONLY=true      -> only process nodes
 """
+
 from __future__ import annotations
 
 import os
@@ -41,7 +42,9 @@ _PREFLIGHT_DB_KEY: str | None = None
 
 LOCK_TIMEOUT_SECONDS = 30
 LOCK_POLL_INTERVAL = 0.25
-LOCK_MAX_AGE_SECONDS = int(os.getenv("SCHEMA_PREFLIGHT_LOCK_MAX_AGE", "300"))  # stale lock cleanup
+LOCK_MAX_AGE_SECONDS = int(
+    os.getenv("SCHEMA_PREFLIGHT_LOCK_MAX_AGE", "300")
+)  # stale lock cleanup
 
 
 def _get_data_root() -> Path:
@@ -71,7 +74,11 @@ def _load_marker() -> Dict[str, Any]:
 
 def _write_marker(meta: Dict[str, Any]):
     try:
-        payload = {"version": meta.get("version"), "sha256": meta.get("sha256"), "written_at": datetime.utcnow().isoformat()}
+        payload = {
+            "version": meta.get("version"),
+            "sha256": meta.get("sha256"),
+            "written_at": datetime.utcnow().isoformat(),
+        }
         _marker_file().write_text(json.dumps(payload, indent=2))
     except Exception as e:
         logger.warning(f"Failed writing schema preflight marker: {e}")
@@ -111,7 +118,9 @@ def _acquire_lock() -> bool:
                 pass
             # If timeout exceeded, skip running but allow read-only check
             if time.time() - start > LOCK_TIMEOUT_SECONDS:
-                logger.warning("Timeout waiting for schema preflight lock; assuming another process handled it")
+                logger.warning(
+                    "Timeout waiting for schema preflight lock; assuming another process handled it"
+                )
                 return False
             time.sleep(LOCK_POLL_INTERVAL)
 
@@ -133,7 +142,9 @@ def _load_master_schema() -> Dict[str, Any]:
     global _SCHEMA_CACHE
     if _SCHEMA_CACHE:
         return _SCHEMA_CACHE
-    default_path = Path(__file__).resolve().parent.parent / "schema" / "master_schema.json"
+    default_path = (
+        Path(__file__).resolve().parent.parent / "schema" / "master_schema.json"
+    )
     schema_path = Path(os.getenv("MASTER_SCHEMA_PATH", str(default_path)))
     if not schema_path.exists():
         raise FileNotFoundError(f"Master schema JSON not found at {schema_path}")
@@ -151,6 +162,7 @@ def _load_master_schema() -> Dict[str, Any]:
     _SCHEMA_META["sha256"] = sha256
     return data
 
+
 def _column_exists(conn, table: str, column: str) -> bool:
     """Return True if a property exists by attempting to project it.
 
@@ -167,6 +179,7 @@ def _column_exists(conn, table: str, column: str) -> bool:
             return False
         logger.debug(f"Schema preflight: ambiguous error probing {table}.{column}: {e}")
         return True
+
 
 def _detect_missing_columns(conn) -> List[Tuple[str, str, str]]:
     schema = _load_master_schema()
@@ -188,7 +201,10 @@ def _relationship_table_exists(conn, rel_type: str) -> bool:
         conn.execute(f"MATCH ()-[r:{rel_type}]->() RETURN COUNT(r) LIMIT 1")
         return True
     except Exception as e:
-        if any(tok in str(e).lower() for tok in ["does not exist", "unknown", "cannot find"]):
+        if any(
+            tok in str(e).lower()
+            for tok in ["does not exist", "unknown", "cannot find"]
+        ):
             return False
         return True  # Ambiguous -> assume exists
 
@@ -201,7 +217,9 @@ def _relationship_property_exists(conn, rel_type: str, prop: str) -> bool:
         msg = str(e)
         if "Cannot find property" in msg and prop in msg:
             return False
-        if any(tok in msg.lower() for tok in ["does not exist", "unknown", "cannot find"]):
+        if any(
+            tok in msg.lower() for tok in ["does not exist", "unknown", "cannot find"]
+        ):
             # Table missing -> treat as missing property (handled upstream)
             return False
         return True
@@ -223,13 +241,18 @@ def _detect_relationship_changes(conn):
                 add_props.append((rel_type, prop, ptype))
     return create_missing, add_props
 
+
 def _create_backup_if_needed(reason: str) -> None:
     try:
         from app.services.simple_backup_service import SimpleBackupService
+
         service = SimpleBackupService()
-        service.create_backup(description="Automatic pre schema upgrade backup", reason=reason)
+        service.create_backup(
+            description="Automatic pre schema upgrade backup", reason=reason
+        )
     except Exception as e:
         logger.warning(f"Schema preflight: failed to create backup: {e}")
+
 
 def _apply_alter_statements(conn, to_add: List[Tuple[str, str, str]]):
     for table, col, col_type in to_add:
@@ -258,7 +281,7 @@ def _apply_relationship_creates(conn, rel_types: List[str]):
         prop_section = (",\n            ".join(parts)) if parts else ""
         ddl = f"""
         CREATE REL TABLE {rel}(
-            FROM {from_label} TO {to_label}{(',' if prop_section else '')}
+            FROM {from_label} TO {to_label}{("," if prop_section else "")}
             {prop_section}
         )
         """
@@ -269,18 +292,23 @@ def _apply_relationship_creates(conn, rel_types: List[str]):
 def _apply_relationship_alters(conn, props: List[Tuple[str, str, str]]):
     for rel_type, prop, ptype in props:
         try:
-            logger.info(f"Adding missing relationship property {rel_type}.{prop} ({ptype})")
+            logger.info(
+                f"Adding missing relationship property {rel_type}.{prop} ({ptype})"
+            )
             conn.execute(f"ALTER TABLE {rel_type} ADD {prop} {ptype}")
         except Exception as e:
             if "already exists" in str(e).lower():
-                logger.info(f"Relationship property {rel_type}.{prop} already exists (race)")
+                logger.info(
+                    f"Relationship property {rel_type}.{prop} already exists (race)"
+                )
                 continue
             raise
+
 
 def run_schema_preflight() -> None:
     global _PREFLIGHT_RAN, _PREFLIGHT_DB_KEY
     current_db_key = str(_get_data_root().resolve())
-    force = os.getenv("SCHEMA_PREFLIGHT_FORCE", "false").lower() in ("1","true","yes")
+    force = os.getenv("SCHEMA_PREFLIGHT_FORCE", "false").lower() in ("1", "true", "yes")
 
     if _PREFLIGHT_RAN and not force:
         if _PREFLIGHT_DB_KEY and _PREFLIGHT_DB_KEY != current_db_key:
@@ -291,11 +319,15 @@ def run_schema_preflight() -> None:
             )
             _PREFLIGHT_RAN = False  # allow rerun in this invocation
         else:
-            logger.debug("Schema preflight already executed in this process; skipping duplicate run")
+            logger.debug(
+                "Schema preflight already executed in this process; skipping duplicate run"
+            )
             return
 
     if os.getenv("DISABLE_SCHEMA_PREFLIGHT", "false").lower() in ("1", "true", "yes"):
-        logger.info("Schema preflight disabled via DISABLE_SCHEMA_PREFLIGHT (early exit)")
+        logger.info(
+            "Schema preflight disabled via DISABLE_SCHEMA_PREFLIGHT (early exit)"
+        )
         _PREFLIGHT_RAN = True
         _PREFLIGHT_DB_KEY = current_db_key
         return
@@ -324,11 +356,15 @@ def run_schema_preflight() -> None:
         # Another process likely handled it; if after waiting marker still mismatched we log a warning
         marker_after = _load_marker()
         if marker_after.get("sha256") != _SCHEMA_META.get("sha256"):
-            logger.warning("Schema preflight lock timeout and marker hash mismatch – potential race; proceeding without changes")
+            logger.warning(
+                "Schema preflight lock timeout and marker hash mismatch – potential race; proceeding without changes"
+            )
         _PREFLIGHT_RAN = True
         _PREFLIGHT_DB_KEY = current_db_key
         return
-    logger.info("🔍 Running schema preflight check for additive node + relationship upgrades...")
+    logger.info(
+        "🔍 Running schema preflight check for additive node + relationship upgrades..."
+    )
     # Version/hash logging (schema already loaded)
     meta_bits = []
     if "version" in _SCHEMA_META:
@@ -341,8 +377,16 @@ def run_schema_preflight() -> None:
         logger.info("Master schema: " + ", ".join(meta_bits))
     manager = get_safe_kuzu_manager()
     with manager.get_connection(operation="schema_preflight") as conn:
-        process_nodes = os.getenv("PREFLIGHT_REL_ONLY", "false").lower() not in ("1","true","yes")
-        process_rels = os.getenv("PREFLIGHT_NODES_ONLY", "false").lower() not in ("1","true","yes")
+        process_nodes = os.getenv("PREFLIGHT_REL_ONLY", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        )
+        process_rels = os.getenv("PREFLIGHT_NODES_ONLY", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        )
 
         missing_node_cols: List[Tuple[str, str, str]] = []
         create_rel: List[str] = []
@@ -355,34 +399,52 @@ def run_schema_preflight() -> None:
 
         # Always evaluate migration runner (dry run) to see if additional additive changes needed
         mig_preview = run_additive_migrations(dry_run=True)
-        raw_missing = mig_preview.get("missing", []) if mig_preview.get("status") == "pending" else []
-        pending_migration_cols: List[str] = list(raw_missing) if isinstance(raw_missing, (list, tuple, set)) else []
+        raw_missing = (
+            mig_preview.get("missing", [])
+            if mig_preview.get("status") == "pending"
+            else []
+        )
+        pending_migration_cols: List[str] = (
+            list(raw_missing) if isinstance(raw_missing, (list, tuple, set)) else []
+        )
 
-        if not (missing_node_cols or create_rel or alter_rel_props or pending_migration_cols):
+        if not (
+            missing_node_cols or create_rel or alter_rel_props or pending_migration_cols
+        ):
             logger.info("✅ No additive schema changes required.")
             return
 
         # Summaries
         if missing_node_cols:
             logger.info(
-                f"Node columns to add ({len(missing_node_cols)}): " + ", ".join(f"{t}.{c}" for t, c, _ in missing_node_cols)
+                f"Node columns to add ({len(missing_node_cols)}): "
+                + ", ".join(f"{t}.{c}" for t, c, _ in missing_node_cols)
             )
         if create_rel:
-            logger.info(f"Relationship tables to create ({len(create_rel)}): {', '.join(create_rel)}")
+            logger.info(
+                f"Relationship tables to create ({len(create_rel)}): {', '.join(create_rel)}"
+            )
         if alter_rel_props:
             logger.info(
-                f"Relationship properties to add ({len(alter_rel_props)}): " +
-                ", ".join(f"{r}.{p}" for r, p, _ in alter_rel_props)
+                f"Relationship properties to add ({len(alter_rel_props)}): "
+                + ", ".join(f"{r}.{p}" for r, p, _ in alter_rel_props)
             )
         if pending_migration_cols:
             logger.info(
-                f"Migration runner columns to add ({len(pending_migration_cols)}): " + ", ".join(f"Book.{c}" for c in pending_migration_cols)
+                f"Migration runner columns to add ({len(pending_migration_cols)}): "
+                + ", ".join(f"Book.{c}" for c in pending_migration_cols)
             )
 
-        if os.getenv("SKIP_PREFLIGHT_BACKUP", "false").lower() not in ("1", "true", "yes"):
+        if os.getenv("SKIP_PREFLIGHT_BACKUP", "false").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
             _create_backup_if_needed("pre_schema_upgrade")
         else:
-            logger.info("Skipping automatic pre-upgrade backup per SKIP_PREFLIGHT_BACKUP")
+            logger.info(
+                "Skipping automatic pre-upgrade backup per SKIP_PREFLIGHT_BACKUP"
+            )
 
         try:
             if missing_node_cols:
@@ -404,6 +466,7 @@ def run_schema_preflight() -> None:
     _write_marker(_SCHEMA_META)
     if got_lock:
         _release_lock()
+
 
 if os.getenv("SCHEMA_PREFLIGHT_AUTORUN", "1").lower() in ("1", "true", "yes"):
     try:  # execute on import

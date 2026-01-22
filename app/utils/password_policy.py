@@ -84,7 +84,9 @@ def get_persisted_password_min_length() -> Optional[int]:
     return None
 
 
-def resolve_min_password_length(include_source: bool = False) -> Union[int, Tuple[int, str]]:
+def resolve_min_password_length(
+    include_source: bool = False,
+) -> Union[int, Tuple[int, str]]:
     """Resolve the active minimum password length with precedence: env > config > default."""
     env_value = get_env_password_min_length()
     if env_value is not None:
@@ -92,9 +94,17 @@ def resolve_min_password_length(include_source: bool = False) -> Union[int, Tupl
 
     persisted_value = get_persisted_password_min_length()
     if persisted_value is not None:
-        return (persisted_value, _PASSWORD_LENGTH_SOURCES[1]) if include_source else persisted_value
+        return (
+            (persisted_value, _PASSWORD_LENGTH_SOURCES[1])
+            if include_source
+            else persisted_value
+        )
 
-    return (DEFAULT_MIN_PASSWORD_LENGTH, _PASSWORD_LENGTH_SOURCES[2]) if include_source else DEFAULT_MIN_PASSWORD_LENGTH
+    return (
+        (DEFAULT_MIN_PASSWORD_LENGTH, _PASSWORD_LENGTH_SOURCES[2])
+        if include_source
+        else DEFAULT_MIN_PASSWORD_LENGTH
+    )
 
 
 def get_password_requirements() -> List[str]:
@@ -104,5 +114,5 @@ def get_password_requirements() -> List[str]:
         f"At least {min_length} characters long",
         "Contains at least one letter (A-Z or a-z)",
         "Contains at least one number (0-9) OR one special character (!@#$%^&*()_+-=[]{};':\"\\|,.<>/?)",
-        "Not a commonly used password"
+        "Not a commonly used password",
     ]

@@ -38,12 +38,12 @@ Batching:
   - Streams rows in batches to minimize memory.
 
 """
+
 import os
 import sys
 import argparse
 import sqlite3
 import json
-import math
 import time
 from datetime import datetime, timezone
 from contextlib import closing
@@ -56,7 +56,9 @@ except Exception:
 try:
     import psycopg
 except ImportError:
-    print("psycopg not installed. Please add psycopg (psycopg[binary]) to requirements if needed.")
+    print(
+        "psycopg not installed. Please add psycopg (psycopg[binary]) to requirements if needed."
+    )
     sys.exit(1)
 
 BATCH_SIZE = 1000
@@ -68,7 +70,7 @@ LEGACY_TABLES = [
     "book_category",
     "reading_log",
     "custom_field",
-    "custom_field_value"
+    "custom_field_value",
 ]
 
 # Minimal legacy v1 schema DDL (adjust as needed based on actual historical schema)
@@ -84,27 +86,42 @@ LEGACY_DDL = {
     # Synthesized user table for importer expectations
     "user": """CREATE TABLE IF NOT EXISTS user (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        username TEXT,\n        email TEXT,\n        password_hash TEXT,\n        is_admin INTEGER\n    );""",
     # Meta table
-    "_export_meta": """CREATE TABLE IF NOT EXISTS _export_meta (\n        key TEXT PRIMARY KEY,\n        value TEXT\n    );"""
+    "_export_meta": """CREATE TABLE IF NOT EXISTS _export_meta (\n        key TEXT PRIMARY KEY,\n        value TEXT\n    );""",
 }
 
 # Column selection map: Postgres columns -> legacy columns order (subset friendly)
 COLUMN_MAP = {
-    "book": ["id","title","subtitle","authors","description","isbn","isbn13","language","page_count","publisher","published_year","created_at","updated_at"],
-    "author": ["id","name"],
-    "book_author": ["book_id","author_id"],
-    "category": ["id","name"],
-    "book_category": ["book_id","category_id"],
-    "reading_log": ["id","book_id","started_at","finished_at","notes","status"],
-    "custom_field": ["id","name","field_type"],
-    "custom_field_value": ["id","book_id","field_id","value"],
+    "book": [
+        "id",
+        "title",
+        "subtitle",
+        "authors",
+        "description",
+        "isbn",
+        "isbn13",
+        "language",
+        "page_count",
+        "publisher",
+        "published_year",
+        "created_at",
+        "updated_at",
+    ],
+    "author": ["id", "name"],
+    "book_author": ["book_id", "author_id"],
+    "category": ["id", "name"],
+    "book_category": ["book_id", "category_id"],
+    "reading_log": ["id", "book_id", "started_at", "finished_at", "notes", "status"],
+    "custom_field": ["id", "name", "field_type"],
+    "custom_field_value": ["id", "book_id", "field_id", "value"],
 }
 
 SYNTH_USER = {
     "username": "legacy_admin",
     "email": "legacy@example.com",
     "password_hash": "legacy_migrated",  # placeholder; real admin created during migration
-    "is_admin": 1
+    "is_admin": 1,
 }
+
 
 def load_env():
     if load_dotenv:
@@ -134,7 +151,9 @@ def connect_postgres(url: str):
 
 
 def table_exists(cur, table: str) -> bool:
-    cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name=%s LIMIT 1", (table,))
+    cur.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_name=%s LIMIT 1", (table,)
+    )
     return cur.fetchone() is not None
 
 
@@ -156,7 +175,10 @@ def export_table(pg_cur, sqlite_conn, table: str, columns: list):
         print(f"[SKIP] Table {table} not found in source")
         return 0
     # Introspect actual columns present
-    pg_cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
+    pg_cur.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name=%s",
+        (table,),
+    )
     present_cols = {r[0] for r in pg_cur.fetchall()}
     # Build select list; if a requested column missing, substitute NULL AS col
     select_exprs = []
@@ -165,8 +187,10 @@ def export_table(pg_cur, sqlite_conn, table: str, columns: list):
             select_exprs.append(c)
         else:
             select_exprs.append(f"NULL AS {c}")
-            if table == 'book':
-                print(f"[WARN] Column '{c}' missing in source 'book' table; filling with NULL")
+            if table == "book":
+                print(
+                    f"[WARN] Column '{c}' missing in source 'book' table; filling with NULL"
+                )
     select_sql = ",".join(select_exprs)
     total = fetch_count(pg_cur, table)
     if total == 0:
@@ -177,13 +201,15 @@ def export_table(pg_cur, sqlite_conn, table: str, columns: list):
     inserted = 0
     placeholder = ",".join(["?"] * len(columns))
     while offset < total:
-        pg_cur.execute(f"SELECT {select_sql} FROM {table} ORDER BY {columns[0]} OFFSET %s LIMIT %s", (offset, BATCH_SIZE))
+        pg_cur.execute(
+            f"SELECT {select_sql} FROM {table} ORDER BY {columns[0]} OFFSET %s LIMIT %s",
+            (offset, BATCH_SIZE),
+        )
         rows = pg_cur.fetchall()
         if not rows:
             break
         sqlite_conn.executemany(
-            f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholder})",
-            rows
+            f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholder})", rows
         )
         inserted += len(rows)
         offset += len(rows)
@@ -199,7 +225,12 @@ def insert_single_user(sqlite_conn):
     if cur.fetchone()[0] == 0:
         sqlite_conn.execute(
             "INSERT INTO user (username,email,password_hash,is_admin) VALUES (?,?,?,?)",
-            (SYNTH_USER["username"], SYNTH_USER["email"], SYNTH_USER["password_hash"], SYNTH_USER["is_admin"])
+            (
+                SYNTH_USER["username"],
+                SYNTH_USER["email"],
+                SYNTH_USER["password_hash"],
+                SYNTH_USER["is_admin"],
+            ),
         )
         sqlite_conn.commit()
         print("[INFO] Synthesized single legacy user row")
@@ -208,13 +239,23 @@ def insert_single_user(sqlite_conn):
 def write_meta(sqlite_conn, meta: dict):
     with sqlite_conn:
         for k, v in meta.items():
-            sqlite_conn.execute("REPLACE INTO _export_meta (key,value) VALUES (?,?)", (k, json.dumps(v)))
+            sqlite_conn.execute(
+                "REPLACE INTO _export_meta (key,value) VALUES (?,?)", (k, json.dumps(v))
+            )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Export legacy single-user Postgres DB to legacy-format SQLite")
-    parser.add_argument("--output", default="legacy_snapshot.sqlite", help="Output SQLite filename")
-    parser.add_argument("--skip-custom-fields", action="store_true", help="Skip custom field tables even if present")
+    parser = argparse.ArgumentParser(
+        description="Export legacy single-user Postgres DB to legacy-format SQLite"
+    )
+    parser.add_argument(
+        "--output", default="legacy_snapshot.sqlite", help="Output SQLite filename"
+    )
+    parser.add_argument(
+        "--skip-custom-fields",
+        action="store_true",
+        help="Skip custom field tables even if present",
+    )
     args = parser.parse_args()
 
     load_env()
@@ -234,9 +275,13 @@ def main():
             ensure_sqlite_schema(sqlite_conn)
 
             def _iso_utc_now():
-                return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-            manifest = {"exported_tables": {}, "started_at": _iso_utc_now(), "source": "postgres_single_user"}
+            manifest = {
+                "exported_tables": {},
+                "started_at": _iso_utc_now(),
+                "source": "postgres_single_user",
+            }
 
             for table in LEGACY_TABLES:
                 if args.skip_custom_fields and table.startswith("custom_field"):
@@ -262,6 +307,7 @@ def main():
     print("\n[SUMMARY]")
     print(json.dumps(manifest, indent=2))
     print(f"\n[OK] Export complete -> {args.output}")
+
 
 if __name__ == "__main__":
     main()

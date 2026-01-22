@@ -18,15 +18,18 @@ from typing import Any, Dict, List, Optional
 # These accessors are patched in tests; provide simple defaults for runtime use
 def get_category_service():
     from .kuzu_category_service import KuzuCategoryService
+
     return KuzuCategoryService()
 
 
 def get_ai_service():
     from .ai_service import AIService
+
     # Try to use Flask app config if available; fall back to empty config for tests
     try:
         from flask import current_app
-        cfg = dict(getattr(current_app, 'config', {})) if current_app else {}
+
+        cfg = dict(getattr(current_app, "config", {})) if current_app else {}
     except Exception:
         cfg = {}
     return AIService(cfg)
@@ -70,7 +73,10 @@ class GenreTaxonomyService:
 
     # ---------- Helpers ----------
     def _create_batches(self, items: List[Any]) -> List[List[Any]]:
-        return [items[i : i + self.batch_size] for i in range(0, len(items), self.batch_size)]
+        return [
+            items[i : i + self.batch_size]
+            for i in range(0, len(items), self.batch_size)
+        ]
 
     # ---------- AI Operations ----------
     async def analyze_genre_batch(self, batch: List[Any]) -> Dict[str, Any]:
@@ -82,11 +88,15 @@ class GenreTaxonomyService:
             ai_result = await self.ai_service.analyze_with_prompt(
                 template_name="genre_analysis_batch.mustache",
                 variables={
-                    "genre_names": [getattr(g, 'name', '') for g in batch],
+                    "genre_names": [getattr(g, "name", "") for g in batch],
                 },
             )
 
-            parsed = json.loads(ai_result) if isinstance(ai_result, str) else (ai_result or {})
+            parsed = (
+                json.loads(ai_result)
+                if isinstance(ai_result, str)
+                else (ai_result or {})
+            )
             # Ensure required keys exist
             return {
                 "groups": parsed.get("groups", []),
@@ -96,13 +106,17 @@ class GenreTaxonomyService:
         except Exception:
             return {"groups": [], "hierarchies": [], "renames": []}
 
-    async def build_taxonomy_proposal(self, batch_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def build_taxonomy_proposal(
+        self, batch_results: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         # Consolidate batch results via AI
         ai_result = await self.ai_service.analyze_with_prompt(
             template_name="taxonomy_consolidation.mustache",
             variables={"batch_results": batch_results},
         )
-        parsed = json.loads(ai_result) if isinstance(ai_result, str) else (ai_result or {})
+        parsed = (
+            json.loads(ai_result) if isinstance(ai_result, str) else (ai_result or {})
+        )
         return {
             "proposed_merges": parsed.get("proposed_merges", []),
             "proposed_hierarchies": parsed.get("proposed_hierarchies", []),
@@ -128,8 +142,9 @@ class GenreTaxonomyService:
             try:
                 progress.current_phase = "collecting"
                 # Prefer get_all_categories when patched in tests; otherwise use list_all_categories_sync
-                getter = getattr(self.category_service, 'get_all_categories', None) or \
-                         getattr(self.category_service, 'list_all_categories_sync', None)
+                getter = getattr(
+                    self.category_service, "get_all_categories", None
+                ) or getattr(self.category_service, "list_all_categories_sync", None)
                 genres = getter() if callable(getter) else []
                 # Ensure list type for safe sizing/iteration
                 if not isinstance(genres, list):
@@ -163,8 +178,9 @@ class GenreTaxonomyService:
     # ---------- System Status ----------
     def get_system_status(self) -> Dict[str, Any]:
         try:
-            getter = getattr(self.category_service, 'get_all_categories', None) or \
-                     getattr(self.category_service, 'list_all_categories_sync', None)
+            getter = getattr(
+                self.category_service, "get_all_categories", None
+            ) or getattr(self.category_service, "list_all_categories_sync", None)
             genres = getter() if callable(getter) else []
             if not isinstance(genres, list):
                 genres = []
@@ -178,4 +194,9 @@ class GenreTaxonomyService:
         }
 
 
-__all__ = ["GenreTaxonomyService", "TaxonomyProgress", "get_category_service", "get_ai_service"]
+__all__ = [
+    "GenreTaxonomyService",
+    "TaxonomyProgress",
+    "get_category_service",
+    "get_ai_service",
+]

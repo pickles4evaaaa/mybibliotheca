@@ -3,11 +3,12 @@ import threading
 import functools
 import asyncio
 import hashlib
-from typing import Any, Optional, Tuple, Dict, Callable, Union
+from typing import Any, Optional, Tuple, Dict, Callable
 
 
 class TTLCache:
     """Very small in-process TTL cache suitable for single-worker setups."""
+
     def __init__(self):
         self._store: Dict[str, Tuple[Any, float]] = {}
         self._lock = threading.Lock()
@@ -68,6 +69,7 @@ def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):
     Decorator to cache function results.
     Supports both sync and async functions.
     """
+
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -89,14 +91,14 @@ def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):
 
             # Call function
             result = func(*args, **kwargs)
-            
+
             # Store result
             cache_set(key, result, ttl_seconds)
             return result
 
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
-             # Build cache key (same logic)
+            # Build cache key (same logic)
             if key_builder:
                 key = key_builder(*args, **kwargs)
             else:
@@ -113,7 +115,7 @@ def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):
 
             # Call function
             result = await func(*args, **kwargs)
-            
+
             # Store result
             cache_set(key, result, ttl_seconds)
             return result
@@ -122,6 +124,7 @@ def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):
             return async_wrapper
         else:
             return wrapper
+
     return decorator
 
 

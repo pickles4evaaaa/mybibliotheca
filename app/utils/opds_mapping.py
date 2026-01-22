@@ -4,6 +4,7 @@ This module centralizes the mapping whitelist and helpers used by both the
 settings UI and the OPDS sync service. Keeping the rules here makes it easy to
 share between Flask views and service-layer code as well as the unit tests.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Set

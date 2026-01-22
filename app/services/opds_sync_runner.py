@@ -1,4 +1,5 @@
 """Background runner for OPDS sync jobs."""
+
 from __future__ import annotations
 
 import threading
@@ -7,7 +8,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, Optional, Tuple
+from typing import Any, Deque, Dict, Optional
 import traceback
 
 from flask import current_app, has_request_context, url_for
@@ -52,7 +53,9 @@ class _OpdsSyncRunner:
                 self._app = current_app._get_current_object()  # type: ignore[attr-defined]
             except Exception:
                 self._app = None
-            self._thread = threading.Thread(target=self._run_loop, name="opds-sync-runner", daemon=True)
+            self._thread = threading.Thread(
+                target=self._run_loop, name="opds-sync-runner", daemon=True
+            )
             self._thread.start()
 
     def enqueue_test_sync(self, user_id: str, limit: int = 10) -> Dict[str, Any]:
@@ -66,14 +69,21 @@ class _OpdsSyncRunner:
         )
         self.ensure_started()
         with self._lock:
-            self._queue.append(_QueuedItem(task_id, {
-                "kind": "test",
-                "user_id": user_id,
-                "limit": limit,
-            }))
+            self._queue.append(
+                _QueuedItem(
+                    task_id,
+                    {
+                        "kind": "test",
+                        "user_id": user_id,
+                        "limit": limit,
+                    },
+                )
+            )
         return self._response_payload(user_id, task_id)
 
-    def enqueue_sync(self, user_id: str, *, limit: Optional[int] = None, origin: str = "manual") -> Dict[str, Any]:
+    def enqueue_sync(
+        self, user_id: str, *, limit: Optional[int] = None, origin: str = "manual"
+    ) -> Dict[str, Any]:
         task_id = f"opds_sync_{uuid.uuid4().hex[:10]}"
         self._create_job(
             user_id,
@@ -84,18 +94,30 @@ class _OpdsSyncRunner:
         )
         self.ensure_started()
         with self._lock:
-            self._queue.append(_QueuedItem(task_id, {
-                "kind": "sync",
-                "user_id": user_id,
-                "limit": limit,
-                "origin": origin,
-            }))
+            self._queue.append(
+                _QueuedItem(
+                    task_id,
+                    {
+                        "kind": "sync",
+                        "user_id": user_id,
+                        "limit": limit,
+                        "origin": origin,
+                    },
+                )
+            )
         return self._response_payload(user_id, task_id)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _create_job(self, user_id: str, task_id: str, job_type: str, total: int, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def _create_job(
+        self,
+        user_id: str,
+        task_id: str,
+        job_type: str,
+        total: int,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         payload = {
             "task_id": task_id,
             "type": job_type,
@@ -118,8 +140,10 @@ class _OpdsSyncRunner:
         api_progress_url: Optional[str] = None
         if has_request_context():
             try:
-                progress_url = url_for('import.import_books_progress', task_id=task_id)
-                api_progress_url = url_for('import.api_import_progress', task_id=task_id)
+                progress_url = url_for("import.import_books_progress", task_id=task_id)
+                api_progress_url = url_for(
+                    "import.api_import_progress", task_id=task_id
+                )
             except Exception:
                 pass
         return {
@@ -174,18 +198,25 @@ class _OpdsSyncRunner:
         user_agent = (settings.get("user_agent") or "").strip() or None
         password = (settings.get("password") or "").strip() or None
         if not base_url or not mapping:
-            safe_update_import_job(user_id, item.task_id, {
-                "status": "failed",
-                "error_messages": ["OPDS base URL and field mapping must be configured before syncing."],
-            })
+            safe_update_import_job(
+                user_id,
+                item.task_id,
+                {
+                    "status": "failed",
+                    "error_messages": [
+                        "OPDS base URL and field mapping must be configured before syncing."
+                    ],
+                },
+            )
             return
 
         if kind == "test":
             limit = int(payload.get("limit") or 10)
-            safe_update_import_job(user_id, item.task_id, {
-                "status": "running",
-                "recent_activity": ["Running OPDS test sync..."]
-            })
+            safe_update_import_job(
+                user_id,
+                item.task_id,
+                {"status": "running", "recent_activity": ["Running OPDS test sync..."]},
+            )
             try:
                 result = opds_sync_service.test_sync_sync(
                     base_url,
@@ -197,52 +228,72 @@ class _OpdsSyncRunner:
                 )
                 summary = result.get("summary", {})
                 preview = result.get("preview", [])
-                processed = int(summary.get("would_create", 0) + summary.get("would_update", 0) + summary.get("skipped", 0))
-                safe_update_import_job(user_id, item.task_id, {
-                    "status": "completed",
-                    "recent_activity": [
-                        f"Test sync complete: would create {summary.get('would_create', 0)}, update {summary.get('would_update', 0)}, skip {summary.get('skipped', 0)}."
-                    ],
-                    "processed": processed,
-                    "total": limit,
-                    "preview": preview,
-                    "summary": summary,
-                })
-                save_opds_settings({
-                    "last_test_summary": {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "limit": limit,
-                        "summary": summary,
+                processed = int(
+                    summary.get("would_create", 0)
+                    + summary.get("would_update", 0)
+                    + summary.get("skipped", 0)
+                )
+                safe_update_import_job(
+                    user_id,
+                    item.task_id,
+                    {
                         "status": "completed",
+                        "recent_activity": [
+                            f"Test sync complete: would create {summary.get('would_create', 0)}, update {summary.get('would_update', 0)}, skip {summary.get('skipped', 0)}."
+                        ],
+                        "processed": processed,
+                        "total": limit,
+                        "preview": preview,
+                        "summary": summary,
                     },
-                    "last_test_preview": preview[:limit],
-                    "last_field_inventory": result.get("probe", {}).get("field_inventory", {}),
-                    "last_test_task_id": None,
-                    "last_test_task_api_url": None,
-                    "last_test_task_progress_url": None,
-                })
+                )
+                save_opds_settings(
+                    {
+                        "last_test_summary": {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "limit": limit,
+                            "summary": summary,
+                            "status": "completed",
+                        },
+                        "last_test_preview": preview[:limit],
+                        "last_field_inventory": result.get("probe", {}).get(
+                            "field_inventory", {}
+                        ),
+                        "last_test_task_id": None,
+                        "last_test_task_api_url": None,
+                        "last_test_task_progress_url": None,
+                    }
+                )
             except Exception as exc:
                 error_details = self._describe_exception(exc)
-                current_app.logger.exception("OPDS test sync failed (task_id=%s, user=%s)", item.task_id, user_id)
+                current_app.logger.exception(
+                    "OPDS test sync failed (task_id=%s, user=%s)", item.task_id, user_id
+                )
                 error_trace = traceback.format_exc()
-                safe_update_import_job(user_id, item.task_id, {
-                    "status": "failed",
-                    "error_messages": [f"Test sync failed: {error_details}"],
-                    "recent_activity": [f"Test sync failed: {error_details}"],
-                    "error_traceback": error_trace,
-                })
-                save_opds_settings({
-                    "last_test_summary": {
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "error": error_details,
-                        "exception_type": exc.__class__.__name__,
+                safe_update_import_job(
+                    user_id,
+                    item.task_id,
+                    {
                         "status": "failed",
+                        "error_messages": [f"Test sync failed: {error_details}"],
+                        "recent_activity": [f"Test sync failed: {error_details}"],
+                        "error_traceback": error_trace,
                     },
-                    "last_test_preview": [],
-                    "last_test_task_id": None,
-                    "last_test_task_api_url": None,
-                    "last_test_task_progress_url": None,
-                })
+                )
+                save_opds_settings(
+                    {
+                        "last_test_summary": {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "error": error_details,
+                            "exception_type": exc.__class__.__name__,
+                            "status": "failed",
+                        },
+                        "last_test_preview": [],
+                        "last_test_task_id": None,
+                        "last_test_task_api_url": None,
+                        "last_test_task_progress_url": None,
+                    }
+                )
             return
 
         # Otherwise run a full sync
@@ -254,10 +305,11 @@ class _OpdsSyncRunner:
             except Exception:
                 max_samples = None
         origin = payload.get("origin") or "manual"
-        safe_update_import_job(user_id, item.task_id, {
-            "status": "running",
-            "recent_activity": ["OPDS sync running..."]
-        })
+        safe_update_import_job(
+            user_id,
+            item.task_id,
+            {"status": "running", "recent_activity": ["OPDS sync running..."]},
+        )
         start_ts = datetime.now(timezone.utc).isoformat()
         try:
             result = opds_sync_service.quick_probe_sync_sync(
@@ -274,18 +326,22 @@ class _OpdsSyncRunner:
             updated = int(sync_result.get("updated", 0))
             skipped = int(sync_result.get("skipped", 0))
             processed = created + updated + skipped
-            safe_update_import_job(user_id, item.task_id, {
-                "status": "completed",
-                "processed": processed,
-                "total": processed,
-                "success": created + updated,
-                "skipped": skipped,
-                "errors": 0,
-                "recent_activity": [
-                    f"Sync complete: created {created}, updated {updated}, skipped {skipped}."
-                ],
-                "sync_result": sync_result,
-            })
+            safe_update_import_job(
+                user_id,
+                item.task_id,
+                {
+                    "status": "completed",
+                    "processed": processed,
+                    "total": processed,
+                    "success": created + updated,
+                    "skipped": skipped,
+                    "errors": 0,
+                    "recent_activity": [
+                        f"Sync complete: created {created}, updated {updated}, skipped {skipped}."
+                    ],
+                    "sync_result": sync_result,
+                },
+            )
             settings_update = {
                 "last_sync_summary": {
                     "created": created,
@@ -297,7 +353,9 @@ class _OpdsSyncRunner:
                 },
                 "last_sync_at": start_ts,
                 "last_sync_status": "completed",
-                "last_field_inventory": result.get("probe", {}).get("field_inventory", {}),
+                "last_field_inventory": result.get("probe", {}).get(
+                    "field_inventory", {}
+                ),
                 "last_sync_task_id": None,
                 "last_sync_task_api_url": None,
                 "last_sync_task_progress_url": None,
@@ -314,12 +372,16 @@ class _OpdsSyncRunner:
                 user_id,
                 origin,
             )
-            safe_update_import_job(user_id, item.task_id, {
-                "status": "failed",
-                "error_messages": [f"OPDS sync failed: {error_details}"],
-                "recent_activity": [f"Sync failed: {error_details}"],
-                "error_traceback": traceback.format_exc(),
-            })
+            safe_update_import_job(
+                user_id,
+                item.task_id,
+                {
+                    "status": "failed",
+                    "error_messages": [f"OPDS sync failed: {error_details}"],
+                    "recent_activity": [f"Sync failed: {error_details}"],
+                    "error_traceback": traceback.format_exc(),
+                },
+            )
             settings_update = {
                 "last_sync_status": f"failed: {error_details}",
                 "last_sync_at": start_ts,
