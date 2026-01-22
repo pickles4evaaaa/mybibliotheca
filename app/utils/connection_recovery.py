@@ -6,6 +6,7 @@ particularly after backup/restore operations.
 """
 
 import logging
+
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
 logger = logging.getLogger(__name__)

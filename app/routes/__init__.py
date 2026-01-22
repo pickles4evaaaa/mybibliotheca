@@ -5,21 +5,22 @@ Registers all blueprint modules for the Bibliotheca application.
 
 import logging
 import os
+
 from flask import Blueprint, request
 
 logger = logging.getLogger(__name__)
 
 # Import all blueprint modules
-from .book_routes import book_bp
-from .people_routes import people_bp
-from .import_routes import import_bp
-from .stats_routes import stats_bp
-from .misc_routes import misc_bp
-from .genre_routes import genres_bp
-from .reading_log_routes import reading_logs
-from .genre_taxonomy_routes import genre_taxonomy_bp
 from .api_routes import api_bp
+from .book_routes import book_bp
+from .genre_routes import genres_bp
+from .genre_taxonomy_routes import genre_taxonomy_bp
+from .import_routes import import_bp
+from .misc_routes import misc_bp
+from .people_routes import people_bp
+from .reading_log_routes import reading_logs
 from .series_routes import series_bp
+from .stats_routes import stats_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint("main", __name__)
@@ -29,8 +30,8 @@ main_bp = Blueprint("main", __name__)
 @main_bp.route("/")
 def index():
     """Main index route - redirect to library for authenticated users, login for others"""
-    from flask_login import current_user
     from flask import redirect, url_for
+    from flask_login import current_user
 
     try:
         print("[ROUTE] Enter main.index")
@@ -54,10 +55,12 @@ def index():
 @main_bp.route("/api/user/books")
 def api_user_books():
     """API endpoint to get user's books for the reading log modal."""
-    from flask_login import login_required, current_user
-    from flask import jsonify
-    from app.services import book_service
     import logging
+
+    from flask import jsonify
+    from flask_login import current_user, login_required
+
+    from app.services import book_service
 
     @login_required
     def _api_user_books():
@@ -160,8 +163,9 @@ def add_book():
 @main_bp.route("/bulk_delete_books", methods=["POST"])
 def bulk_delete_books():
     """Delete multiple books selected from the library view."""
-    from flask import request, flash, redirect, url_for
+    from flask import flash, redirect, request, url_for
     from flask_login import current_user, login_required
+
     from app.services.kuzu_service_facade import KuzuServiceFacade
 
     # Check authentication
@@ -256,7 +260,7 @@ def view_book_enhanced(uid):
 @main_bp.route("/add_book_from_search", methods=["POST"])
 def add_book_from_search():
     """Compatibility route for main.add_book_from_search - redirect to book.add_book_from_search"""
-    from flask import redirect, url_for, request
+    from flask import redirect, request, url_for
 
     return redirect(url_for("book.add_book_from_search"), code=307)
 
@@ -272,7 +276,7 @@ def download_db():
 @main_bp.route("/toggle_theme", methods=["POST"])
 def toggle_theme():
     """Compatibility route for main.toggle_theme - redirect to people.toggle_theme"""
-    from flask import redirect, url_for, request
+    from flask import redirect, request, url_for
 
     return redirect(url_for("people.toggle_theme"), code=307)
 
@@ -280,7 +284,7 @@ def toggle_theme():
 @main_bp.route("/detect_sqlite", methods=["POST"])
 def detect_sqlite():
     """Compatibility route for main.detect_sqlite - redirect to misc.detect_sqlite"""
-    from flask import redirect, url_for, request
+    from flask import redirect, request, url_for
 
     return redirect(url_for("misc.detect_sqlite"), code=307)
 
@@ -396,7 +400,7 @@ def import_books_execute():
 @main_bp.route("/public_library")
 def public_library():
     """Compatibility route for main.public_library - redirect to book.public_library"""
-    from flask import redirect, url_for, request
+    from flask import redirect, request, url_for
 
     filter_param = request.args.get("filter", "all")
     return redirect(url_for("book.public_library", filter=filter_param))
@@ -413,7 +417,7 @@ def community_activity():
 @main_bp.route("/migrate_sqlite", methods=["GET", "POST"])
 def migrate_sqlite():
     """Compatibility route for main.migrate_sqlite - redirect to import.migrate_sqlite"""
-    from flask import redirect, url_for, request
+    from flask import redirect, request, url_for
 
     if request.method == "POST":
         return redirect(url_for("import.migrate_sqlite"), code=307)

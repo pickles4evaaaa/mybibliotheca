@@ -4,8 +4,8 @@ Database migration script to add new metadata columns to existing Book table.
 Run this script after updating the models to add the new fields.
 """
 
-import sqlite3
 import os
+import sqlite3
 
 
 def migrate_database():

@@ -6,14 +6,14 @@ This script helps migrate the location system from storing location_id propertie
 on OWNS relationships to using proper STORED_AT relationships between books and locations.
 """
 
-import sys
 import os
+import sys
 
 # Add parent directory to path so we can import app modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.utils.safe_kuzu_manager import SafeKuzuManager
 from app.location_service import LocationService
+from app.utils.safe_kuzu_manager import SafeKuzuManager
 
 
 def get_users_with_books():

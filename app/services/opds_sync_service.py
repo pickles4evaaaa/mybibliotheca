@@ -9,20 +9,22 @@ import logging
 import os
 import re
 import uuid
+from collections.abc import Iterable
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import UTC, date, datetime
+from typing import Any
 
-from .kuzu_async_helper import run_async
-from .opds_probe_service import opds_probe_service, OPDSProbeService
+from flask import current_app, has_app_context
+
+from ..domain.models import BookContribution, ContributionType, Person
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
-from ..domain.models import BookContribution, ContributionType, Person
 from ..location_service import LocationService
 from ..utils.image_processing import process_image_from_url
 from ..utils.safe_kuzu_manager import safe_get_connection
-from flask import current_app, has_app_context
+from .kuzu_async_helper import run_async
+from .opds_probe_service import OPDSProbeService, opds_probe_service
 
 AUDIO_HINTS = {"audio", "mp3", "m4b", "flac", "ogg", "wav"}
 KINDLE_HINTS = {"mobi", "azw", "azw3", "azw4", "azw8", "kf8", "kfx", "kindle"}
@@ -32,7 +34,7 @@ EBOOK_HINTS = {"epub", "pdf", "ebook", "html", "txt", "text"}
 logger = logging.getLogger(__name__)
 
 
-def _normalize_title(value: Any) -> Optional[str]:
+def _normalize_title(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().lower()
@@ -56,8 +58,8 @@ def _serialize_for_hash(value: Any) -> Any:
 _HASH_EXCLUDED_KEYS = {"raw_links", "entry"}
 
 
-def _compute_entry_hash(entry: Dict[str, Any]) -> str:
-    payload: Dict[str, Any] = {}
+def _compute_entry_hash(entry: dict[str, Any]) -> str:
+    payload: dict[str, Any] = {}
     for key in sorted(entry.keys()):
         if key in _HASH_EXCLUDED_KEYS:
             continue
@@ -66,12 +68,12 @@ def _compute_entry_hash(entry: Dict[str, Any]) -> str:
     return hashlib.sha256(marshalled.encode("utf-8")).hexdigest()
 
 
-def _normalize_timestamp(value: Any) -> Optional[str]:
+def _normalize_timestamp(value: Any) -> str | None:
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
-        reference = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-        return reference.astimezone(timezone.utc).isoformat()
+        reference = value if value.tzinfo else value.replace(tzinfo=UTC)
+        return reference.astimezone(UTC).isoformat()
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -82,12 +84,12 @@ def _normalize_timestamp(value: Any) -> Optional[str]:
         except ValueError:
             return text
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc).isoformat()
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat()
     return str(value)
 
 
-def _to_kuzu_date(value: Any) -> Optional[date]:
+def _to_kuzu_date(value: Any) -> date | None:
     if value in (None, ""):
         return None
     if isinstance(value, date) and not isinstance(value, datetime):
@@ -111,10 +113,10 @@ def _to_kuzu_date(value: Any) -> Optional[date]:
 
 
 def _build_set_clause(
-    alias: str, properties: Dict[str, Any], *, prefix: str
-) -> Tuple[str, Dict[str, Any]]:
-    assignments: List[str] = []
-    params: Dict[str, Any] = {}
+    alias: str, properties: dict[str, Any], *, prefix: str
+) -> tuple[str, dict[str, Any]]:
+    assignments: list[str] = []
+    params: dict[str, Any] = {}
     for key, value in properties.items():
         param_key = f"{prefix}_{key}"
         assignments.append(f"{alias}.{key} = ${param_key}")
@@ -135,7 +137,7 @@ def _infer_media_type(detected_formats: Iterable[str]) -> str:
     return "ebook"
 
 
-def _strip_urn(value: Optional[str]) -> Optional[str]:
+def _strip_urn(value: str | None) -> str | None:
     if not value:
         return None
     normalized = str(value).strip()
@@ -146,7 +148,7 @@ def _strip_urn(value: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
-def _normalize_oid(entry: Dict[str, Any]) -> Optional[str]:
+def _normalize_oid(entry: dict[str, Any]) -> str | None:
     identifiers = entry.get("identifiers") or []
     for candidate in identifiers:
         normalized = _strip_urn(candidate)
@@ -159,8 +161,8 @@ def _normalize_oid(entry: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _detect_formats(sample: Dict[str, Any]) -> List[str]:
-    formats: List[str] = []
+def _detect_formats(sample: dict[str, Any]) -> list[str]:
+    formats: list[str] = []
     for link in sample.get("raw_links", []) or []:
         tokens = {
             str(link.get("type", "")).lower(),
@@ -181,7 +183,7 @@ def _detect_formats(sample: Dict[str, Any]) -> List[str]:
     return sorted({fmt for fmt in formats})
 
 
-def _ensure_list(value: Any) -> List[str]:
+def _ensure_list(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, list):
@@ -189,7 +191,7 @@ def _ensure_list(value: Any) -> List[str]:
     if isinstance(value, (tuple, set)):
         return [str(v).strip() for v in value if str(v).strip()]
     if isinstance(value, str):
-        items: List[str] = []
+        items: list[str] = []
         for token in value.replace(";", ",").split(","):
             token = token.strip()
             if token:
@@ -198,7 +200,7 @@ def _ensure_list(value: Any) -> List[str]:
     return [str(value).strip()] if str(value).strip() else []
 
 
-def _to_int(value: Any) -> Optional[int]:
+def _to_int(value: Any) -> int | None:
     try:
         if value is None:
             return None
@@ -209,7 +211,7 @@ def _to_int(value: Any) -> Optional[int]:
         return None
 
 
-def _to_float(value: Any) -> Optional[float]:
+def _to_float(value: Any) -> float | None:
     try:
         if value is None or value == "":
             return None
@@ -223,7 +225,7 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
-def _to_date_str(value: Any) -> Optional[str]:
+def _to_date_str(value: Any) -> str | None:
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -243,7 +245,7 @@ def _to_date_str(value: Any) -> Optional[str]:
     return None
 
 
-def _resolve_source(sample: Dict[str, Any], expression: str) -> Any:
+def _resolve_source(sample: dict[str, Any], expression: str) -> Any:
     if not expression:
         return None
     expr = expression.strip()
@@ -262,12 +264,12 @@ def _resolve_source(sample: Dict[str, Any], expression: str) -> Any:
     return sample.get(expr)
 
 
-def _ensure_contributors(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _ensure_contributors(entry: dict[str, Any]) -> list[dict[str, Any]]:
     contributors = entry.setdefault("contributors", [])
     return contributors
 
 
-def _assign_contributors(entry: Dict[str, Any], role: str, value: Any) -> None:
+def _assign_contributors(entry: dict[str, Any], role: str, value: Any) -> None:
     names = _ensure_list(value)
     if not names:
         return
@@ -288,13 +290,13 @@ def _assign_contributors(entry: Dict[str, Any], role: str, value: Any) -> None:
 
 
 def apply_mapping_to_samples(
-    samples: Iterable[Dict[str, Any]],
-    mapping: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
-    normalized_entries: List[Dict[str, Any]] = []
+    samples: Iterable[dict[str, Any]],
+    mapping: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    normalized_entries: list[dict[str, Any]] = []
     mapping = mapping or {}
     for sample in samples:
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "title": sample.get("title"),
             "subtitle": sample.get("subtitle"),
             "description": sample.get("summary") or sample.get("content"),
@@ -422,30 +424,30 @@ class SyncResult:
     created: int
     updated: int
     skipped: int
-    entries: List[str]
+    entries: list[str]
 
 
-PreviewRow = Dict[str, Any]
+PreviewRow = dict[str, Any]
 
 
 class OPDSSyncService:
-    def __init__(self, probe_service: Optional[OPDSProbeService] = None) -> None:
+    def __init__(self, probe_service: OPDSProbeService | None = None) -> None:
         self._probe_service = probe_service or opds_probe_service
         self._max_sync = self._parse_sync_limit(os.getenv("OPDS_SYNC_MAX_ENTRIES"))
         self._book_repo = KuzuBookRepository()
-        self._location_service: Optional[LocationService] = None
+        self._location_service: LocationService | None = None
 
     async def quick_probe_sync(
         self,
         base_url: str,
         *,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        mapping: Optional[Dict[str, str]] = None,
-        max_samples: Optional[int] = None,
-        user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        username: str | None = None,
+        password: str | None = None,
+        user_agent: str | None = None,
+        mapping: dict[str, str] | None = None,
+        max_samples: int | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         requested_limit = self._normalize_limit(max_samples)
         effective_limit = self._resolve_effective_limit(requested_limit)
         probe_limit = effective_limit if effective_limit is not None else 0
@@ -462,10 +464,10 @@ class OPDSSyncService:
         else:
             entries_to_apply = entries
         flask_app = current_app._get_current_object() if has_app_context() else None  # type: ignore[attr-defined]
-        cover_auth: Optional[Tuple[str, str]] = None
+        cover_auth: tuple[str, str] | None = None
         if username is not None and password is not None:
             cover_auth = (username, password)
-        headers: Optional[Dict[str, str]] = None
+        headers: dict[str, str] | None = None
         if user_agent:
             headers = {"User-Agent": user_agent}
         sync_result = await asyncio.to_thread(
@@ -486,11 +488,11 @@ class OPDSSyncService:
             },
         }
 
-    def quick_probe_sync_sync(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    def quick_probe_sync_sync(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return run_async(self.quick_probe_sync(*args, **kwargs))
 
     @staticmethod
-    def _parse_sync_limit(raw_value: Optional[str]) -> Optional[int]:
+    def _parse_sync_limit(raw_value: str | None) -> int | None:
         if raw_value is None:
             return None
         text = raw_value.strip()
@@ -503,7 +505,7 @@ class OPDSSyncService:
         return candidate if candidate > 0 else None
 
     @staticmethod
-    def _normalize_limit(value: Optional[int]) -> Optional[int]:
+    def _normalize_limit(value: int | None) -> int | None:
         if value is None:
             return None
         try:
@@ -512,7 +514,7 @@ class OPDSSyncService:
             return None
         return candidate if candidate > 0 else None
 
-    def _resolve_effective_limit(self, requested_limit: Optional[int]) -> Optional[int]:
+    def _resolve_effective_limit(self, requested_limit: int | None) -> int | None:
         limit = (
             requested_limit
             if requested_limit is not None and requested_limit > 0
@@ -531,12 +533,12 @@ class OPDSSyncService:
         self,
         base_url: str,
         *,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        mapping: Optional[Dict[str, str]] = None,
+        username: str | None = None,
+        password: str | None = None,
+        user_agent: str | None = None,
+        mapping: dict[str, str] | None = None,
         max_samples: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         max_samples = max(1, int(max_samples or 10))
         probe = await self._probe_service.probe(
             base_url,
@@ -560,7 +562,7 @@ class OPDSSyncService:
             },
         }
 
-    def test_sync_sync(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    def test_sync_sync(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return run_async(self.test_sync(*args, **kwargs))
 
     # ------------------------------------------------------------------
@@ -569,20 +571,20 @@ class OPDSSyncService:
 
     def _apply_entries(
         self,
-        entries: List[Dict[str, Any]],
+        entries: list[dict[str, Any]],
         flask_app=None,
         *,
-        cover_auth: Optional[Tuple[str, str]] = None,
-        cover_headers: Optional[Dict[str, str]] = None,
-        user_id: Optional[str] = None,
+        cover_auth: tuple[str, str] | None = None,
+        cover_headers: dict[str, str] | None = None,
+        user_id: str | None = None,
     ) -> SyncResult:
         created = 0
         updated = 0
         skipped = 0
-        book_ids: List[str] = []
-        now = datetime.now(timezone.utc)
-        location_service: Optional[LocationService] = None
-        default_location_id: Optional[str] = None
+        book_ids: list[str] = []
+        now = datetime.now(UTC)
+        location_service: LocationService | None = None
+        default_location_id: str | None = None
         location_checked = False
         location_user_id = user_id or "__system__"
 
@@ -708,19 +710,19 @@ class OPDSSyncService:
             created=created, updated=updated, skipped=skipped, entries=book_ids
         )
 
-    def _simulate_entries(self, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _simulate_entries(self, entries: list[dict[str, Any]]) -> dict[str, Any]:
         would_create = 0
         would_update = 0
         skipped = 0
-        preview: List[PreviewRow] = []
+        preview: list[PreviewRow] = []
 
         def _process(conn) -> None:
             nonlocal would_create, would_update, skipped
             for entry in entries:
                 oid = entry.get("opds_source_id")
                 action = "create"
-                reason: Optional[str] = None
-                existing_id: Optional[str] = None
+                reason: str | None = None
+                existing_id: str | None = None
 
                 if not oid:
                     skipped += 1
@@ -792,11 +794,11 @@ class OPDSSyncService:
 
     def _cache_cover_if_needed(
         self,
-        entry: Dict[str, Any],
+        entry: dict[str, Any],
         book_id: str,
         *,
-        cover_auth: Optional[Tuple[str, str]] = None,
-        cover_headers: Optional[Dict[str, str]] = None,
+        cover_auth: tuple[str, str] | None = None,
+        cover_headers: dict[str, str] | None = None,
     ) -> None:
         cover_url = entry.get("cover_url")
         if not cover_url:
@@ -821,7 +823,7 @@ class OPDSSyncService:
         if cached_url:
             entry["cover_url"] = cached_url
 
-    def _find_book_id(self, conn, oid: str) -> Optional[str]:  # type: ignore[no-untyped-def]
+    def _find_book_id(self, conn, oid: str) -> str | None:  # type: ignore[no-untyped-def]
         try:
             result = conn.execute(
                 "MATCH (b:Book {opds_source_id: $oid}) RETURN b.id AS id LIMIT 1",
@@ -847,7 +849,7 @@ class OPDSSyncService:
         return None
 
     def _create_book(
-        self, conn, book_id: str, entry: Dict[str, Any], now: datetime
+        self, conn, book_id: str, entry: dict[str, Any], now: datetime
     ) -> bool:  # type: ignore[no-untyped-def]
         raw_categories_value = entry.get("raw_categories")
         normalized_raw_categories = self._normalize_categories(raw_categories_value)
@@ -892,7 +894,7 @@ class OPDSSyncService:
         except Exception:
             return False
 
-    def _sync_relationships(self, book_id: str, entry: Dict[str, Any]) -> None:
+    def _sync_relationships(self, book_id: str, entry: dict[str, Any]) -> None:
         """Ensure category and publisher relationships reflect the entry payload."""
         raw_categories = entry.get("raw_categories")
         categories = entry.get("categories")
@@ -947,7 +949,7 @@ class OPDSSyncService:
                         "Failed to create publisher relationship for book %s", book_id
                     )
 
-    def _sync_contributors(self, book_id: str, entry: Dict[str, Any]) -> None:
+    def _sync_contributors(self, book_id: str, entry: dict[str, Any]) -> None:
         """Rebuild contributor relationships for the given book based on the entry payload."""
 
         def _resolve_contribution_type(raw_value: Any) -> ContributionType:
@@ -961,8 +963,8 @@ class OPDSSyncService:
             return ContributionType.AUTHORED
 
         def _extract_person(
-            payload: Dict[str, Any], fallback_name: Optional[str]
-        ) -> Optional[Person]:
+            payload: dict[str, Any], fallback_name: str | None
+        ) -> Person | None:
             name = (payload.get("name") or fallback_name or "").strip()
             if not name:
                 return None
@@ -1014,7 +1016,7 @@ class OPDSSyncService:
                 "Failed to clear contributor relationships for book %s", book_id
             )
 
-        prepared_contributions: List[BookContribution] = []
+        prepared_contributions: list[BookContribution] = []
         for raw in contributors_payload:
             if isinstance(raw, BookContribution):
                 prepared = raw
@@ -1025,7 +1027,7 @@ class OPDSSyncService:
                     payload = getattr(raw, "__dict__", None) or {}
 
                 person_payload = payload.get("person")
-                person_obj: Optional[Person]
+                person_obj: Person | None
                 if isinstance(person_payload, Person):
                     person_obj = person_payload
                 elif isinstance(person_payload, dict):
@@ -1094,7 +1096,7 @@ class OPDSSyncService:
                 {
                     "book_id": book_id,
                     "location_id": location_id,
-                    "created_at": datetime.now(timezone.utc),
+                    "created_at": datetime.now(UTC),
                 },
             )
             return True
@@ -1106,7 +1108,7 @@ class OPDSSyncService:
             return False
 
     def _update_book(
-        self, conn, book_id: str, entry: Dict[str, Any], now: datetime
+        self, conn, book_id: str, entry: dict[str, Any], now: datetime
     ) -> bool:  # type: ignore[no-untyped-def]
         raw_categories_value = entry.get("raw_categories")
         normalized_raw_categories = self._normalize_categories(raw_categories_value)
@@ -1150,7 +1152,7 @@ class OPDSSyncService:
         except Exception:
             return False
 
-    def _normalize_language(self, value: Any) -> Optional[str]:
+    def _normalize_language(self, value: Any) -> str | None:
         if value is None:
             return None
         if isinstance(value, (list, tuple, set)):
@@ -1162,7 +1164,7 @@ class OPDSSyncService:
         text = str(value).strip()
         return text or None
 
-    def _normalize_categories(self, value: Any) -> Optional[List[str]]:
+    def _normalize_categories(self, value: Any) -> list[str] | None:
         if value is None:
             return None
         if isinstance(value, str):
@@ -1186,7 +1188,7 @@ class OPDSSyncService:
         text = str(value).strip()
         return [text] if text else []
 
-    def _normalize_publisher(self, value: Any) -> Optional[str]:
+    def _normalize_publisher(self, value: Any) -> str | None:
         if value is None:
             return None
         if isinstance(value, (list, tuple, set)):

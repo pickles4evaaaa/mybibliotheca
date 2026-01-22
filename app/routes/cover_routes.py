@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+
 from app.services.cover_service import cover_service
 
 cover_bp = Blueprint("cover_api", __name__, url_prefix="/api/cover")

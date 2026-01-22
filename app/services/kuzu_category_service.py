@@ -2,18 +2,19 @@
 Category service for KuzuDB operations.
 """
 
-import traceback
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
-from app.domain.models import Category
-from app.infrastructure.kuzu_repositories import KuzuCategoryRepository
-from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 import logging
+import traceback
+from datetime import UTC, datetime
+from typing import Any
+
+from app.domain.models import Category
+from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+from app.infrastructure.kuzu_repositories import KuzuCategoryRepository
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -65,7 +66,7 @@ from .kuzu_async_helper import run_async
 class KuzuCategoryService:
     """Service for category management and hierarchy operations."""
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         """
         Initialize category service with thread-safe database access.
 
@@ -75,7 +76,7 @@ class KuzuCategoryService:
         self.user_id = user_id or "category_service"
         self.category_repo = KuzuCategoryRepository()
 
-    async def list_all_categories(self) -> List[Dict[str, Any]]:
+    async def list_all_categories(self) -> list[dict[str, Any]]:
         """Get all categories."""
         try:
             query = """
@@ -117,7 +118,7 @@ class KuzuCategoryService:
         except Exception:
             return []
 
-    async def get_category_by_id(self, category_id: str) -> Optional[Dict[str, Any]]:
+    async def get_category_by_id(self, category_id: str) -> dict[str, Any] | None:
         """Get a category by ID."""
         try:
             query = """
@@ -159,14 +160,14 @@ class KuzuCategoryService:
         except Exception:
             return None
 
-    def get_category_by_id_with_hierarchy(self, category_id: str) -> Optional[Category]:
+    def get_category_by_id_with_hierarchy(self, category_id: str) -> Category | None:
         """Get a category by ID with full hierarchy (sync version)."""
         try:
             return self._build_category_with_hierarchy(category_id)
         except Exception:
             return None
 
-    def _build_category_with_hierarchy(self, category_id: str) -> Optional[Category]:
+    def _build_category_with_hierarchy(self, category_id: str) -> Category | None:
         """Build a Category object with proper parent hierarchy."""
         try:
             # Get the category data
@@ -224,8 +225,8 @@ class KuzuCategoryService:
                 aliases=category_data.get("aliases", []),
                 book_count=category_data.get("book_count", 0),
                 user_book_count=category_data.get("user_book_count", 0),
-                created_at=created_at if created_at else datetime.now(timezone.utc),
-                updated_at=updated_at if updated_at else datetime.now(timezone.utc),
+                created_at=created_at if created_at else datetime.now(UTC),
+                updated_at=updated_at if updated_at else datetime.now(UTC),
             )
 
             # Recursively build parent hierarchy if parent_id exists
@@ -240,7 +241,7 @@ class KuzuCategoryService:
         except Exception:
             return None
 
-    async def get_child_categories(self, parent_id: str) -> List[Dict[str, Any]]:
+    async def get_child_categories(self, parent_id: str) -> list[dict[str, Any]]:
         """Get child categories for a parent category."""
         try:
             # Query for categories that have this parent_id
@@ -295,7 +296,7 @@ class KuzuCategoryService:
 
     async def get_books_by_category(
         self, category_id: str, include_subcategories: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get books in a category."""
         try:
             if include_subcategories:
@@ -356,7 +357,7 @@ class KuzuCategoryService:
         except Exception:
             return []
 
-    async def _get_all_descendant_categories(self, category_id: str) -> List[str]:
+    async def _get_all_descendant_categories(self, category_id: str) -> list[str]:
         """Get all descendant category IDs recursively."""
         try:
             descendant_ids = []
@@ -383,7 +384,7 @@ class KuzuCategoryService:
             traceback.print_exc()
             return []
 
-    async def create_category(self, category: Category) -> Optional[Category]:
+    async def create_category(self, category: Category) -> Category | None:
         """Create a new category."""
         try:
             print(f"📁 [CREATE_CATEGORY] Creating category: {category.name}")
@@ -400,7 +401,7 @@ class KuzuCategoryService:
             traceback.print_exc()
             return None
 
-    async def update_category(self, category: Category) -> Optional[Category]:
+    async def update_category(self, category: Category) -> Category | None:
         """Update an existing category."""
         try:
             print(f"📁 [UPDATE_CATEGORY] Updating category: {category.name}")
@@ -442,7 +443,7 @@ class KuzuCategoryService:
             return False
 
     async def merge_categories(
-        self, primary_category_id: str, merge_category_ids: List[str]
+        self, primary_category_id: str, merge_category_ids: list[str]
     ) -> bool:
         """Merge multiple categories into a primary category."""
         try:
@@ -492,8 +493,8 @@ class KuzuCategoryService:
             return False
 
     async def search_categories(
-        self, query: str, limit: int = 10, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, query: str, limit: int = 10, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Search categories by name or description."""
         try:
             search_query = """
@@ -547,8 +548,8 @@ class KuzuCategoryService:
             return []
 
     async def get_root_categories(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get root categories (categories without parent)."""
         try:
             # Check for categories with NULL parent_id OR empty/missing parent_id
@@ -586,7 +587,7 @@ class KuzuCategoryService:
             traceback.print_exc()
             return []
 
-    async def get_category_book_counts(self) -> Dict[str, int]:
+    async def get_category_book_counts(self) -> dict[str, int]:
         """Get book counts for all categories efficiently."""
         try:
             # Query to count books per category
@@ -618,33 +619,33 @@ class KuzuCategoryService:
             return {}
 
     # Sync wrappers for backward compatibility
-    def get_category_book_counts_sync(self) -> Dict[str, int]:
+    def get_category_book_counts_sync(self) -> dict[str, int]:
         """Get book counts for all categories (sync version)."""
         return run_async(self.get_category_book_counts())
 
-    def list_all_categories_sync(self) -> List[Dict[str, Any]]:
+    def list_all_categories_sync(self) -> list[dict[str, Any]]:
         """Get all categories (sync version)."""
         return run_async(self.list_all_categories())
 
-    def get_category_by_id_sync(self, category_id: str) -> Optional[Category]:
+    def get_category_by_id_sync(self, category_id: str) -> Category | None:
         """Get a category by ID with full hierarchy (sync version)."""
         return self.get_category_by_id_with_hierarchy(category_id)
 
-    def get_child_categories_sync(self, parent_id: str) -> List[Dict[str, Any]]:
+    def get_child_categories_sync(self, parent_id: str) -> list[dict[str, Any]]:
         """Get child categories for a parent category (sync version)."""
         return run_async(self.get_child_categories(parent_id))
 
-    def get_category_children_sync(self, category_id: str) -> List[Dict[str, Any]]:
+    def get_category_children_sync(self, category_id: str) -> list[dict[str, Any]]:
         """Get children of a category (sync version)."""
         return run_async(self.get_child_categories(category_id))
 
     def get_books_by_category_sync(
         self, category_id: str, include_subcategories: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get books in a category (sync version)."""
         return run_async(self.get_books_by_category(category_id, include_subcategories))
 
-    def create_category_sync(self, category_data: Dict[str, Any]) -> Optional[Category]:
+    def create_category_sync(self, category_data: dict[str, Any]) -> Category | None:
         """Create a new category (sync version)."""
         # Convert dict to Category object if needed
         if isinstance(category_data, dict):
@@ -660,15 +661,15 @@ class KuzuCategoryService:
                 aliases=category_data.get("aliases", []),
                 book_count=category_data.get("book_count", 0),
                 user_book_count=category_data.get("user_book_count", 0),
-                created_at=category_data.get("created_at", datetime.now(timezone.utc)),
-                updated_at=category_data.get("updated_at", datetime.now(timezone.utc)),
+                created_at=category_data.get("created_at", datetime.now(UTC)),
+                updated_at=category_data.get("updated_at", datetime.now(UTC)),
             )
         else:
             category = category_data
 
         return run_async(self.create_category(category))
 
-    def update_category_sync(self, category: Category) -> Optional[Category]:
+    def update_category_sync(self, category: Category) -> Category | None:
         """Update a category (sync version)."""
         return run_async(self.update_category(category))
 
@@ -677,20 +678,20 @@ class KuzuCategoryService:
         return run_async(self.delete_category(category_id))
 
     def merge_categories_sync(
-        self, primary_category_id: str, merge_category_ids: List[str]
+        self, primary_category_id: str, merge_category_ids: list[str]
     ) -> bool:
         """Merge categories (sync version)."""
         return run_async(self.merge_categories(primary_category_id, merge_category_ids))
 
     def search_categories_sync(
-        self, query: str, limit: int = 10, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, query: str, limit: int = 10, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Search categories (sync version)."""
         return run_async(self.search_categories(query, limit, user_id))
 
     def get_root_categories_sync(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get root categories (sync version)."""
         return run_async(self.get_root_categories(user_id))
 
@@ -698,13 +699,13 @@ class KuzuCategoryService:
     # Sync Wrapper Methods for Compatibility
     # ==========================================
 
-    def _get_all_descendant_categories_sync(self, category_id: str) -> List[str]:
+    def _get_all_descendant_categories_sync(self, category_id: str) -> list[str]:
         """Sync wrapper for _get_all_descendant_categories."""
         return run_async(self._get_all_descendant_categories(category_id))
 
     def _build_category_with_hierarchy_sync(
-        self, category_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, category_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Sync wrapper for building category with hierarchy."""
         # This method operates on category data dict, not ID
         try:

@@ -19,36 +19,36 @@ Key Features:
 - Rollback capabilities on failure
 """
 
-import os
-import sys
-import sqlite3
-import shutil
 import json
 import logging
-import time
+import os
 import random
 import re
-from datetime import datetime, date
-from typing import Dict, List, Optional, Tuple
-from pathlib import Path
-from werkzeug.security import generate_password_hash
+import shutil
+import sqlite3
+import sys
+import time
 import uuid
+from datetime import date, datetime
+from pathlib import Path
+
+from werkzeug.security import generate_password_hash
 
 # Add the parent directory to the path so we can import our modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.domain.models import (
     Book,
-    User,
-    Publisher,
-    ReadingStatus,
-    Person,
     BookContribution,
     ContributionType,
+    Person,
+    Publisher,
+    ReadingStatus,
+    User,
 )
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
-from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.services import user_service
+from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
 
 # Helper function for query result conversion
@@ -101,7 +101,7 @@ class AdvancedMigrationSystem:
     Handles both V1 (single-user) and V2 (multi-user) databases with full backup support.
     """
 
-    def __init__(self, kuzu_db_path: Optional[str] = None):
+    def __init__(self, kuzu_db_path: str | None = None):
         """
         Initialize the advanced migration system.
 
@@ -147,7 +147,7 @@ class AdvancedMigrationSystem:
             "errors": [],
         }
 
-    def find_sqlite_databases(self) -> List[Path]:
+    def find_sqlite_databases(self) -> list[Path]:
         """Find all potential SQLite databases in the data directory only."""
         search_paths = [
             Path.cwd() / "data",
@@ -189,7 +189,7 @@ class AdvancedMigrationSystem:
             logger.debug(f"Error checking database {db_path}: {e}")
             return False
 
-    def detect_database_version(self, db_path: Path) -> Tuple[str, Dict]:
+    def detect_database_version(self, db_path: Path) -> tuple[str, dict]:
         """
         Detect the version and analyze structure of a SQLite database.
 
@@ -275,7 +275,7 @@ class AdvancedMigrationSystem:
             logger.error(f"Error analyzing database {db_path}: {e}")
             return DatabaseVersion.UNKNOWN, {"error": str(e)}
 
-    def create_backup(self, db_path: Optional[Path] = None) -> bool:
+    def create_backup(self, db_path: Path | None = None) -> bool:
         """
         Create comprehensive backups before migration.
 
@@ -374,7 +374,7 @@ class AdvancedMigrationSystem:
 
     def create_first_admin_user(
         self, username: str, email: str, password: str
-    ) -> Optional[User]:
+    ) -> User | None:
         """
         Create the first admin user for new installations.
 
@@ -563,8 +563,8 @@ class AdvancedMigrationSystem:
                 reading_logs = cursor.fetchall()
 
                 # Import reading log service for actual migration
-                from app.services import reading_log_service
                 from app.domain.models import ReadingLog
+                from app.services import reading_log_service
 
                 for log_row in reading_logs:
                     try:
@@ -651,7 +651,7 @@ class AdvancedMigrationSystem:
     def migrate_v2_database(
         self,
         db_path: Path,
-        user_mapping: Dict[int, str],
+        user_mapping: dict[int, str],
         fetch_api_metadata: bool = False,
     ) -> bool:
         """
@@ -908,8 +908,8 @@ class AdvancedMigrationSystem:
                 reading_logs = cursor.fetchall()
 
                 # Import reading log service for actual migration
-                from app.services import reading_log_service
                 from app.domain.models import ReadingLog
+                from app.services import reading_log_service
 
                 for log_row in reading_logs:
                     try:
@@ -1091,7 +1091,7 @@ class AdvancedMigrationSystem:
         if should_fetch_api:
             try:
                 # Use unified cover/metadata helper for consistency across system
-                from app.utils import get_google_books_cover, fetch_book_data
+                from app.utils import fetch_book_data, get_google_books_cover
                 from app.utils.book_utils import get_best_cover_for_book
 
                 # Add small random delay for migration to avoid overwhelming APIs
@@ -1267,7 +1267,7 @@ class AdvancedMigrationSystem:
 
                 # Try to enrich person data with OpenLibrary metadata during migration
                 try:
-                    from app.utils import search_author_by_name, fetch_author_data
+                    from app.utils import fetch_author_data, search_author_by_name
 
                     # Add small delay to avoid overwhelming OpenLibrary API
                     delay = random.uniform(0.3, 0.7)  # Random delay between 300-700ms
@@ -1385,7 +1385,7 @@ class AdvancedMigrationSystem:
 
         return book
 
-    def _parse_date(self, date_str) -> Optional[date]:
+    def _parse_date(self, date_str) -> date | None:
         """Parse date string to date object."""
         if not date_str:
             return None
@@ -1401,7 +1401,7 @@ class AdvancedMigrationSystem:
         except:
             return None
 
-    def _parse_datetime(self, datetime_str) -> Optional[datetime]:
+    def _parse_datetime(self, datetime_str) -> datetime | None:
         """Parse datetime string to datetime object."""
         if not datetime_str:
             return None
@@ -1439,7 +1439,7 @@ class AdvancedMigrationSystem:
         self.stats["errors"].append(message)
         logger.error(message)
 
-    def get_migration_summary(self) -> Dict:
+    def get_migration_summary(self) -> dict:
         """Get a summary of the migration status and statistics."""
         return {
             "status": self.current_status,

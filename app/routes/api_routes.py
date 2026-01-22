@@ -1,8 +1,10 @@
-from flask import Blueprint, jsonify
-from flask_login import login_required, current_user
-from app.services import book_service
-from datetime import datetime, date
 import logging
+from datetime import date, datetime
+
+from flask import Blueprint, jsonify
+from flask_login import current_user, login_required
+
+from app.services import book_service
 
 logger = logging.getLogger(__name__)
 

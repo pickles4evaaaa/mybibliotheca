@@ -18,7 +18,7 @@ def validate_migration_functions():
         print("❌ app/__init__.py not found")
         return False
 
-    with open(init_file, "r") as f:
+    with open(init_file) as f:
         content = f.read()
 
     # Check for required functions
@@ -59,7 +59,7 @@ def validate_config():
         print("❌ config.py not found")
         return False
 
-    with open(config_file, "r") as f:
+    with open(config_file) as f:
         content = f.read()
 
     if "DATABASE_PATH" in content:
@@ -89,7 +89,7 @@ def validate_deprecated_scripts():
     for script in scripts:
         script_path = os.path.join(os.path.dirname(__file__), script)
         if os.path.exists(script_path):
-            with open(script_path, "r") as f:
+            with open(script_path) as f:
                 content = f.read()
 
             if "DEPRECATED" in content:

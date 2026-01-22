@@ -2,8 +2,9 @@
 Run this once early in app startup (optional) if you want quieter logs while keeping failures at ERROR.
 """
 
-from app.services.cover_service import cover_service  # noqa: F401
 from flask import current_app
+
+from app.services.cover_service import cover_service  # noqa: F401
 
 
 def downgrade_cover_logging():

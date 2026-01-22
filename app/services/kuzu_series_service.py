@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 """Kuzu Series Service
 
@@ -14,8 +14,8 @@ Initial minimal implementation to support upcoming UI pages.
 
 import logging
 
+from ..domain.models import Book, Series
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
-from ..domain.models import Series, Book
 from .kuzu_async_helper import run_async
 
 logger = logging.getLogger(__name__)
@@ -29,11 +29,11 @@ class KuzuSeriesService:
     # remain the canonical per-book images. Ensure any future refactors keep this
     # boundary: update_series_cover* may only touch Series.* properties.
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         self.user_id = user_id or "series_service"
 
     # ---------------------- Retrieval ----------------------
-    async def get_all_series_async(self, limit: int = 500) -> List[Series]:
+    async def get_all_series_async(self, limit: int = 500) -> list[Series]:
         """Return series with minimal cover logic.
 
         Precedence: user_cover (custom) else first book cover (earliest published date, NULL dates last, then title).
@@ -49,7 +49,7 @@ class KuzuSeriesService:
             "ORDER BY s.normalized_name LIMIT $limit"
         )
         result = safe_execute_kuzu_query(query, {"limit": limit})
-        out: List[Series] = []
+        out: list[Series] = []
         if result and hasattr(result, "has_next"):
             try:
                 while result.has_next():  # type: ignore[attr-defined]
@@ -86,10 +86,10 @@ class KuzuSeriesService:
                 logger.error(f"Error iterating series rows (minimal cover logic): {e}")
         return out
 
-    def get_all_series(self, limit: int = 500) -> List[Series]:
+    def get_all_series(self, limit: int = 500) -> list[Series]:
         return run_async(self.get_all_series_async(limit))
 
-    async def get_series_async(self, series_id: str) -> Optional[Series]:
+    async def get_series_async(self, series_id: str) -> Series | None:
         """Fetch single series with minimal cover precedence (user_cover > first book cover)."""
         query = (
             "MATCH (s:Series) WHERE s.id = $id "
@@ -130,12 +130,12 @@ class KuzuSeriesService:
                 return None
         return None
 
-    def get_series(self, series_id: str) -> Optional[Series]:
+    def get_series(self, series_id: str) -> Series | None:
         return run_async(self.get_series_async(series_id))
 
     async def get_books_for_series_async(
         self, series_id: str, order: str = "alpha"
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Retrieve books linked to a series. order determines sorting strategy."""
         order_clause = self.build_order_clause(order)
         query = (
@@ -145,7 +145,7 @@ class KuzuSeriesService:
             f"ORDER BY {order_clause}"
         )
         result = safe_execute_kuzu_query(query, {"id": series_id})
-        books: List[Book] = []
+        books: list[Book] = []
         if result and hasattr(result, "has_next"):
             try:
                 while result.has_next():  # type: ignore[attr-defined]
@@ -183,7 +183,7 @@ class KuzuSeriesService:
         return books
 
     # ---------------------- Contributors Augmentation ----------------------
-    def _contrib_rel_types(self) -> List[str]:
+    def _contrib_rel_types(self) -> list[str]:
         return [
             "AUTHORED",
             "NARRATED",
@@ -198,7 +198,7 @@ class KuzuSeriesService:
             "CONTRIBUTED",
         ]
 
-    async def add_contributors_async(self, books: List[Book]):
+    async def add_contributors_async(self, books: list[Book]):
         # Build a UNION ALL style query to gather contributors from each known relationship type.
         # We avoid relying on a generic r.type property (not present in schema) and explicitly tag the role.
         rel_map = [
@@ -249,10 +249,10 @@ class KuzuSeriesService:
             except Exception:
                 b.contributors = []  # type: ignore[attr-defined]
 
-    def add_contributors(self, books: List[Book]):
+    def add_contributors(self, books: list[Book]):
         return run_async(self.add_contributors_async(books))
 
-    def get_books_for_series(self, series_id: str, order: str = "alpha") -> List[Book]:
+    def get_books_for_series(self, series_id: str, order: str = "alpha") -> list[Book]:
         return run_async(self.get_books_for_series_async(series_id, order))
 
     # ---------------------- Ordering Helper ----------------------
@@ -352,7 +352,7 @@ class KuzuSeriesService:
     # New: lightweight search + create helpers used by typeahead UI
     async def search_series_async(
         self, query: str, limit: int = 15
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Flexible search for series names (case-insensitive, substring aware).
 
         Strategy:
@@ -376,7 +376,7 @@ class KuzuSeriesService:
         )
         params = {"q": q, "limit": limit}
         res = safe_execute_kuzu_query(prefix_cypher, params)
-        collected: Dict[str, Dict[str, Any]] = {}
+        collected: dict[str, dict[str, Any]] = {}
         if res and hasattr(res, "has_next"):
             try:
                 while res.has_next():  # type: ignore[attr-defined]
@@ -459,10 +459,10 @@ class KuzuSeriesService:
         ranked.sort(key=lambda t: (t[0], t[1]))
         return [t[2] for t in ranked[:limit]]
 
-    def search_series(self, query: str, limit: int = 15) -> List[Dict[str, Any]]:
+    def search_series(self, query: str, limit: int = 15) -> list[dict[str, Any]]:
         return run_async(self.search_series_async(query, limit))
 
-    async def create_series_async(self, name: str) -> Optional[Series]:
+    async def create_series_async(self, name: str) -> Series | None:
         """Create a new series if one with the same normalized name doesn't already exist.
 
         Returns the existing or newly created Series object.
@@ -496,7 +496,7 @@ class KuzuSeriesService:
         create_q = "CREATE (s:Series {id:$id, name:$name, normalized_name:$nn, created_at:$created}) RETURN s.id, s.name, s.normalized_name"
         created = safe_execute_kuzu_query(
             create_q,
-            {"id": sid, "name": raw, "nn": norm, "created": datetime.now(timezone.utc)},
+            {"id": sid, "name": raw, "nn": norm, "created": datetime.now(UTC)},
         )
         if created and hasattr(created, "has_next") and created.has_next():  # type: ignore[attr-defined]
             row = created.get_next()  # type: ignore[attr-defined]
@@ -508,21 +508,21 @@ class KuzuSeriesService:
                 return None
         return None
 
-    def create_series(self, name: str) -> Optional[Series]:
+    def create_series(self, name: str) -> Series | None:
         return run_async(self.create_series_async(name))
 
     async def attach_book_async(
         self,
         book_id: str,
         series_id: str,
-        volume: Optional[str] = None,
-        order_number: Optional[int] = None,
-        volume_number_double: Optional[float] = None,
+        volume: str | None = None,
+        order_number: int | None = None,
+        volume_number_double: float | None = None,
     ) -> bool:
         """Attach a book to a series (idempotent)."""
         try:
             set_bits = []
-            params: Dict[str, Any] = {"bid": book_id, "sid": series_id}
+            params: dict[str, Any] = {"bid": book_id, "sid": series_id}
             if volume:
                 # Store as volume_number (string-ish) AND attempt numeric parse for ordering
                 try:
@@ -558,7 +558,7 @@ class KuzuSeriesService:
                 except Exception:
                     pass
             # Compose SET clause (ensure created_at set once, avoid unsupported datetime())
-            now_iso = datetime.now(timezone.utc)
+            now_iso = datetime.now(UTC)
             if set_bits:
                 set_clause = (
                     "SET "
@@ -582,9 +582,9 @@ class KuzuSeriesService:
         self,
         book_id: str,
         series_id: str,
-        volume: Optional[str] = None,
-        order_number: Optional[int] = None,
-        volume_number_double: Optional[float] = None,
+        volume: str | None = None,
+        order_number: int | None = None,
+        volume_number_double: float | None = None,
     ) -> bool:
         return run_async(
             self.attach_book_async(
@@ -619,7 +619,7 @@ class KuzuSeriesService:
     # ---------------------- Per-user Notes ----------------------
     async def get_user_series_notes_async(
         self, user_id: str, series_id: str
-    ) -> Optional[str]:
+    ) -> str | None:
         q = "MATCH (u:User {id:$uid})-[r:HAS_SERIES_NOTES]->(s:Series {id:$sid}) RETURN r.notes"
         res = safe_execute_kuzu_query(q, {"uid": user_id, "sid": series_id})
         if res and hasattr(res, "has_next") and res.has_next():  # type: ignore[attr-defined]
@@ -630,7 +630,7 @@ class KuzuSeriesService:
                 return None
         return None
 
-    def get_user_series_notes(self, user_id: str, series_id: str) -> Optional[str]:
+    def get_user_series_notes(self, user_id: str, series_id: str) -> str | None:
         return run_async(self.get_user_series_notes_async(user_id, series_id))
 
     async def upsert_user_series_notes_async(
@@ -647,7 +647,7 @@ class KuzuSeriesService:
                     "sid": series_id,
                     "uid": user_id,
                     "notes": notes,
-                    "now": datetime.now(timezone.utc),
+                    "now": datetime.now(UTC),
                 },
             )
             return bool(res and hasattr(res, "has_next") and res.has_next())  # type: ignore[attr-defined]
@@ -661,7 +661,7 @@ class KuzuSeriesService:
         return run_async(self.upsert_user_series_notes_async(user_id, series_id, notes))
 
 
-series_service: Optional[KuzuSeriesService] = None
+series_service: KuzuSeriesService | None = None
 
 
 def get_series_service() -> KuzuSeriesService:

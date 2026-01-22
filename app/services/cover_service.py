@@ -1,31 +1,33 @@
 """Centralized cover fetching & processing service (temporary instrumentation)."""
 
 from __future__ import annotations
+
 import os
 import time
-from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Optional, Any
-from concurrent.futures import ThreadPoolExecutor
 import uuid
-from flask import current_app, request, has_request_context
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any
+
+import requests
+from flask import current_app, has_request_context, request
 
 from app.utils.book_utils import get_best_cover_for_book, get_cover_candidates
 from app.utils.image_processing import process_image_from_url
-import requests
 
 
 @dataclass
 class CoverResult:
     source: str
     quality: str
-    original_url: Optional[str]
-    cached_url: Optional[str]
+    original_url: str | None
+    cached_url: str | None
     elapsed: float
     steps: str
 
 
-_PROCESSED_CACHE: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+_PROCESSED_CACHE: OrderedDict[str, tuple[float, str]] = OrderedDict()
 _COVER_JOBS: dict[str, dict[str, Any]] = {}
 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
@@ -33,10 +35,10 @@ _CACHE_TTL_SECONDS = int(os.getenv("COVER_CACHE_TTL", "21600"))  # 6 hours by de
 _CACHE_MAX_ENTRIES = int(os.getenv("COVER_CACHE_MAX", "512"))
 _HEAD_CACHE_TTL_SECONDS = int(os.getenv("COVER_HEAD_TTL", "900"))  # 15 minutes
 _HEAD_TIMEOUT = float(os.getenv("COVER_HEAD_TIMEOUT", "1.5"))
-_HEAD_CACHE: "OrderedDict[str, tuple[float, Optional[int]]]" = OrderedDict()
+_HEAD_CACHE: OrderedDict[str, tuple[float, int | None]] = OrderedDict()
 
 
-def _purge_expired(cache: "OrderedDict[str, tuple[float, Any]]", ttl: int) -> None:
+def _purge_expired(cache: OrderedDict[str, tuple[float, Any]], ttl: int) -> None:
     if not cache or ttl <= 0:
         return
     now = time.time()
@@ -59,7 +61,7 @@ def _record_processed_cache(url: str, cached_url: str) -> None:
         _PROCESSED_CACHE.popitem(last=False)
 
 
-def _get_cached_processed_url(url: str) -> Optional[str]:
+def _get_cached_processed_url(url: str) -> str | None:
     entry = _PROCESSED_CACHE.get(url)
     if not entry:
         return None
@@ -74,7 +76,7 @@ def _get_cached_processed_url(url: str) -> Optional[str]:
     return cached_url
 
 
-def _record_head_cache(url: str, value: Optional[int]) -> None:
+def _record_head_cache(url: str, value: int | None) -> None:
     now = time.time()
     if url in _HEAD_CACHE:
         _HEAD_CACHE.pop(url, None)
@@ -84,7 +86,7 @@ def _record_head_cache(url: str, value: Optional[int]) -> None:
         _HEAD_CACHE.popitem(last=False)
 
 
-def _head_content_length(url: str) -> Optional[int]:
+def _head_content_length(url: str) -> int | None:
     if not url.startswith("http"):
         return None
     entry = _HEAD_CACHE.get(url)
@@ -116,10 +118,10 @@ class CoverService:
 
     def fetch_and_cache(
         self,
-        isbn: Optional[str] = None,
-        title: Optional[str] = None,
-        author: Optional[str] = None,
-        prefer_provider: Optional[str] = None,
+        isbn: str | None = None,
+        title: str | None = None,
+        author: str | None = None,
+        prefer_provider: str | None = None,
     ) -> CoverResult:
         t0 = time.perf_counter()
         steps: list[str] = []
@@ -209,7 +211,7 @@ class CoverService:
                                 pass
                 except Exception:
                     steps.append("fallback:title_author_fail")
-            cached_url: Optional[str] = None
+            cached_url: str | None = None
             if cover_url:
                 try:
                     cached_hit = _get_cached_processed_url(cover_url)
@@ -301,11 +303,11 @@ class CoverService:
     # --- New async / staged selection API ---
     def select_candidate(
         self,
-        isbn: Optional[str] = None,
-        title: Optional[str] = None,
-        author: Optional[str] = None,
-        prefer_provider: Optional[str] = None,
-    ) -> Optional[dict]:
+        isbn: str | None = None,
+        title: str | None = None,
+        author: str | None = None,
+        prefer_provider: str | None = None,
+    ) -> dict | None:
         """Return the chosen candidate dict without downloading (fast path for UI)."""
         candidates = get_cover_candidates(isbn=isbn, title=title, author=author)
         if not candidates:
@@ -348,10 +350,10 @@ class CoverService:
 
     def schedule_async_processing(
         self,
-        isbn: Optional[str] = None,
-        title: Optional[str] = None,
-        author: Optional[str] = None,
-        prefer_provider: Optional[str] = None,
+        isbn: str | None = None,
+        title: str | None = None,
+        author: str | None = None,
+        prefer_provider: str | None = None,
     ) -> dict:
         """Schedule background processing of best cover. Returns job info with immediate candidate URL.
 
@@ -430,7 +432,7 @@ class CoverService:
         _EXECUTOR.submit(_worker)
         return job_record
 
-    def get_job(self, job_id: str) -> Optional[dict]:
+    def get_job(self, job_id: str) -> dict | None:
         return _COVER_JOBS.get(job_id)
 
 

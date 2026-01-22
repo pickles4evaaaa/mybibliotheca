@@ -4,19 +4,19 @@ Kuzu Import Mapping Service
 Handles import mapping templates for CSV import functionality using KuzuDB.
 """
 
-import traceback
 import json
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+import traceback
+from datetime import UTC, datetime
+from typing import Any
 
-from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..domain.models import ImportMappingTemplate
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -53,7 +53,7 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
         return []
 
 
-def _first_column_payload(row_data: Dict[str, Any]) -> Any:
+def _first_column_payload(row_data: dict[str, Any]) -> Any:
     """Return the first-column payload from a converted row."""
     if not isinstance(row_data, dict):
         return row_data or {}
@@ -107,7 +107,7 @@ class KuzuImportMappingService:
 
     def get_template_by_id_sync(
         self, template_id: str
-    ) -> Optional[ImportMappingTemplate]:
+    ) -> ImportMappingTemplate | None:
         """Get an import mapping template by ID."""
         if logger.isEnabledFor(logging.INFO):
             logger.info(f"📋 [IMPORT_MAPPING] Getting template by ID: {template_id}")
@@ -127,7 +127,7 @@ class KuzuImportMappingService:
 
     def create_template_sync(
         self, template: ImportMappingTemplate
-    ) -> Optional[ImportMappingTemplate]:
+    ) -> ImportMappingTemplate | None:
         """Create a new import mapping template."""
         if logger.isEnabledFor(logging.INFO):
             logger.info(f"📋 [IMPORT_MAPPING] Creating template: {template.name}")
@@ -169,11 +169,11 @@ class KuzuImportMappingService:
                 logger.debug("📋 [IMPORT_MAPPING] Step 4: Setting IDs and timestamps")
             # Generate ID if not provided
             if not template.id:
-                template.id = f"template_{datetime.now(timezone.utc).timestamp()}"
+                template.id = f"template_{datetime.now(UTC).timestamp()}"
 
             # Update timestamps
-            template.created_at = datetime.now(timezone.utc)
-            template.updated_at = datetime.now(timezone.utc)
+            template.created_at = datetime.now(UTC)
+            template.updated_at = datetime.now(UTC)
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
@@ -283,13 +283,13 @@ class KuzuImportMappingService:
 
     def update_template_sync(
         self, template: ImportMappingTemplate
-    ) -> Optional[ImportMappingTemplate]:
+    ) -> ImportMappingTemplate | None:
         """Update an existing import mapping template."""
         print(f"📋 [IMPORT_MAPPING] Updating template: {template.name}")
 
         try:
             # Update timestamp
-            template.updated_at = datetime.now(timezone.utc)
+            template.updated_at = datetime.now(UTC)
 
             # Update template with proper data types
             query = """
@@ -333,7 +333,7 @@ class KuzuImportMappingService:
             traceback.print_exc()
             return None
 
-    def get_user_templates_sync(self, user_id: str) -> List[ImportMappingTemplate]:
+    def get_user_templates_sync(self, user_id: str) -> list[ImportMappingTemplate]:
         """Get all import mapping templates for a user."""
         print(f"📋 [IMPORT_MAPPING] Getting templates for user: {user_id}")
 
@@ -365,8 +365,8 @@ class KuzuImportMappingService:
             return []
 
     def detect_template_sync(
-        self, headers: List[str], user_id: str
-    ) -> Optional[ImportMappingTemplate]:
+        self, headers: list[str], user_id: str
+    ) -> ImportMappingTemplate | None:
         """Detect the best matching template for given headers."""
         print(f"📋 [IMPORT_MAPPING] Detecting template for headers: {headers[:5]}...")
 
@@ -403,7 +403,7 @@ class KuzuImportMappingService:
             return None
 
     def _calculate_header_match_score(
-        self, headers1: List[str], headers2: List[str]
+        self, headers1: list[str], headers2: list[str]
     ) -> float:
         """Calculate similarity score between two header lists."""
         if not headers1 or not headers2:
@@ -456,8 +456,8 @@ class KuzuImportMappingService:
             return False
 
     def _dict_to_template(
-        self, data: Dict[str, Any]
-    ) -> Optional[ImportMappingTemplate]:
+        self, data: dict[str, Any]
+    ) -> ImportMappingTemplate | None:
         """Convert dictionary data to ImportMappingTemplate object."""
         try:
             # Safety check for null or corrupted data
@@ -493,9 +493,9 @@ class KuzuImportMappingService:
                     )
                 elif created_at is not None and not isinstance(created_at, datetime):
                     # Handle other timestamp formats
-                    created_at = datetime.now(timezone.utc)
+                    created_at = datetime.now(UTC)
             except Exception:
-                created_at = datetime.now(timezone.utc)
+                created_at = datetime.now(UTC)
 
             try:
                 if updated_at is not None and isinstance(updated_at, str):
@@ -504,9 +504,9 @@ class KuzuImportMappingService:
                     )
                 elif updated_at is not None and not isinstance(updated_at, datetime):
                     # Handle other timestamp formats
-                    updated_at = datetime.now(timezone.utc)
+                    updated_at = datetime.now(UTC)
             except Exception:
-                updated_at = datetime.now(timezone.utc)
+                updated_at = datetime.now(UTC)
 
             try:
                 if last_used is not None and isinstance(last_used, str):
@@ -560,8 +560,8 @@ class KuzuImportMappingService:
                 "field_mappings": field_mappings,
                 "times_used": times_used,
                 "last_used": last_used,
-                "created_at": created_at or datetime.now(timezone.utc),
-                "updated_at": updated_at or datetime.now(timezone.utc),
+                "created_at": created_at or datetime.now(UTC),
+                "updated_at": updated_at or datetime.now(UTC),
             }
 
             template = ImportMappingTemplate(**template_data)

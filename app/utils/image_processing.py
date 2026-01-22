@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from io import BytesIO
 import ipaddress
 import socket
 import time
-from urllib.parse import urlparse
-from pathlib import Path
 import uuid
-from typing import Any, Dict, Optional
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 
 import requests
-from PIL import Image, ImageOps
 from flask import current_app
-
+from PIL import Image, ImageOps
 
 MAX_REMOTE_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB safety ceiling
 
@@ -147,8 +146,8 @@ def process_image_bytes_and_store(
 def process_image_from_url(
     url: str,
     *,
-    auth: Optional[Any] = None,
-    headers: Optional[Dict[str, str]] = None,
+    auth: Any | None = None,
+    headers: dict[str, str] | None = None,
 ) -> str:
     """Download image from URL, process and store, return relative URL.
 
@@ -188,7 +187,7 @@ def process_image_from_url(
     current_app.logger.info(f"[COVER][DL] Start url={url}")
     dl_start = time.perf_counter()
     # Shorter timeout to avoid long hangs; retries could be added later
-    request_kwargs: Dict[str, Any] = {"timeout": 6, "stream": True}
+    request_kwargs: dict[str, Any] = {"timeout": 6, "stream": True}
     if auth is not None:
         request_kwargs["auth"] = auth
     if headers:

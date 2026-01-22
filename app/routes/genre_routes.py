@@ -5,20 +5,21 @@ Provides endpoints for managing genres and categories,
 similar to the person management functionality.
 """
 
+import random
+import traceback
+from datetime import UTC, datetime
+
 from flask import (
     Blueprint,
     current_app,
+    flash,
+    jsonify,
+    redirect,
     render_template,
     request,
-    redirect,
     url_for,
-    jsonify,
-    flash,
 )
-from flask_login import login_required, current_user
-from datetime import datetime, timezone
-import traceback
-import random
+from flask_login import current_user, login_required
 
 from app.services import book_service
 
@@ -672,7 +673,7 @@ def edit_category(category_id):
                 "book_count": getattr(category, "book_count", 0),
                 "user_book_count": getattr(category, "user_book_count", 0),
                 "created_at": getattr(category, "created_at", None),
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             }
 
             # Create new Category object with updated data

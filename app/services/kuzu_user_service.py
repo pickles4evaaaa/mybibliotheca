@@ -4,19 +4,18 @@ Kuzu User Service
 Handles user management operations using clean Kuzu architecture.
 """
 
-import uuid
-from typing import List, Optional
-from datetime import datetime, timezone as dt_timezone
 import logging
+import uuid
+from datetime import UTC, datetime
 
 from flask import current_app
 
-from ..domain.models import User, Location
-from ..kuzu_integration import get_kuzu_service
+from ..domain.models import Location, User
 from ..infrastructure.kuzu_repositories import (
-    KuzuUserRepository,
     KuzuLocationRepository,
+    KuzuUserRepository,
 )
+from ..kuzu_integration import get_kuzu_service
 from .kuzu_async_helper import run_async
 
 logger = logging.getLogger(__name__)
@@ -30,7 +29,7 @@ class KuzuUserService:
         self.user_repo = KuzuUserRepository()
         self.location_repo = KuzuLocationRepository()
 
-    def get_user_by_id_sync(self, user_id: str) -> Optional[User]:
+    def get_user_by_id_sync(self, user_id: str) -> User | None:
         """Get user by ID (sync version for Flask-Login)."""
         try:
             user_data = run_async(self.kuzu_service.get_user(user_id))
@@ -59,16 +58,16 @@ class KuzuUserService:
                     last_login=user_data.get("last_login"),
                     password_changed_at=user_data.get("password_changed_at"),
                     created_at=user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                     updated_at=user_data.get("updated_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
             return None
         except Exception as e:
             current_app.logger.error(f"Error getting user {user_id}: {e}")
             return None
 
-    async def get_user_by_id(self, user_id: str) -> Optional[User]:
+    async def get_user_by_id(self, user_id: str) -> User | None:
         """Get user by ID (async version)."""
         try:
             user_data = await self.kuzu_service.get_user(user_id)
@@ -95,16 +94,16 @@ class KuzuUserService:
                     last_login=user_data.get("last_login"),
                     password_changed_at=user_data.get("password_changed_at"),
                     created_at=user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                     updated_at=user_data.get("updated_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
             return None
         except Exception as e:
             current_app.logger.error(f"Error getting user {user_id}: {e}")
             return None
 
-    async def get_user_by_username(self, username: str) -> Optional[User]:
+    async def get_user_by_username(self, username: str) -> User | None:
         """Get user by username."""
         try:
             user_data = await self.kuzu_service.get_user_by_username(username)
@@ -131,9 +130,9 @@ class KuzuUserService:
                     last_login=user_data.get("last_login"),
                     password_changed_at=user_data.get("password_changed_at"),
                     created_at=user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                     updated_at=user_data.get("updated_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
                 return user
             return None
@@ -141,11 +140,11 @@ class KuzuUserService:
             current_app.logger.error(f"Error getting user by username {username}: {e}")
             return None
 
-    def get_user_by_username_sync(self, username: str) -> Optional[User]:
+    def get_user_by_username_sync(self, username: str) -> User | None:
         """Get user by username (sync version for form validation)."""
         return run_async(self.get_user_by_username(username))
 
-    async def get_user_by_email(self, email: str) -> Optional[User]:
+    async def get_user_by_email(self, email: str) -> User | None:
         """Get user by email."""
         try:
             user_data = await self.kuzu_service.get_user_by_email(email)
@@ -161,20 +160,20 @@ class KuzuUserService:
                     is_admin=user_data.get("is_admin", False),
                     is_active=user_data.get("is_active", True),
                     created_at=user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
             return None
         except Exception as e:
             current_app.logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    def get_user_by_email_sync(self, email: str) -> Optional[User]:
+    def get_user_by_email_sync(self, email: str) -> User | None:
         """Get user by email (sync version for form validation)."""
         return run_async(self.get_user_by_email(email))
 
     async def get_user_by_username_or_email(
         self, username_or_email: str
-    ) -> Optional[User]:
+    ) -> User | None:
         """Get user by username or email."""
         try:
             user_data = await self.kuzu_service.get_user_by_username_or_email(
@@ -192,7 +191,7 @@ class KuzuUserService:
                     is_admin=user_data.get("is_admin", False),
                     is_active=user_data.get("is_active", True),
                     created_at=user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
             return None
         except Exception as e:
@@ -203,7 +202,7 @@ class KuzuUserService:
 
     def get_user_by_username_or_email_sync(
         self, username_or_email: str
-    ) -> Optional[User]:
+    ) -> User | None:
         """Get user by username or email (sync version for form validation)."""
         return run_async(self.get_user_by_username_or_email(username_or_email))
 
@@ -212,9 +211,9 @@ class KuzuUserService:
         username: str,
         email: str,
         password_hash: str,
-        display_name: Optional[str] = None,
+        display_name: str | None = None,
         is_admin: bool = False,
-    ) -> Optional[User]:
+    ) -> User | None:
         """Create a new user."""
         try:
             user_data = {
@@ -238,7 +237,7 @@ class KuzuUserService:
                     is_admin=created_user_data.get("is_admin", False),
                     is_active=created_user_data.get("is_active", True),
                     created_at=created_user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
             return None
         except Exception as e:
@@ -250,13 +249,13 @@ class KuzuUserService:
         username: str,
         email: str,
         password_hash: str,
-        display_name: Optional[str] = None,
+        display_name: str | None = None,
         is_admin: bool = False,
         is_active: bool = True,
         password_must_change: bool = False,
         timezone: str = "UTC",
         location: str = "",
-    ) -> Optional[User]:
+    ) -> User | None:
         """Create a new user (sync version for form validation and onboarding)."""
         try:
             print("🚀 [USER_SERVICE] ============ CREATE_USER_SYNC CALLED ============")
@@ -304,7 +303,7 @@ class KuzuUserService:
                         "password_must_change", False
                     ),
                     created_at=created_user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
                 return user
             else:
@@ -333,7 +332,7 @@ class KuzuUserService:
             current_app.logger.error(f"Error getting user count: {e}")
             return 0
 
-    async def get_all_users(self, limit: int = 1000) -> List[User]:
+    async def get_all_users(self, limit: int = 1000) -> list[User]:
         """Get all users (async version)."""
         try:
             users_data = await self.kuzu_service.get_all_users(limit)
@@ -350,7 +349,7 @@ class KuzuUserService:
                     is_admin=user_data.get("is_admin", False),
                     is_active=user_data.get("is_active", True),
                     created_at=user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
                 users.append(user)
             return users
@@ -358,11 +357,11 @@ class KuzuUserService:
             current_app.logger.error(f"Error getting all users: {e}")
             return []
 
-    def get_all_users_sync(self, limit: int = 1000) -> List[User]:
+    def get_all_users_sync(self, limit: int = 1000) -> list[User]:
         """Get all users (sync version for form validation)."""
         return run_async(self.get_all_users(limit))
 
-    async def update_user(self, user: User) -> Optional[User]:
+    async def update_user(self, user: User) -> User | None:
         """Update an existing user (async version)."""
         try:
             user_data = {
@@ -384,7 +383,7 @@ class KuzuUserService:
                 "locked_until": user.locked_until,
                 "last_login": user.last_login,
                 "password_changed_at": user.password_changed_at,
-                "updated_at": datetime.now(dt_timezone.utc),
+                "updated_at": datetime.now(UTC),
             }
 
             updated_user_data = await self.kuzu_service.update_user(
@@ -421,16 +420,16 @@ class KuzuUserService:
                     last_login=updated_user_data.get("last_login"),
                     password_changed_at=updated_user_data.get("password_changed_at"),
                     created_at=updated_user_data.get("created_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                     updated_at=updated_user_data.get("updated_at")
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 )
             return None
         except Exception as e:
             current_app.logger.error(f"Error updating user {user.id}: {e}")
             return None
 
-    def update_user_sync(self, user: User) -> Optional[User]:
+    def update_user_sync(self, user: User) -> User | None:
         """Update an existing user (sync version for admin tools)."""
         return run_async(self.update_user(user))
 
@@ -460,10 +459,10 @@ class KuzuUserService:
         self,
         user_id: str,
         name: str,
-        description: Optional[str] = None,
+        description: str | None = None,
         location_type: str = "home",
         is_default: bool = False,
-    ) -> Optional[Location]:
+    ) -> Location | None:
         """Create a location for a user."""
         try:
             location = Location(
@@ -474,7 +473,7 @@ class KuzuUserService:
                 location_type=location_type,
                 is_default=is_default,
                 is_active=True,
-                created_at=datetime.now(dt_timezone.utc),
+                created_at=datetime.now(UTC),
             )
 
             created_location = await self.location_repo.create(location, user_id)
@@ -487,7 +486,7 @@ class KuzuUserService:
             logger.error(f"Failed to create location for user {user_id}: {e}")
             return None
 
-    async def get_user_locations(self, user_id: str) -> List[Location]:
+    async def get_user_locations(self, user_id: str) -> list[Location]:
         """Get all locations for a user."""
         return await self.location_repo.get_user_locations(user_id)
 

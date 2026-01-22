@@ -7,7 +7,8 @@ Uses the existing batch import infrastructure for optimal performance.
 
 import sqlite3
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any
+
 from app.simplified_book_service import SimplifiedBook
 
 
@@ -71,7 +72,7 @@ class SQLiteMigrationService:
         sqlite_file_path: str,
         target_user_id: str,
         create_default_user: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Migrate books from an SQLite database using batch infrastructure.
 
@@ -104,7 +105,7 @@ class SQLiteMigrationService:
 
     def _migrate_v1_database(
         self, sqlite_file_path: str, target_user_id: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Migrate v1 (single-user) SQLite database."""
         print(
             f"📋 [V1_MIGRATION] Starting v1 database migration for user {target_user_id}"
@@ -170,7 +171,7 @@ class SQLiteMigrationService:
         sqlite_file_path: str,
         target_user_id: str,
         create_default_user: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Migrate v1.5 (multi-user) SQLite database."""
         print("📋 [V1.5_MIGRATION] Starting v1.5 database migration")
 
@@ -269,11 +270,11 @@ class SQLiteMigrationService:
 
     def _process_books_with_batch_pipeline(
         self,
-        all_books_data: List[SimplifiedBook],
+        all_books_data: list[SimplifiedBook],
         all_isbns: set,
         all_authors: set,
         target_user_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Process books using the existing batch import infrastructure."""
 
         # ===== PHASE 2-3: Use existing batch API functions =====
@@ -291,8 +292,8 @@ class SQLiteMigrationService:
         author_api_data = {}  # Empty dict since we don't have batch author metadata
 
         # ===== PHASE 4-5: Use existing book creation pipeline =====
-        from app.services import book_service
         from app.infrastructure.kuzu_repositories import KuzuUserBookRepository
+        from app.services import book_service
 
         user_book_repo = KuzuUserBookRepository()
 
@@ -389,7 +390,7 @@ class SQLiteMigrationService:
 
     def _convert_v1_row_to_simplified_book(
         self, row: dict, reading_logs: dict
-    ) -> Optional[SimplifiedBook]:
+    ) -> SimplifiedBook | None:
         """Convert a v1 SQLite row to SimplifiedBook format."""
         if not row.get("title"):
             return None
@@ -417,7 +418,7 @@ class SQLiteMigrationService:
 
     def _convert_v1_5_row_to_simplified_book(
         self, row: dict, reading_logs: dict
-    ) -> Optional[SimplifiedBook]:
+    ) -> SimplifiedBook | None:
         """Convert a v1.5 SQLite row to SimplifiedBook format."""
         if not row.get("title"):
             return None
@@ -458,9 +459,11 @@ class SQLiteMigrationService:
         """Convert SimplifiedBook to domain object with API enhancements."""
         from app.domain.models import (
             Book as DomainBook,
-            Person,
+        )
+        from app.domain.models import (
             BookContribution,
             ContributionType,
+            Person,
             Publisher,
         )
 

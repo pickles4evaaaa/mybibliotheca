@@ -9,13 +9,13 @@ from the database first and fall back to JSON.
 
 from __future__ import annotations
 
-import os
 import json
-from typing import Any, Dict, List, Optional, Tuple
+import os
+from typing import Any
+
 from flask import current_app
 
 from app.domain.models import MediaType, ReadingStatus
-
 
 _MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
 
@@ -37,7 +37,7 @@ _READING_STATUS_LABELS = {
 
 # Reading status choices for the default reading status dropdown
 # Ordered list of (value, label) pairs for display
-_DEFAULT_READING_STATUS_ORDER: Tuple[Tuple[str, str], ...] = (
+_DEFAULT_READING_STATUS_ORDER: tuple[tuple[str, str], ...] = (
     ("", _READING_STATUS_LABELS[""]),
     (
         ReadingStatus.PLAN_TO_READ.value,
@@ -53,7 +53,7 @@ _DEFAULT_READING_STATUS_ORDER: Tuple[Tuple[str, str], ...] = (
     ),
 )
 
-_LIBRARY_SORT_ORDER: Tuple[Tuple[str, str], ...] = (
+_LIBRARY_SORT_ORDER: tuple[tuple[str, str], ...] = (
     ("title_asc", "Title A-Z"),
     ("title_desc", "Title Z-A"),
     ("author_first_asc", "Author First, Last A-Z"),
@@ -66,7 +66,7 @@ _LIBRARY_SORT_ORDER: Tuple[Tuple[str, str], ...] = (
     ("publication_date_asc", "Publication Date (Oldest First)"),
 )
 
-_LIBRARY_STATUS_ORDER: Tuple[Tuple[str, str], ...] = (
+_LIBRARY_STATUS_ORDER: tuple[tuple[str, str], ...] = (
     ("reading", "Currently Reading"),
     ("read", "Books Read"),
     ("plan_to_read", "Plan to Read"),
@@ -81,7 +81,7 @@ _LIBRARY_STATUS_OPTIONS = {key for key, _ in _LIBRARY_STATUS_ORDER}.union(
 )
 
 
-def normalize_library_sort_option(raw: Optional[str]) -> Optional[str]:
+def normalize_library_sort_option(raw: str | None) -> str | None:
     """Normalize a library sort option to a known value."""
     if raw is None:
         return None
@@ -89,7 +89,7 @@ def normalize_library_sort_option(raw: Optional[str]) -> Optional[str]:
     return candidate if candidate in _LIBRARY_SORT_OPTIONS else None
 
 
-def normalize_library_status_filter(raw: Optional[str]) -> Optional[str]:
+def normalize_library_status_filter(raw: str | None) -> str | None:
     """Normalize a library status filter to a supported token."""
     if raw is None:
         return None
@@ -105,17 +105,17 @@ def normalize_library_status_filter(raw: Optional[str]) -> Optional[str]:
     return candidate if candidate in _LIBRARY_STATUS_OPTIONS else None
 
 
-def get_library_sort_choices() -> List[Tuple[str, str]]:
+def get_library_sort_choices() -> list[tuple[str, str]]:
     """Return available library sort options as (value, label) pairs."""
     return list(_LIBRARY_SORT_ORDER)
 
 
-def get_library_status_choices() -> List[Tuple[str, str]]:
+def get_library_status_choices() -> list[tuple[str, str]]:
     """Return available library status filter options as (value, label) pairs."""
     return list(_LIBRARY_STATUS_ORDER)
 
 
-def normalize_default_reading_status(raw: Optional[str]) -> str:
+def normalize_default_reading_status(raw: str | None) -> str:
     """Normalize a default reading status to a known value.
 
     Returns empty string if not a valid reading status value.
@@ -134,7 +134,7 @@ def normalize_default_reading_status(raw: Optional[str]) -> str:
     return candidate if candidate in _READING_STATUS_VALUES else ""
 
 
-def get_default_reading_status_choices() -> List[Tuple[str, str]]:
+def get_default_reading_status_choices() -> list[tuple[str, str]]:
     """Return available default reading status options as (value, label) pairs."""
     return list(_DEFAULT_READING_STATUS_ORDER)
 
@@ -152,7 +152,7 @@ def _user_settings_path(user_id: str) -> str:
     return os.path.join(base, f"{user_id}.json")
 
 
-def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
+def load_user_settings(user_id: str | None) -> dict[str, Any]:
     """Load per-user settings JSON. Returns an empty dict if not found or invalid."""
     if not user_id:
         return {}
@@ -160,7 +160,7 @@ def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             data = json.load(f)
         # Ensure known ABS fields exist with defaults
         if isinstance(data, dict):
@@ -185,12 +185,12 @@ def load_user_settings(user_id: Optional[str]) -> Dict[str, Any]:
         return {}
 
 
-def save_user_settings(user_id: Optional[str], updates: Dict[str, Any]) -> bool:
+def save_user_settings(user_id: str | None, updates: dict[str, Any]) -> bool:
     """Persist per-user settings, merging with existing if present."""
     if not user_id:
         return False
     existing = load_user_settings(user_id)
-    normalized_updates: Dict[str, Any] = {}
+    normalized_updates: dict[str, Any] = {}
     for key, value in updates.items():
         if key == "library_default_sort":
             norm = normalize_library_sort_option(value)
@@ -219,8 +219,8 @@ def save_user_settings(user_id: Optional[str], updates: Dict[str, Any]) -> bool:
 
 
 def get_effective_reading_defaults(
-    user_id: Optional[str],
-) -> Tuple[Optional[int], Optional[int]]:
+    user_id: str | None,
+) -> tuple[int | None, int | None]:
     """
     Return (pages, minutes) defaults for reading logs for the given user.
     Precedence: per-user JSON overrides > admin system_config defaults > (None, None)
@@ -271,7 +271,7 @@ def get_effective_reading_defaults(
         return None, None
 
 
-def get_effective_rows_per_page(user_id: Optional[str]) -> Optional[int]:
+def get_effective_rows_per_page(user_id: str | None) -> int | None:
     """
     Return the effective default rows-per-page for the library grid for the given user.
     Precedence: per-user JSON override > admin system_config default > None
@@ -305,7 +305,7 @@ def get_effective_rows_per_page(user_id: Optional[str]) -> Optional[int]:
         return None
 
 
-def get_library_view_defaults(user_id: Optional[str]) -> Tuple[str, str]:
+def get_library_view_defaults(user_id: str | None) -> tuple[str, str]:
     """Return (status_filter, sort_option) defaults for the library view."""
     settings = load_user_settings(user_id)
     status = (
@@ -318,7 +318,7 @@ def get_library_view_defaults(user_id: Optional[str]) -> Tuple[str, str]:
     return status, sort
 
 
-def get_default_reading_status(user_id: Optional[str]) -> str:
+def get_default_reading_status(user_id: str | None) -> str:
     """Return the user's default reading status for newly added books.
 
     Returns empty string if not set (meaning "Not Set" in the UI).

@@ -4,33 +4,34 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 import uuid
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Deque, Dict, Optional
-import traceback
+from datetime import UTC, datetime
+from typing import Any
 
 from flask import current_app, has_request_context, url_for
 
-from .opds_sync_service import opds_sync_service
 from app.utils.opds_settings import load_opds_settings, save_opds_settings
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
+
+from .opds_sync_service import opds_sync_service
 
 
 @dataclass
 class _QueuedItem:
     task_id: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
 
 
 class _OpdsSyncRunner:
     """Single background thread responsible for OPDS sync operations."""
 
     def __init__(self) -> None:
-        self._queue: Deque[_QueuedItem] = deque()
+        self._queue: deque[_QueuedItem] = deque()
         self._lock = threading.RLock()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._running = False
         self._app = None
         self._last_scheduler_check = 0.0
@@ -58,7 +59,7 @@ class _OpdsSyncRunner:
             )
             self._thread.start()
 
-    def enqueue_test_sync(self, user_id: str, limit: int = 10) -> Dict[str, Any]:
+    def enqueue_test_sync(self, user_id: str, limit: int = 10) -> dict[str, Any]:
         task_id = f"opds_test_{uuid.uuid4().hex[:10]}"
         self._create_job(
             user_id,
@@ -82,8 +83,8 @@ class _OpdsSyncRunner:
         return self._response_payload(user_id, task_id)
 
     def enqueue_sync(
-        self, user_id: str, *, limit: Optional[int] = None, origin: str = "manual"
-    ) -> Dict[str, Any]:
+        self, user_id: str, *, limit: int | None = None, origin: str = "manual"
+    ) -> dict[str, Any]:
         task_id = f"opds_sync_{uuid.uuid4().hex[:10]}"
         self._create_job(
             user_id,
@@ -116,13 +117,13 @@ class _OpdsSyncRunner:
         task_id: str,
         job_type: str,
         total: int,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         payload = {
             "task_id": task_id,
             "type": job_type,
             "status": "queued",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "processed": 0,
             "total": total,
             "total_books": total,
@@ -135,9 +136,9 @@ class _OpdsSyncRunner:
             payload.update(metadata)
         safe_create_import_job(user_id, task_id, payload)
 
-    def _response_payload(self, user_id: str, task_id: str) -> Dict[str, Any]:
-        progress_url: Optional[str] = None
-        api_progress_url: Optional[str] = None
+    def _response_payload(self, user_id: str, task_id: str) -> dict[str, Any]:
+        progress_url: str | None = None
+        api_progress_url: str | None = None
         if has_request_context():
             try:
                 progress_url = url_for("import.import_books_progress", task_id=task_id)
@@ -170,7 +171,7 @@ class _OpdsSyncRunner:
                     except Exception:
                         pass
 
-                item: Optional[_QueuedItem] = None
+                item: _QueuedItem | None = None
                 with self._lock:
                     if self._queue:
                         item = self._queue.popleft()
@@ -250,7 +251,7 @@ class _OpdsSyncRunner:
                 save_opds_settings(
                     {
                         "last_test_summary": {
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.now(UTC).isoformat(),
                             "limit": limit,
                             "summary": summary,
                             "status": "completed",
@@ -283,7 +284,7 @@ class _OpdsSyncRunner:
                 save_opds_settings(
                     {
                         "last_test_summary": {
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.now(UTC).isoformat(),
                             "error": error_details,
                             "exception_type": exc.__class__.__name__,
                             "status": "failed",
@@ -310,7 +311,7 @@ class _OpdsSyncRunner:
             item.task_id,
             {"status": "running", "recent_activity": ["OPDS sync running..."]},
         )
-        start_ts = datetime.now(timezone.utc).isoformat()
+        start_ts = datetime.now(UTC).isoformat()
         try:
             result = opds_sync_service.quick_probe_sync_sync(
                 base_url,
@@ -408,7 +409,7 @@ class _OpdsSyncRunner:
             interval_hours = 24
         last_run = settings.get("last_auto_sync")
         due = False
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not last_run:
             due = True
         else:

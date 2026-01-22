@@ -39,14 +39,14 @@ Batching:
 
 """
 
-import os
-import sys
 import argparse
-import sqlite3
 import json
+import os
+import sqlite3
+import sys
 import time
-from datetime import datetime, timezone
 from contextlib import closing
+from datetime import UTC, datetime
 
 try:
     from dotenv import load_dotenv  # type: ignore
@@ -275,7 +275,7 @@ def main():
             ensure_sqlite_schema(sqlite_conn)
 
             def _iso_utc_now():
-                return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
             manifest = {
                 "exported_tables": {},

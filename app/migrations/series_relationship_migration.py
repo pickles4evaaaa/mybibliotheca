@@ -14,13 +14,12 @@ Rules per Series Upgrade spec:
 
 from __future__ import annotations
 
-import os
-import json
-import re
 import hashlib
-from datetime import datetime, timezone
+import json
+import os
+import re
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
@@ -51,7 +50,7 @@ def write_marker(payload: dict) -> None:
         pass
 
 
-def parse_volume(raw: Optional[str]) -> Optional[float]:
+def parse_volume(raw: str | None) -> float | None:
     if not raw:
         return None
     txt = raw.strip()
@@ -124,7 +123,7 @@ def run_series_migration(verbose: bool = False) -> dict:
                     {
                         "skipped": True,
                         "reason": "relationships_exist",
-                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ts": datetime.now(UTC).isoformat(),
                     }
                 )
                 return result_summary
@@ -159,7 +158,7 @@ def run_series_migration(verbose: bool = False) -> dict:
                 {
                     "skipped": True,
                     "reason": "no_legacy_data",
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                 }
             )
             result_summary["skipped"] = True
@@ -207,7 +206,7 @@ def run_series_migration(verbose: bool = False) -> dict:
                             "id": sid,
                             "name": series_name,
                             "norm": norm,
-                            "ts": datetime.now(timezone.utc),
+                            "ts": datetime.now(UTC),
                         },
                     )
                     result_summary["series_created"] += 1
@@ -222,7 +221,7 @@ def run_series_migration(verbose: bool = False) -> dict:
                 "vol": int(vol_num) if (vol_num is not None) else None,
                 "vol_d": vol_num,
                 "ord": series_order if isinstance(series_order, (int, float)) else None,
-                "ts": datetime.now(timezone.utc),
+                "ts": datetime.now(UTC),
             }
             # Create rel only if not exists (defensive)
             conn.execute(
@@ -242,7 +241,7 @@ def run_series_migration(verbose: bool = False) -> dict:
             {
                 "skipped": False,
                 **result_summary,
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
             }
         )
     return result_summary

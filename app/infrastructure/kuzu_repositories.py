@@ -2,14 +2,10 @@
 Clean Kuzu repositories that work with the simplified graph schema.
 """
 
-import uuid
 import logging
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
-from datetime import datetime, timezone
-
-if TYPE_CHECKING:
-    # Use TYPE_CHECKING to avoid circular imports during runtime
-    pass
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 from ..utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
 
@@ -41,7 +37,7 @@ class KuzuRepositoryAdapter:
     def __init__(self, safe_manager: SafeKuzuManager):
         self.safe_manager = safe_manager
 
-    def create_node(self, node_type: str, node_data: Dict[str, Any]) -> bool:
+    def create_node(self, node_type: str, node_data: dict[str, Any]) -> bool:
         """Create a node using SafeKuzuManager."""
         try:
             # Build dynamic CREATE query with timestamp handling
@@ -70,8 +66,8 @@ class KuzuRepositoryAdapter:
             return False
 
     def query(
-        self, cypher_query: str, params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, cypher_query: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Execute a query using SafeKuzuManager and return results in old format."""
         try:
             result = self.safe_manager.execute_query(cypher_query, params or {})
@@ -106,7 +102,7 @@ class KuzuRepositoryAdapter:
         rel_type: str,
         to_type: str,
         to_id: str,
-        rel_props: Optional[Dict[str, Any]] = None,
+        rel_props: dict[str, Any] | None = None,
     ) -> bool:
         """Create a relationship using SafeKuzuManager."""
         try:
@@ -132,7 +128,7 @@ class KuzuRepositoryAdapter:
             logger.error(f"Failed to create {rel_type} relationship: {e}")
             return False
 
-    def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_type: str, node_id: str) -> dict[str, Any] | None:
         """Get a node by ID using SafeKuzuManager."""
         try:
             query = f"MATCH (n:{node_type} {{id: $node_id}}) RETURN n"
@@ -144,7 +140,7 @@ class KuzuRepositoryAdapter:
             return None
 
     def update_node(
-        self, node_type: str, node_id: str, updates: Dict[str, Any]
+        self, node_type: str, node_id: str, updates: dict[str, Any]
     ) -> bool:
         """Update a node using SafeKuzuManager."""
         try:
@@ -210,7 +206,7 @@ class KuzuUserRepository:
             self._safe_manager = get_safe_kuzu_manager()
         return self._safe_manager
 
-    async def create(self, user: Any) -> Optional[Any]:
+    async def create(self, user: Any) -> Any | None:
         """Create a new user."""
         try:
             if not getattr(user, "id", None):
@@ -229,12 +225,12 @@ class KuzuUserRepository:
                 "is_active": getattr(user, "is_active", True),
                 "password_must_change": getattr(user, "password_must_change", False),
                 "created_at_str": getattr(
-                    user, "created_at", datetime.now(timezone.utc)
+                    user, "created_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(user, "created_at", datetime.now(timezone.utc)), "isoformat"
+                    getattr(user, "created_at", datetime.now(UTC)), "isoformat"
                 )
-                else datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
             }
 
             # Create user using SafeKuzuManager with direct Cypher query
@@ -269,7 +265,7 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to create user: {e}")
             return None
 
-    async def get_by_id(self, user_id: str) -> Optional[Any]:
+    async def get_by_id(self, user_id: str) -> Any | None:
         """Get a user by ID."""
         try:
             query = "MATCH (u:User {id: $user_id}) RETURN u"
@@ -284,7 +280,7 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to get user {user_id}: {e}")
             return None
 
-    async def get_by_username(self, username: str) -> Optional[Any]:
+    async def get_by_username(self, username: str) -> Any | None:
         """Get a user by username."""
         try:
             query = "MATCH (u:User {username: $username}) RETURN u"
@@ -301,7 +297,7 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to get user by username {username}: {e}")
             return None
 
-    async def get_by_email(self, email: str) -> Optional[Any]:
+    async def get_by_email(self, email: str) -> Any | None:
         """Get a user by email."""
         try:
             query = "MATCH (u:User {email: $email}) RETURN u"
@@ -318,7 +314,7 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to get user by email {email}: {e}")
             return None
 
-    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         """Get all users with pagination."""
         try:
             query = f"MATCH (u:User) RETURN u SKIP {offset} LIMIT {limit}"
@@ -338,7 +334,7 @@ class KuzuUserRepository:
             logger.error(f"❌ Failed to get users: {e}")
             return []
 
-    async def update(self, user_id: str, updates: Dict[str, Any]) -> Optional[Any]:
+    async def update(self, user_id: str, updates: dict[str, Any]) -> Any | None:
         """Update an existing user with the provided fields.
 
         Note: This method does not enforce authorization checks. Authorization
@@ -487,7 +483,7 @@ class KuzuPersonRepository:
             self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
 
-    def create(self, person: Any) -> Optional[Any]:
+    def create(self, person: Any) -> Any | None:
         """Create a new person."""
         try:
             # Handle both dictionary and object inputs
@@ -497,7 +493,7 @@ class KuzuPersonRepository:
                 birth_year = person.get("birth_year", None)
                 death_year = person.get("death_year", None)
                 bio = person.get("bio", "")
-                created_at = person.get("created_at", datetime.now(timezone.utc))
+                created_at = person.get("created_at", datetime.now(UTC))
                 openlibrary_id = person.get("openlibrary_id", None)
                 birth_place = person.get("birth_place", None)
                 website = person.get("website", None)
@@ -508,7 +504,7 @@ class KuzuPersonRepository:
                 birth_year = getattr(person, "birth_year", None)
                 death_year = getattr(person, "death_year", None)
                 bio = getattr(person, "bio", "")
-                created_at = getattr(person, "created_at", datetime.now(timezone.utc))
+                created_at = getattr(person, "created_at", datetime.now(UTC))
                 openlibrary_id = getattr(person, "openlibrary_id", None)
                 birth_place = getattr(person, "birth_place", None)
                 website = getattr(person, "website", None)
@@ -524,7 +520,7 @@ class KuzuPersonRepository:
             )
             if not openlibrary_id and not bio and not birth_year and not image_url:
                 try:
-                    from ..utils import search_author_by_name, fetch_author_data
+                    from ..utils import fetch_author_data, search_author_by_name
 
                     logger.info(
                         f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}"
@@ -594,8 +590,8 @@ class KuzuPersonRepository:
                 "image_url": image_url,
                 "created_at_str": created_at.isoformat()
                 if hasattr(created_at, "isoformat")
-                else datetime.now(timezone.utc).isoformat(),
-                "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
+                "updated_at_str": datetime.now(UTC).isoformat(),
             }
 
             success = self.safe_manager.execute_query(
@@ -630,7 +626,7 @@ class KuzuPersonRepository:
             logger.error(f"❌ Failed to create person: {e}")
             return None
 
-    async def get_by_id(self, person_id: str) -> Optional[Dict[str, Any]]:
+    async def get_by_id(self, person_id: str) -> dict[str, Any] | None:
         """Get a person by ID."""
         try:
             print(f"🔧 [PERSON_REPO] Getting person by ID: {person_id}")
@@ -676,7 +672,7 @@ class KuzuPersonRepository:
             logger.error(f"❌ Failed to get person by ID {person_id}: {e}")
             return None
 
-    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_by_name(self, name: str) -> dict[str, Any] | None:
         """Get a person by name."""
         try:
             normalized_name = name.strip().lower()
@@ -700,7 +696,7 @@ class KuzuPersonRepository:
             logger.error(f"❌ Failed to get person by name {name}: {e}")
             return None
 
-    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         """Get all persons with pagination."""
         try:
             query = f"""
@@ -727,7 +723,7 @@ class KuzuPersonRepository:
             logger.error(f"❌ Failed to get all persons: {e}")
             return []
 
-    async def update(self, person_id: str, updates: Dict[str, Any]) -> bool:
+    async def update(self, person_id: str, updates: dict[str, Any]) -> bool:
         """Update a person."""
         try:
             # Build SET clause for updates
@@ -819,7 +815,7 @@ class KuzuBookRepository:
             self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
 
-    async def create(self, book: Any) -> Optional[Any]:
+    async def create(self, book: Any) -> Any | None:
         """Create a new book with relationships."""
         try:
             # Debug contributors
@@ -886,19 +882,19 @@ class KuzuBookRepository:
                 "custom_metadata": getattr(book, "custom_metadata", None),
                 # Use *_str variants so adapter casts to TIMESTAMP via timestamp($param)
                 "created_at_str": getattr(
-                    book, "created_at", datetime.now(timezone.utc)
+                    book, "created_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(book, "created_at", datetime.now(timezone.utc)), "isoformat"
+                    getattr(book, "created_at", datetime.now(UTC)), "isoformat"
                 )
-                else datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
                 "updated_at_str": getattr(
-                    book, "updated_at", datetime.now(timezone.utc)
+                    book, "updated_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(book, "updated_at", datetime.now(timezone.utc)), "isoformat"
+                    getattr(book, "updated_at", datetime.now(UTC)), "isoformat"
                 )
-                else datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
             }
 
             # Create the book node first
@@ -1029,7 +1025,7 @@ class KuzuBookRepository:
 
     async def _ensure_person_exists(
         self, person: Any, *, auto_fetch: bool = True
-    ) -> Optional[str]:
+    ) -> str | None:
         """Ensure a person exists in the database, create if necessary."""
         try:
             person_name = getattr(person, "name", "")
@@ -1078,7 +1074,7 @@ class KuzuBookRepository:
                 and not image_url
             ):
                 try:
-                    from ..utils import search_author_by_name, fetch_author_data
+                    from ..utils import fetch_author_data, search_author_by_name
 
                     logger.info(
                         f"🔍 Auto-fetching OpenLibrary metadata for: {person_name}"
@@ -1147,14 +1143,14 @@ class KuzuBookRepository:
                 "openlibrary_id": openlibrary_id,
                 "image_url": image_url,
                 "created_at_str": getattr(
-                    person, "created_at", datetime.now(timezone.utc)
+                    person, "created_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(person, "created_at", datetime.now(timezone.utc)),
+                    getattr(person, "created_at", datetime.now(UTC)),
                     "isoformat",
                 )
-                else datetime.now(timezone.utc).isoformat(),
-                "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
+                "updated_at_str": datetime.now(UTC).isoformat(),
             }
             # Filter out fields that don't exist in the current schema
             # birth_place and website are not in the current schema, but openlibrary_id and image_url are
@@ -1265,15 +1261,15 @@ class KuzuBookRepository:
                 f"❌ Failed to create category relationships from raw data: {e}"
             )
 
-    async def _ensure_category_path_exists(self, parts: list[str]) -> Optional[str]:
+    async def _ensure_category_path_exists(self, parts: list[str]) -> str | None:
         """Ensure a hierarchical category path exists; return the leaf category id.
 
         parts: e.g., ["Fiction", "Science Fiction", "Space Opera"]
         Creates (or finds) each Category with proper parent_id and PARENT_CATEGORY links.
         """
         try:
-            parent_id: Optional[str] = None
-            leaf_id: Optional[str] = None
+            parent_id: str | None = None
+            leaf_id: str | None = None
             level = 0
             for name in parts:
                 normalized_name = name.strip().lower()
@@ -1312,8 +1308,8 @@ class KuzuBookRepository:
                         "icon": "",
                         "book_count": 0,
                         "user_book_count": 0,
-                        "created_at_str": datetime.now(timezone.utc).isoformat(),
-                        "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                        "created_at_str": datetime.now(UTC).isoformat(),
+                        "updated_at_str": datetime.now(UTC).isoformat(),
                     }
                     created = self.db.create_node("Category", category_data)
                     if not created:
@@ -1401,7 +1397,7 @@ class KuzuBookRepository:
         except Exception as e:
             logger.error(f"❌ Failed to create category relationship: {e}")
 
-    async def _ensure_category_exists(self, category_name: str) -> Optional[str]:
+    async def _ensure_category_exists(self, category_name: str) -> str | None:
         """Ensure a category exists in the database, create if necessary."""
         try:
             if not category_name:
@@ -1442,8 +1438,8 @@ class KuzuBookRepository:
                 "icon": "",
                 "book_count": 0,
                 "user_book_count": 0,
-                "created_at_str": datetime.now(timezone.utc).isoformat(),
-                "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                "created_at_str": datetime.now(UTC).isoformat(),
+                "updated_at_str": datetime.now(UTC).isoformat(),
             }
             # Note: parent_id and aliases are not included as they need special handling
 
@@ -1486,7 +1482,7 @@ class KuzuBookRepository:
         except Exception as e:
             logger.error(f"❌ Failed to create publisher relationship: {e}")
 
-    async def _ensure_publisher_exists(self, publisher: Any) -> Optional[str]:
+    async def _ensure_publisher_exists(self, publisher: Any) -> str | None:
         """Ensure a publisher exists in the database, create if necessary."""
         try:
             # Handle both string and object publishers
@@ -1526,7 +1522,7 @@ class KuzuBookRepository:
                 "name": publisher_name,
                 "country": publisher_country or "",
                 "founded_year": publisher_founded,
-                "created_at_str": datetime.now(timezone.utc).isoformat(),
+                "created_at_str": datetime.now(UTC).isoformat(),
             }
             # Note: Filtering out updated_at as it doesn't exist in DB schema
 
@@ -1548,7 +1544,7 @@ class KuzuBookRepository:
     # Missing Methods Required by kuzu_integration
     # ========================================
 
-    async def get_by_id(self, book_id: str) -> Optional[Dict[str, Any]]:
+    async def get_by_id(self, book_id: str) -> dict[str, Any] | None:
         """Get a book by ID."""
         try:
             query = """
@@ -1605,14 +1601,14 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get book by ID {book_id}: {e}")
             return None
 
-    async def get_by_uid(self, book_uid: str) -> Optional[Dict[str, Any]]:
+    async def get_by_uid(self, book_uid: str) -> dict[str, Any] | None:
         """Get a book by UID (alias for get_by_id for backward compatibility)."""
         logger.info(f"🔍 get_by_uid called with: {book_uid}")
         result = await self.get_by_id(book_uid)
         logger.info(f"🔍 get_by_uid result: {result}")
         return result
 
-    async def get_by_isbn(self, isbn: str) -> Optional[Dict[str, Any]]:
+    async def get_by_isbn(self, isbn: str) -> dict[str, Any] | None:
         """Get a book by ISBN (13 or 10)."""
         try:
             query = """
@@ -1651,7 +1647,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get book by ISBN {isbn}: {e}")
             return None
 
-    async def search(self, query_text: str, limit: int = 50) -> List[Dict[str, Any]]:
+    async def search(self, query_text: str, limit: int = 50) -> list[dict[str, Any]]:
         """Search for books by title or author."""
         try:
             # Search by title
@@ -1681,7 +1677,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to search books: {e}")
             return []
 
-    async def get_all(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         """Get all books with pagination."""
         try:
             query = f"""
@@ -1707,7 +1703,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get all books: {e}")
             return []
 
-    async def get_book_authors(self, book_id: str) -> List[Dict[str, Any]]:
+    async def get_book_authors(self, book_id: str) -> list[dict[str, Any]]:
         """Get all contributors for a book with their roles."""
         try:
             query = """
@@ -1739,7 +1735,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get book authors: {e}")
             return []
 
-    async def get_book_categories(self, book_id: str) -> List[Dict[str, Any]]:
+    async def get_book_categories(self, book_id: str) -> list[dict[str, Any]]:
         """Get all categories for a book."""
         try:
             query = """
@@ -1782,7 +1778,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get book categories: {e}")
             return []
 
-    async def get_book_publisher(self, book_id: str) -> Optional[Dict[str, Any]]:
+    async def get_book_publisher(self, book_id: str) -> dict[str, Any] | None:
         """Get the publisher for a book."""
         try:
             query = """
@@ -1807,7 +1803,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get book publisher: {e}")
             return None
 
-    async def get_all_persons(self) -> List[Dict[str, Any]]:
+    async def get_all_persons(self) -> list[dict[str, Any]]:
         """Get all persons in the database with book counts."""
         try:
             query = """
@@ -1854,7 +1850,7 @@ class KuzuBookRepository:
             logger.error(f"❌ Failed to get all persons: {e}")
             return []
 
-    async def get_all_categories(self) -> List[Dict[str, Any]]:
+    async def get_all_categories(self) -> list[dict[str, Any]]:
         """Get all categories in the database."""
         try:
             query = """
@@ -1948,7 +1944,7 @@ class KuzuUserBookRepository:
         ownership_status: str = "owned",
         media_type: str = "physical",
         notes: str = "",
-        location_id: Optional[str] = None,
+        location_id: str | None = None,
     ) -> bool:
         """Add a book to user's library (universal library mode -> create personal metadata overlay).
 
@@ -1987,10 +1983,10 @@ class KuzuUserBookRepository:
     async def get_user_books(
         self,
         user_id: str,
-        reading_status: Optional[str] = None,
+        reading_status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get books for user based on personal metadata (OWNS deprecated).
 
         Strategy: pull all books and overlay personal metadata in Python, then filter.
@@ -2006,7 +2002,7 @@ class KuzuUserBookRepository:
             SKIP $offset LIMIT $limit
             """
             results = self.db.query(query, {"offset": offset, "limit": limit})
-            books: List[Dict[str, Any]] = []
+            books: list[dict[str, Any]] = []
             for result in results:
                 if "col_0" not in result:
                     continue
@@ -2044,11 +2040,11 @@ class KuzuUserBookRepository:
         reading_status,
         ownership_status,
         media_type,
-        location_id: Optional[str] = None,
+        location_id: str | None = None,
         source: str = "manual",
         notes: str = "",
         date_added=None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
+        custom_metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Deprecated: create ownership now maps to creating personal metadata overlay.
 
@@ -2114,13 +2110,13 @@ class KuzuUserBookRepository:
             )
             return False
 
-    async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
+    async def get_user_statistics(self, user_id: str) -> dict[str, Any]:
         """Get user statistics based on HAS_PERSONAL_METADATA (OWNS deprecated).
 
         Aggregates counts from the personal metadata JSON blob.
         """
         try:
-            stats: Dict[str, Any] = {
+            stats: dict[str, Any] = {
                 "total_books": 0,
                 "plan_to_read": 0,
                 "currently_reading": 0,
@@ -2181,7 +2177,7 @@ class KuzuUserBookRepository:
 
     async def get_reading_timeline(
         self, user_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get user's reading timeline based on personal metadata updates."""
         try:
             query = """
@@ -2191,7 +2187,7 @@ class KuzuUserBookRepository:
             LIMIT $limit
             """
             results = self.db.query(query, {"user_id": user_id, "limit": limit})
-            timeline: List[Dict[str, Any]] = []
+            timeline: list[dict[str, Any]] = []
             if not results:
                 return timeline
             for row in results:
@@ -2280,7 +2276,7 @@ class KuzuLocationRepository:
             self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
 
-    async def create(self, location: Any, user_id: str) -> Optional[Any]:
+    async def create(self, location: Any, user_id: str) -> Any | None:
         """Create a new location for a user."""
         try:
             if not getattr(location, "id", None):
@@ -2295,13 +2291,13 @@ class KuzuLocationRepository:
                 "location_type": getattr(location, "location_type", "room"),
                 "is_default": getattr(location, "is_default", False),
                 "created_at": getattr(
-                    location, "created_at", datetime.now(timezone.utc)
+                    location, "created_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(location, "created_at", datetime.now(timezone.utc)),
+                    getattr(location, "created_at", datetime.now(UTC)),
                     "isoformat",
                 )
-                else datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
             }
 
             success = self.db.create_node("Location", location_data)
@@ -2319,7 +2315,7 @@ class KuzuLocationRepository:
 
     async def get_user_locations(
         self, user_id: str, active_only: bool = True
-    ) -> List[Any]:
+    ) -> list[Any]:
         """Get all locations for a user."""
         try:
             query = """
@@ -2343,7 +2339,7 @@ class KuzuLocationRepository:
             logger.error(f"❌ Failed to get user locations: {e}")
             return []
 
-    async def get_default_location(self, user_id: str) -> Optional[Any]:
+    async def get_default_location(self, user_id: str) -> Any | None:
         """Get the default location for a user."""
         try:
             query = """
@@ -2363,7 +2359,7 @@ class KuzuLocationRepository:
             logger.error(f"❌ Failed to get default location: {e}")
             return None
 
-    async def get_by_id(self, location_id: str) -> Optional[Dict[str, Any]]:
+    async def get_by_id(self, location_id: str) -> dict[str, Any] | None:
         """Get a location by ID."""
         try:
             query = """
@@ -2407,7 +2403,7 @@ class KuzuCategoryRepository:
             self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
 
-    async def create(self, category: Any) -> Optional[Any]:
+    async def create(self, category: Any) -> Any | None:
         """Create a new category."""
         try:
             category_name = getattr(category, "name", "")
@@ -2426,17 +2422,17 @@ class KuzuCategoryRepository:
 
             # Include all properties that exist in the Category schema
             # Use _str suffix for timestamps to enable proper conversion in create_node
-            created_at = getattr(category, "created_at", datetime.now(timezone.utc))
-            updated_at = getattr(category, "updated_at", datetime.now(timezone.utc))
+            created_at = getattr(category, "created_at", datetime.now(UTC))
+            updated_at = getattr(category, "updated_at", datetime.now(UTC))
             created_at_str = (
                 created_at.isoformat()
                 if hasattr(created_at, "isoformat")
-                else datetime.now(timezone.utc).isoformat()
+                else datetime.now(UTC).isoformat()
             )
             updated_at_str = (
                 updated_at.isoformat()
                 if hasattr(updated_at, "isoformat")
-                else datetime.now(timezone.utc).isoformat()
+                else datetime.now(UTC).isoformat()
             )
 
             # Convert aliases list to string (schema defines aliases as STRING)
@@ -2484,10 +2480,10 @@ class KuzuCategoryRepository:
                     book_count=getattr(category, "book_count", 0),
                     user_book_count=getattr(category, "user_book_count", 0),
                     created_at=getattr(
-                        category, "created_at", datetime.now(timezone.utc)
+                        category, "created_at", datetime.now(UTC)
                     ),
                     updated_at=getattr(
-                        category, "updated_at", datetime.now(timezone.utc)
+                        category, "updated_at", datetime.now(UTC)
                     ),
                 )
                 return created_category
@@ -2499,7 +2495,7 @@ class KuzuCategoryRepository:
             logger.error(f"❌ Failed to create category: {e}")
             return None
 
-    async def get_by_id(self, category_id: str) -> Optional[Dict[str, Any]]:
+    async def get_by_id(self, category_id: str) -> dict[str, Any] | None:
         """Get a category by ID."""
         try:
             query = """
@@ -2519,7 +2515,7 @@ class KuzuCategoryRepository:
             logger.error(f"❌ Failed to get category by ID {category_id}: {e}")
             return None
 
-    async def get_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_by_name(self, name: str) -> dict[str, Any] | None:
         """Get a category by name."""
         try:
             normalized_name = name.strip().lower()
@@ -2543,7 +2539,7 @@ class KuzuCategoryRepository:
             logger.error(f"❌ Failed to get category by name {name}: {e}")
             return None
 
-    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         """Get all categories with pagination."""
         try:
             query = f"""
@@ -2570,7 +2566,7 @@ class KuzuCategoryRepository:
             logger.error(f"❌ Failed to get all categories: {e}")
             return []
 
-    async def update(self, category: Any) -> Optional[Any]:
+    async def update(self, category: Any) -> Any | None:
         """Update an existing category."""
         try:
             category_id = getattr(category, "id", "")
@@ -2579,7 +2575,7 @@ class KuzuCategoryRepository:
                 return None
 
             # Convert updated_at to ISO string for timestamp() function
-            updated_at_str = datetime.now(timezone.utc).isoformat()
+            updated_at_str = datetime.now(UTC).isoformat()
 
             # Convert aliases list to string (schema defines aliases as STRING)
             aliases_list = getattr(category, "aliases", [])
@@ -2659,7 +2655,7 @@ class KuzuCustomFieldRepository:
             self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
 
-    async def create(self, field_def: Any) -> Optional[Any]:
+    async def create(self, field_def: Any) -> Any | None:
         """Create a new custom field definition."""
         try:
             if not getattr(field_def, "id", None):
@@ -2679,13 +2675,13 @@ class KuzuCustomFieldRepository:
                 "default_value": getattr(field_def, "default_value", ""),
                 "usage_count": getattr(field_def, "usage_count", 0),
                 "created_at": getattr(
-                    field_def, "created_at", datetime.now(timezone.utc)
+                    field_def, "created_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(field_def, "created_at", datetime.now(timezone.utc)),
+                    getattr(field_def, "created_at", datetime.now(UTC)),
                     "isoformat",
                 )
-                else datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
             }
 
             # Convert enum to string if needed
@@ -2704,7 +2700,7 @@ class KuzuCustomFieldRepository:
             logger.error(f"❌ Failed to create custom field: {e}")
             return None
 
-    async def get_by_id(self, field_id: str) -> Optional[Any]:
+    async def get_by_id(self, field_id: str) -> Any | None:
         """Get a custom field by ID."""
         try:
             field_data = self.db.get_node("CustomField", field_id)
@@ -2716,7 +2712,7 @@ class KuzuCustomFieldRepository:
             logger.error(f"❌ Failed to get custom field {field_id}: {e}")
             return None
 
-    async def get_by_user(self, user_id: str) -> List[Any]:
+    async def get_by_user(self, user_id: str) -> list[Any]:
         """Get all custom fields for a user."""
         try:
             query = """
@@ -2735,7 +2731,7 @@ class KuzuCustomFieldRepository:
             logger.error(f"❌ Failed to get custom fields for user {user_id}: {e}")
             return []
 
-    async def update(self, field_def: Any) -> Optional[Any]:
+    async def update(self, field_def: Any) -> Any | None:
         """Update an existing custom field."""
         try:
             field_id = getattr(field_def, "id", None)
@@ -2747,7 +2743,7 @@ class KuzuCustomFieldRepository:
                 "display_name": getattr(field_def, "display_name", ""),
                 "description": getattr(field_def, "description", ""),
                 "is_shareable": False,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
 
             success = self.db.update_node("CustomField", field_id, field_data)
@@ -2765,7 +2761,7 @@ class KuzuCustomFieldRepository:
             logger.error(f"❌ Failed to delete custom field {field_id}: {e}")
             return False
 
-    async def get_shareable(self, exclude_user_id: Optional[str] = None) -> List[Any]:
+    async def get_shareable(self, exclude_user_id: str | None = None) -> list[Any]:
         """Get all shareable custom field definitions."""
         try:
             # Shareable filter removed; return all definitions
@@ -2795,7 +2791,7 @@ class KuzuCustomFieldRepository:
             logger.error(f"❌ Failed to get shareable custom fields: {e}")
             return []
 
-    async def search(self, query: str, user_id: Optional[str] = None) -> List[Any]:
+    async def search(self, query: str, user_id: str | None = None) -> list[Any]:
         """Search custom field definitions."""
         try:
             query_conditions = []
@@ -2845,7 +2841,7 @@ class KuzuCustomFieldRepository:
         except Exception as e:
             logger.warning(f"Could not increment usage count for field {field_id}: {e}")
 
-    async def get_popular(self, limit: int = 20) -> List[Any]:
+    async def get_popular(self, limit: int = 20) -> list[Any]:
         """Get most popular shareable custom field definitions."""
         try:
             query = """
@@ -2891,7 +2887,7 @@ class KuzuImportMappingRepository:
             self._db = KuzuRepositoryAdapter(self.safe_manager)
         return self._db
 
-    async def create(self, template: Any) -> Optional[Any]:
+    async def create(self, template: Any) -> Any | None:
         """Create a new import mapping template."""
         try:
             if not getattr(template, "id", None):
@@ -2908,13 +2904,13 @@ class KuzuImportMappingRepository:
                 "sample_headers": getattr(template, "sample_headers", ""),
                 "usage_count": getattr(template, "usage_count", 0),
                 "created_at": getattr(
-                    template, "created_at", datetime.now(timezone.utc)
+                    template, "created_at", datetime.now(UTC)
                 ).isoformat()
                 if hasattr(
-                    getattr(template, "created_at", datetime.now(timezone.utc)),
+                    getattr(template, "created_at", datetime.now(UTC)),
                     "isoformat",
                 )
-                else datetime.now(timezone.utc).isoformat(),
+                else datetime.now(UTC).isoformat(),
             }
 
             success = self.db.create_node("ImportMapping", template_data)
@@ -2929,7 +2925,7 @@ class KuzuImportMappingRepository:
             logger.error(f"❌ Failed to create import mapping template: {e}")
             return None
 
-    async def get_by_id(self, template_id: str) -> Optional[Any]:
+    async def get_by_id(self, template_id: str) -> Any | None:
         """Get an import mapping template by ID."""
         try:
             template_data = self.db.get_node("ImportMapping", template_id)
@@ -2941,7 +2937,7 @@ class KuzuImportMappingRepository:
             logger.error(f"❌ Failed to get import mapping template {template_id}: {e}")
             return None
 
-    async def get_by_user(self, user_id: str) -> List[Any]:
+    async def get_by_user(self, user_id: str) -> list[Any]:
         """Get all import mapping templates for a user."""
         try:
             query = """
@@ -2962,7 +2958,7 @@ class KuzuImportMappingRepository:
             )
             return []
 
-    async def update(self, template: Any) -> Optional[Any]:
+    async def update(self, template: Any) -> Any | None:
         """Update an existing import mapping template."""
         try:
             template_id = getattr(template, "id", None)
@@ -2973,7 +2969,7 @@ class KuzuImportMappingRepository:
                 "name": getattr(template, "name", ""),
                 "description": getattr(template, "description", ""),
                 "field_mappings": getattr(template, "field_mappings", ""),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             }
 
             success = self.db.update_node("ImportMapping", template_id, template_data)
@@ -2993,7 +2989,7 @@ class KuzuImportMappingRepository:
             )
             return False
 
-    async def detect_template(self, headers: List[str], user_id: str) -> Optional[Any]:
+    async def detect_template(self, headers: list[str], user_id: str) -> Any | None:
         """Detect matching template based on CSV headers."""
         try:
             headers_lower = [h.lower().strip() for h in headers]
@@ -3034,7 +3030,7 @@ class KuzuImportMappingRepository:
             logger.error(f"❌ Failed to detect template: {e}")
             return None
 
-    async def get_system_templates(self) -> List[Any]:
+    async def get_system_templates(self) -> list[Any]:
         """Get all system default templates."""
         try:
             query = """
@@ -3066,7 +3062,7 @@ class KuzuImportMappingRepository:
                 query,
                 {
                     "template_id": template_id,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 },
             )
         except Exception as e:

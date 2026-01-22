@@ -5,13 +5,13 @@ Handles reading log operations for the Kuzu-based system.
 Currently a basic implementation that returns empty results.
 """
 
-from typing import List, Optional, Dict, Any
-from datetime import datetime, date, timedelta, timezone as dt_timezone
 import logging
 import uuid
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
-from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.domain.models import ReadingLog
+from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def _safe_get_row_value(row: Any, index: int) -> Any:
             return None
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -91,7 +91,7 @@ def _extract_single_value(result: Any, index: int = 0) -> Any:
     return None
 
 
-def _extract_first_row(result: Any) -> Optional[List[Any]]:
+def _extract_first_row(result: Any) -> list[Any] | None:
     """
     Helper function to safely extract the first row from KuzuDB QueryResult objects.
 
@@ -122,7 +122,7 @@ class KuzuReadingLogService:
 
     def get_recent_shared_logs_sync(
         self, days_back: int = 7, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get recent shared reading logs.
 
@@ -140,8 +140,8 @@ class KuzuReadingLogService:
         return []
 
     def get_user_reading_logs_sync(
-        self, user_id: str, days_back: int = 30, limit: Optional[int] = 100
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str, days_back: int = 30, limit: int | None = 100
+    ) -> list[dict[str, Any]]:
         """
         Get reading logs for a specific user.
 
@@ -200,11 +200,11 @@ class KuzuReadingLogService:
             return []
 
     def get_user_reading_dates_sync(
-        self, user_id: str, days_back: Optional[int] = None
-    ) -> List[date]:
+        self, user_id: str, days_back: int | None = None
+    ) -> list[date]:
         """Return unique reading-log dates for a user ordered from most recent to oldest."""
         try:
-            params: Dict[str, Any] = {"user_id": user_id}
+            params: dict[str, Any] = {"user_id": user_id}
             date_filter = ""
 
             if days_back is not None:
@@ -221,7 +221,7 @@ class KuzuReadingLogService:
             results = safe_execute_kuzu_query(query, params)
             rows = _convert_query_result_to_list(results)
 
-            reading_dates: List[date] = []
+            reading_dates: list[date] = []
             for row in rows:
                 raw_value = row.get("col_0") or row.get("result")
                 if raw_value is None and row:
@@ -251,7 +251,7 @@ class KuzuReadingLogService:
 
     def create_reading_log_sync(
         self, reading_log: ReadingLog
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Create a new reading log entry.
 
@@ -391,11 +391,11 @@ class KuzuReadingLogService:
                             reading_log.date.year,
                             reading_log.date.month,
                             reading_log.date.day,
-                            tzinfo=dt_timezone.utc,
+                            tzinfo=UTC,
                         )
                     else:
                         start_dt = reading_log.created_at or datetime.now(
-                            dt_timezone.utc
+                            UTC
                         )
                     personal_metadata_service.ensure_start_date(
                         reading_log.user_id, reading_log.book_id, start_dt
@@ -432,8 +432,8 @@ class KuzuReadingLogService:
             return None
 
     def _update_existing_log(
-        self, existing_log_data: Dict[str, Any], new_log: ReadingLog
-    ) -> Optional[Dict[str, Any]]:
+        self, existing_log_data: dict[str, Any], new_log: ReadingLog
+    ) -> dict[str, Any] | None:
         """Update an existing reading log by adding to the values."""
         try:
             existing_log = dict(existing_log_data)
@@ -531,7 +531,7 @@ class KuzuReadingLogService:
 
     def get_user_reading_stats_sync(
         self, user_id: str, days_back: int = 30
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get reading statistics for a user.
 
@@ -610,7 +610,7 @@ class KuzuReadingLogService:
 
     def get_existing_log_sync(
         self, book_id: str, user_id: str, log_date: date
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Check if a reading log already exists for a user, book, and date.
 
@@ -656,7 +656,7 @@ class KuzuReadingLogService:
 
     def get_recently_read_books_sync(
         self, user_id: str, limit: int = 5
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get books that the user has recently logged reading sessions for.
 
@@ -697,7 +697,7 @@ class KuzuReadingLogService:
             logger.error(f"Error getting recently read books: {e}")
             return []
 
-    def get_user_all_time_reading_stats_sync(self, user_id: str) -> Dict[str, Any]:
+    def get_user_all_time_reading_stats_sync(self, user_id: str) -> dict[str, Any]:
         """
         Get all-time reading statistics for a user.
 
@@ -727,7 +727,7 @@ class KuzuReadingLogService:
                 distinct_books = set()
                 distinct_days = set()
 
-                def _normalize_book_id(payload: Dict[str, Any]) -> Optional[str]:
+                def _normalize_book_id(payload: dict[str, Any]) -> str | None:
                     if not payload:
                         return None
                     candidate = (
@@ -737,7 +737,7 @@ class KuzuReadingLogService:
                     )
                     return str(candidate) if candidate is not None else None
 
-                def _parse_log_date(raw_value: Any) -> Optional[date]:
+                def _parse_log_date(raw_value: Any) -> date | None:
                     if raw_value is None:
                         return None
                     if isinstance(raw_value, datetime):
@@ -783,7 +783,7 @@ class KuzuReadingLogService:
 
                     # Resolve book data, preferring query column but falling back to embedded payload
                     raw_book = result.get("col_1")
-                    book_payload: Dict[str, Any] = {}
+                    book_payload: dict[str, Any] = {}
                     if raw_book:
                         try:
                             book_payload = dict(raw_book)
@@ -847,7 +847,7 @@ class KuzuReadingLogService:
 
     def get_user_reading_logs_paginated_sync(
         self, user_id: str, page: int = 1, per_page: int = 25
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get paginated reading logs for a user.
 
@@ -937,7 +937,7 @@ class KuzuReadingLogService:
 
     def update_reading_log_sync(
         self, log_id: str, reading_log: ReadingLog
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Update an existing reading log entry.
 
@@ -985,7 +985,7 @@ class KuzuReadingLogService:
                     "minutes_read": reading_log.minutes_read,
                     "notes": reading_log.notes,
                     "updated_at": reading_log.updated_at
-                    or datetime.now(dt_timezone.utc),
+                    or datetime.now(UTC),
                 },
             )
 
@@ -1005,7 +1005,7 @@ class KuzuReadingLogService:
                     if reading_log.created_at
                     else None,
                     "updated_at": (
-                        reading_log.updated_at or datetime.now(dt_timezone.utc)
+                        reading_log.updated_at or datetime.now(UTC)
                     ).isoformat(),
                 }
 
@@ -1019,7 +1019,7 @@ class KuzuReadingLogService:
 
     def get_reading_log_by_id_sync(
         self, log_id: str, user_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Get a specific reading log by ID.
 

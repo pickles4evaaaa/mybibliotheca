@@ -6,9 +6,10 @@ Use this to restore covers to books that lost their cover_url during editing.
 This script allows you to manually map cover files to books.
 """
 
-from app.infrastructure.kuzu_graph import get_kuzu_database
-from pathlib import Path
 import sys
+from pathlib import Path
+
+from app.infrastructure.kuzu_graph import get_kuzu_database
 
 
 def restore_cover(book_id: str, cover_filename: str):

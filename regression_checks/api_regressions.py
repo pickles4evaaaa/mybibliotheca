@@ -1,12 +1,11 @@
-from datetime import datetime
-from types import SimpleNamespace
-from pathlib import Path
-import types
 import json
 import sys
+import types
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
 
 from flask import Flask
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -54,10 +53,10 @@ def create_app_with_stubs():
         sys.modules["kuzu"] = kuzu_stub
 
     """Create a Flask app registering API blueprints with stubbed services."""
+    import app.services as services_pkg
     from app.api import books as books_module
     from app.api import reading_logs as logs_module
     from app.api import users as users_module
-    import app.services as services_pkg
 
     app = Flask(__name__)
     app.config.update(TESTING=True, API_TEST_TOKEN="test-token")

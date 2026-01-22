@@ -4,15 +4,16 @@ Reading Log Routes
 Handles reading log functionality including creating, viewing, and managing reading sessions.
 """
 
-from flask import Blueprint, request, jsonify, render_template, flash, redirect, url_for
-from flask_login import login_required, current_user
-from datetime import datetime, date, timezone, timedelta
-from typing import Any, Dict, Optional
 import logging
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
-from app.services import reading_log_service, book_service
-from app.services.personal_metadata_service import personal_metadata_service
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
+
 from app.domain.models import ReadingLog, ReadingStatus
+from app.services import book_service, reading_log_service
+from app.services.personal_metadata_service import personal_metadata_service
 from app.utils.user_settings import get_effective_reading_defaults
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,7 @@ def create_reading_log_entry():
                         log_entry_date.year,
                         log_entry_date.month,
                         log_entry_date.day,
-                        tzinfo=timezone.utc,
+                        tzinfo=UTC,
                     )
                     personal_metadata_service.ensure_start_date(
                         current_user.id, book_id, start_dt
@@ -248,7 +249,7 @@ def api_user_books():
             return payload
 
         def qualifies_for_in_progress_prefill(
-            book_obj: Optional[object], meta: Optional[Dict[str, Any]] = None
+            book_obj: object | None, meta: dict[str, Any] | None = None
         ) -> bool:
             if not book_obj:
                 return False
@@ -332,7 +333,7 @@ def api_user_books():
                 return False
 
             if latest_log_raw:
-                latest_log_date: Optional[date] = None
+                latest_log_date: date | None = None
                 if isinstance(latest_log_raw, datetime):
                     latest_log_date = latest_log_raw.date()
                 elif isinstance(latest_log_raw, date):
@@ -352,7 +353,7 @@ def api_user_books():
                                 latest_log_date = None
 
                 if latest_log_date:
-                    today = datetime.now(timezone.utc).date()
+                    today = datetime.now(UTC).date()
                     if latest_log_date <= today and (
                         today - latest_log_date
                     ) <= timedelta(days=14):
@@ -374,7 +375,7 @@ def api_user_books():
 
         books: list[dict] = []
         seen: set = set()
-        suggested_payload: Optional[dict] = None
+        suggested_payload: dict | None = None
 
         for bdict in recently_read or []:
             bid = bdict.get("id")
@@ -385,7 +386,7 @@ def api_user_books():
                 b = book_service.get_book_by_id_sync(bid)
             if not b:
                 continue
-            metadata_snapshot: Dict[str, Any] = {}
+            metadata_snapshot: dict[str, Any] = {}
             try:
                 metadata_snapshot = (
                     personal_metadata_service.get_personal_metadata(
@@ -415,7 +416,7 @@ def api_user_books():
                 except Exception:
                     pass
 
-            meta_context: Dict[str, Any] = {}
+            meta_context: dict[str, Any] = {}
             if isinstance(bdict, dict):
                 meta_context.update(bdict)
             if metadata_snapshot:
@@ -456,7 +457,7 @@ def api_user_books():
                 books.append(make_payload(b))
                 seen.add(b.id)
 
-        response_body: Dict[str, Any] = {"books": books}
+        response_body: dict[str, Any] = {"books": books}
         if suggested_payload:
             response_body["suggested_book"] = suggested_payload
 
@@ -585,8 +586,8 @@ def edit_reading_log(log_id):
             notes=notes or None,
             created_at=datetime.fromisoformat(existing_log["created_at"])
             if existing_log.get("created_at")
-            else datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            else datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         # Update the log

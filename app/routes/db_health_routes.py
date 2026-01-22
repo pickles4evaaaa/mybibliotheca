@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify
+
 from ..utils.safe_kuzu_manager import get_safe_kuzu_manager
 
 # Lightweight health/introspection blueprint to validate DB without side effects

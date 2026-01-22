@@ -5,18 +5,17 @@ This module provides lightweight OCR functionality to extract ISBNs from
 uploaded images using barcode detection and OCR fallback.
 """
 
+import logging
+import os
 import re
 import tempfile
-import os
-from typing import Optional, List
-import logging
 
 try:
-    from PIL import Image, ImageEnhance, ImageFilter
     import cv2
     import numpy as np
-    from pyzbar import pyzbar
     import pytesseract
+    from PIL import Image, ImageEnhance, ImageFilter
+    from pyzbar import pyzbar
 
     OCR_AVAILABLE = True
 except ImportError as e:
@@ -39,7 +38,7 @@ class ISBNExtractor:
             r"\b(?:978|979)?[-\s]?(?:\d[-\s]?){8,12}\d\b",
         ]
 
-    def extract_isbn_from_image(self, image_file) -> Optional[str]:
+    def extract_isbn_from_image(self, image_file) -> str | None:
         """
         Extract ISBN from an uploaded image file.
 
@@ -84,7 +83,7 @@ class ISBNExtractor:
             logger.error(f"Error extracting ISBN from image: {e}")
             return None
 
-    def _extract_from_barcode(self, image_path: str) -> Optional[str]:
+    def _extract_from_barcode(self, image_path: str) -> str | None:
         """Extract ISBN from barcode using pyzbar."""
         try:
             # Read image
@@ -116,7 +115,7 @@ class ISBNExtractor:
             logger.error(f"Error in barcode detection: {e}")
             return None
 
-    def _extract_from_ocr(self, image_path: str) -> Optional[str]:
+    def _extract_from_ocr(self, image_path: str) -> str | None:
         """Extract ISBN using OCR as fallback."""
         try:
             # Open and preprocess image
@@ -146,7 +145,7 @@ class ISBNExtractor:
             logger.error(f"Error in OCR processing: {e}")
             return None
 
-    def _preprocess_image_for_ocr(self, image: Image.Image) -> List[Image.Image]:
+    def _preprocess_image_for_ocr(self, image: Image.Image) -> list[Image.Image]:
         """Preprocess image for better OCR results."""
         processed_images = []
 
@@ -184,7 +183,7 @@ class ISBNExtractor:
 
         return processed_images
 
-    def _find_isbn_in_text(self, text: str) -> Optional[str]:
+    def _find_isbn_in_text(self, text: str) -> str | None:
         """Find and validate ISBN in extracted text."""
         # Clean and normalize text
         text = re.sub(r"\s+", " ", text.strip())
@@ -199,7 +198,7 @@ class ISBNExtractor:
 
         return None
 
-    def _validate_and_clean_isbn(self, isbn_candidate: str) -> Optional[str]:
+    def _validate_and_clean_isbn(self, isbn_candidate: str) -> str | None:
         """Validate and clean an ISBN candidate."""
         if not isbn_candidate:
             return None
@@ -227,7 +226,7 @@ class ISBNExtractor:
         return None
 
 
-def extract_isbn_from_image(image_file) -> Optional[str]:
+def extract_isbn_from_image(image_file) -> str | None:
     """
     Convenience function to extract ISBN from image file.
 

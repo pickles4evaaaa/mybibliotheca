@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
 import sys
 import types
-from typing import Any, Dict, Tuple
+from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -48,7 +48,7 @@ def _openlibrary_payload(
     isbn13: str,
     title: str = "Fruits Basket, Vol. 2",
     isbn10: str = "1591826045",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "title": title,
         "subtitle": None,
@@ -71,7 +71,7 @@ def _openlibrary_payload(
     }
 
 
-def _google_payload(isbn13: str, title: str) -> Dict[str, Any]:
+def _google_payload(isbn13: str, title: str) -> dict[str, Any]:
     return {
         "title": title,
         "subtitle": None,
@@ -96,10 +96,10 @@ def _google_payload(isbn13: str, title: str) -> Dict[str, Any]:
 
 def _run_case(
     case_name: str,
-    google_payload: Dict[str, Any],
-    openlib_payload: Dict[str, Any],
+    google_payload: dict[str, Any],
+    openlib_payload: dict[str, Any],
     expect_empty: bool,
-) -> Tuple[str, bool, str]:
+) -> tuple[str, bool, str]:
     """Execute a regression case by patching the fetch pair helper."""
     original_fetch = unified_metadata._unified_fetch_pair  # type: ignore[attr-defined]
 

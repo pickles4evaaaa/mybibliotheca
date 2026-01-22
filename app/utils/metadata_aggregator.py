@@ -15,7 +15,6 @@ internal changes transparent to callers.
 
 from __future__ import annotations
 
-
 # Re-export from the canonical implementation
 from .unified_metadata import (
     fetch_unified_by_isbn,

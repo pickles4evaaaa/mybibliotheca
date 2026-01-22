@@ -4,17 +4,18 @@ Flask application factory for Kuzu-based Bibliotheca.
 This version completely removes SQLite dependency and uses Kuzu as the sole data store.
 """
 
+import atexit
+import logging
 import os
 import sys
 import time
-import atexit
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
-from flask import Flask, session, request, jsonify, redirect, url_for
+
+from flask import Flask, jsonify, redirect, request, session, url_for
 from flask_login import LoginManager
-from flask_wtf.csrf import CSRFProtect
 from flask_session import Session
+from flask_wtf.csrf import CSRFProtect
 
 try:
     from flask_compress import Compress  # type: ignore
@@ -73,9 +74,10 @@ def create_development_admin():
     dev_password = os.getenv("DEV_ADMIN_PASSWORD")
 
     if dev_username and dev_password:
-        from .services import user_service
-        from .domain.models import User
         from werkzeug.security import generate_password_hash
+
+        from .domain.models import User
+        from .services import user_service
 
         # Check if admin user already exists
         try:
@@ -129,6 +131,7 @@ def _initialize_default_templates():
     try:
         import time
         from datetime import datetime
+
         from .domain.models import ImportMappingTemplate
         from .services import import_mapping_service
 
@@ -285,8 +288,8 @@ def _initialize_default_templates():
                     },
                     times_used=0,
                     last_used=None,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
 
                 # Attempt to create template with error tracking
@@ -398,8 +401,8 @@ def _initialize_default_templates():
                     },
                     times_used=0,
                     last_used=None,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
                 )
 
                 # Attempt to create template with error tracking
@@ -445,8 +448,8 @@ def _initialize_default_templates():
 
 
 def create_app():
-    import os
     import logging
+    import os
 
     # Ensure schema preflight executes (module import side-effect)
     try:
@@ -482,10 +485,10 @@ def create_app():
         raise RuntimeError("SECRET_KEY must be set in environment or config")
 
     # Initialize debug utilities
-    from .debug_utils import setup_debug_logging, print_debug_banner, debug_middleware
-
     # Suppress asyncio debug logging unless explicitly needed
     import logging
+
+    from .debug_utils import debug_middleware, print_debug_banner, setup_debug_logging
 
     logging.getLogger("asyncio").setLevel(logging.INFO)
 
@@ -571,8 +574,8 @@ def create_app():
     @app.context_processor
     def inject_theme_preference():
         """Make theme preference available in all templates."""
-        from flask_login import current_user
         from flask import session
+        from flask_login import current_user
 
         theme = "light"  # Default theme
         try:
@@ -752,11 +755,11 @@ def create_app():
             # Initialize services and attach to app using Kuzu service instances
             from .services import (
                 book_service,
-                user_service,
-                reading_log_service,
                 custom_field_service,
-                import_mapping_service,
                 direct_import_service,
+                import_mapping_service,
+                reading_log_service,
+                user_service,
             )
 
             try:
@@ -816,11 +819,12 @@ def create_app():
     # Add middleware to check for setup requirements
     @app.before_request
     def check_setup_and_password_requirements():
-        from flask import request, redirect, url_for
+        from flask import current_app as _flask_current_app
+        from flask import redirect, request, url_for
         from flask_login import current_user
+
         from .debug_utils import debug_auth, debug_csrf
         from .services import user_service
-        from flask import current_app as _flask_current_app
 
         # When running tests, skip setup/password enforcement to avoid redirects
         try:
@@ -1061,9 +1065,10 @@ def create_app():
         static assets under the package path app/static (i.e., /app/app/static in the
         container). This handler checks both locations and serves the first match.
         """
-        import os
         import mimetypes
-        from flask import send_from_directory, abort
+        import os
+
+        from flask import abort, send_from_directory
 
         docker_static_dir = "/app/static"
         package_static_dir = os.path.join(
@@ -1110,6 +1115,7 @@ def create_app():
     def serve_covers(filename):
         """Serve cover images from data directory."""
         import os
+
         from flask import send_from_directory
 
         # Check for Docker (production) or local development
@@ -1123,7 +1129,8 @@ def create_app():
         else:
             covers_dir = local_data_dir
 
-        from flask import send_from_directory as _sfd, make_response
+        from flask import make_response
+        from flask import send_from_directory as _sfd
 
         try:
             resp = _sfd(covers_dir, filename)
@@ -1139,6 +1146,7 @@ def create_app():
     def serve_uploads(filename):
         """Serve uploaded files from data directory."""
         import os
+
         from flask import send_from_directory
 
         # Check for Docker (production) or local development
@@ -1155,9 +1163,9 @@ def create_app():
         return send_from_directory(uploads_dir, filename)
 
     # Register application routes via modular blueprints
-    from .routes import register_blueprints
-    from .auth import auth
     from .admin import admin
+    from .auth import auth
+    from .routes import register_blueprints
 
     try:
         from .location_routes import bp as locations_bp

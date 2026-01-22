@@ -12,13 +12,13 @@ This script:
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Add the app directory to the path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app import create_app
-from app.models import db, User
+from app.models import User, db
 
 
 def create_default_admin():
@@ -38,7 +38,7 @@ def create_default_admin():
         username=admin_username,
         email=admin_email,
         is_admin=True,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
     try:

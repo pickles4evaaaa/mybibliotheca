@@ -23,9 +23,9 @@ if "kuzu" not in sys.modules:
     sys.modules["kuzu"] = kuzu_stub
 
 from app.routes.import_routes import (
-    detect_csv_format,
-    auto_detect_fields,
     _auto_detect_reading_history_fields,
+    auto_detect_fields,
+    detect_csv_format,
 )
 
 TEST_FILES_DIR = Path(__file__).resolve().parents[1] / "test_files"

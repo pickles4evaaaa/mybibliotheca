@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, redirect, url_for
 from flask_login import current_user
+
 from app.admin import admin_required
 from app.services.genre_taxonomy_service import GenreTaxonomyService, TaxonomyProgress
 

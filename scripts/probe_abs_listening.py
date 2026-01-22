@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
-from typing import Any, Dict, Tuple, Optional
+from typing import Any
+
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +32,7 @@ def iso_from_epoch(val: Any) -> str:
         x = float(val)
         if x > 10_000_000_000:  # ms
             x /= 1000.0
-        return datetime.fromtimestamp(x, tz=timezone.utc).isoformat()
+        return datetime.fromtimestamp(x, tz=UTC).isoformat()
     except Exception:
         if isinstance(val, str):
             try:
@@ -41,7 +42,7 @@ def iso_from_epoch(val: Any) -> str:
         return str(val)
 
 
-def _headers(api_key: str) -> Dict[str, str]:
+def _headers(api_key: str) -> dict[str, str]:
     h = {"Accept": "application/json"}
     if api_key:
         h["Authorization"] = f"Bearer {api_key}"
@@ -49,8 +50,8 @@ def _headers(api_key: str) -> Dict[str, str]:
 
 
 def _get_json(
-    url: str, headers: Dict[str, str], params: Optional[Dict[str, Any]] = None
-) -> Tuple[bool, Any, int, str]:
+    url: str, headers: dict[str, str], params: dict[str, Any] | None = None
+) -> tuple[bool, Any, int, str]:
     try:
         r = requests.get(url, headers=headers, params=params, timeout=10)
         code = r.status_code

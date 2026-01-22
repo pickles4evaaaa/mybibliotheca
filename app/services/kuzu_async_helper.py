@@ -7,8 +7,9 @@ Provides a clean, standardized way to handle async operations in a sync Flask co
 
 import asyncio
 import concurrent.futures
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
 from functools import wraps
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 

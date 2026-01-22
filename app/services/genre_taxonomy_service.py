@@ -12,7 +12,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 # These accessors are patched in tests; provide simple defaults for runtime use
@@ -45,7 +45,7 @@ class TaxonomyProgress:
     processed_genres: int
     created_at: datetime = field(default_factory=datetime.now)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
             "status": self.status,
@@ -62,7 +62,7 @@ class GenreTaxonomyService:
     batch_size: int
     category_service: Any
     ai_service: Any
-    analysis_jobs: Dict[str, TaxonomyProgress]
+    analysis_jobs: dict[str, TaxonomyProgress]
 
     def __init__(self, batch_size: int = 10):
         self.batch_size = max(1, int(batch_size))
@@ -72,14 +72,14 @@ class GenreTaxonomyService:
         self.analysis_jobs = {}
 
     # ---------- Helpers ----------
-    def _create_batches(self, items: List[Any]) -> List[List[Any]]:
+    def _create_batches(self, items: list[Any]) -> list[list[Any]]:
         return [
             items[i : i + self.batch_size]
             for i in range(0, len(items), self.batch_size)
         ]
 
     # ---------- AI Operations ----------
-    async def analyze_genre_batch(self, batch: List[Any]) -> Dict[str, Any]:
+    async def analyze_genre_batch(self, batch: list[Any]) -> dict[str, Any]:
         try:
             # Optionally collect minimal book context per genre (mocked in tests)
             # Intentionally not calling concrete service methods here to avoid tight coupling
@@ -107,8 +107,8 @@ class GenreTaxonomyService:
             return {"groups": [], "hierarchies": [], "renames": []}
 
     async def build_taxonomy_proposal(
-        self, batch_results: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, batch_results: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         # Consolidate batch results via AI
         ai_result = await self.ai_service.analyze_with_prompt(
             template_name="taxonomy_consolidation.mustache",
@@ -124,7 +124,7 @@ class GenreTaxonomyService:
         }
 
     # ---------- Background Processing ----------
-    def start_analysis(self, user_id: Optional[int] = None) -> str:
+    def start_analysis(self, user_id: int | None = None) -> str:
         # Initialize task
         task_id = f"taxonomy-{uuid.uuid4().hex[:8]}"
         progress = TaxonomyProgress(
@@ -172,11 +172,11 @@ class GenreTaxonomyService:
         t.start()
         return task_id
 
-    def get_analysis_progress(self, task_id: str) -> Optional[TaxonomyProgress]:
+    def get_analysis_progress(self, task_id: str) -> TaxonomyProgress | None:
         return self.analysis_jobs.get(task_id)
 
     # ---------- System Status ----------
-    def get_system_status(self) -> Dict[str, Any]:
+    def get_system_status(self) -> dict[str, Any]:
         try:
             getter = getattr(
                 self.category_service, "get_all_categories", None

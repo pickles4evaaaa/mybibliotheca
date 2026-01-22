@@ -1,22 +1,23 @@
 from flask_wtf import FlaskForm
 from wtforms import (
-    StringField,
-    PasswordField,
     BooleanField,
+    IntegerField,
+    PasswordField,
+    SelectField,
+    StringField,
     SubmitField,
     TextAreaField,
-    IntegerField,
-    SelectField,
 )
 from wtforms.validators import (
     DataRequired,
     Email,
     EqualTo,
     Length,
-    ValidationError,
-    Optional,
     NumberRange,
+    Optional,
+    ValidationError,
 )
+
 from .domain.models import User
 
 
@@ -230,8 +231,8 @@ class SetupForm(FlaskForm):
         csrf_token_field = getattr(self, "csrf_token", None)
         if not csrf_token_field or not csrf_token_field.data:
             try:
-                from flask_wtf.csrf import generate_csrf
                 from flask import session
+                from flask_wtf.csrf import generate_csrf
 
                 csrf_token = generate_csrf()
                 session.modified = True

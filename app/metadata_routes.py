@@ -4,18 +4,19 @@ Routes for custom metadata management.
 Provides endpoints for managing custom field definitions and import mapping templates.
 """
 
+import uuid
+
 from flask import (
     Blueprint,
+    current_app,
+    flash,
+    jsonify,
+    redirect,
     render_template,
     request,
-    redirect,
     url_for,
-    jsonify,
-    flash,
-    current_app,
 )
-from flask_login import login_required, current_user
-import uuid
+from flask_login import current_user, login_required
 
 from .domain.models import CustomFieldDefinition, CustomFieldType
 from .services import custom_field_service, import_mapping_service

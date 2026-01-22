@@ -20,16 +20,17 @@ def _dprint(*args, **kwargs):
 # Redirect module print to conditional debug print
 print = _dprint
 
-import uuid
 import json
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from app.utils.user_settings import get_default_book_format
 
 from .domain.models import MediaType
 from .infrastructure.kuzu_graph import safe_execute_kuzu_query
 from .services.kuzu_custom_field_service import KuzuCustomFieldService
-from app.utils.user_settings import get_default_book_format
 
 
 def _convert_query_result_to_list(result):
@@ -82,7 +83,7 @@ def normalize_goodreads_value(value, field_type="text"):
     return value.strip()
 
 
-def _normalize_publisher_name(value: Optional[str]) -> Optional[str]:
+def _normalize_publisher_name(value: str | None) -> str | None:
     """Normalize publisher strings from CSV/API:
     - Handle Goodreads-style ="..." wrapping
     - Strip leading/trailing straight or curly quotes
@@ -114,49 +115,49 @@ class SimplifiedBook:
 
     title: str
     author: str  # Primary author as string for simplicity
-    isbn13: Optional[str] = None
-    isbn10: Optional[str] = None
-    subtitle: Optional[str] = None
-    description: Optional[str] = None
-    publisher: Optional[str] = None
-    published_date: Optional[str] = None
-    page_count: Optional[int] = None
+    isbn13: str | None = None
+    isbn10: str | None = None
+    subtitle: str | None = None
+    description: str | None = None
+    publisher: str | None = None
+    published_date: str | None = None
+    page_count: int | None = None
     language: str = "en"
-    cover_url: Optional[str] = None
-    series: Optional[str] = None
-    series_volume: Optional[str] = None
-    series_order: Optional[int] = None
-    categories: List[str] = field(default_factory=list)
+    cover_url: str | None = None
+    series: str | None = None
+    series_volume: str | None = None
+    series_order: int | None = None
+    categories: list[str] = field(default_factory=list)
     # Raw hierarchical category path strings (e.g., "Computers / Programming / General")
     # When present, use these to build PARENT_CATEGORY graph and link the leaf to the book
-    raw_categories: Optional[List[str]] = None
-    google_books_id: Optional[str] = None
-    openlibrary_id: Optional[str] = None
-    asin: Optional[str] = None
-    average_rating: Optional[float] = None
-    rating_count: Optional[int] = None
-    media_type: Optional[str] = None  # physical, ebook, audiobook, kindle
+    raw_categories: list[str] | None = None
+    google_books_id: str | None = None
+    openlibrary_id: str | None = None
+    asin: str | None = None
+    average_rating: float | None = None
+    rating_count: int | None = None
+    media_type: str | None = None  # physical, ebook, audiobook, kindle
     quantity: int = 1  # Number of copies owned (default 1)
 
     # Additional person type fields (like additional authors)
-    additional_authors: Optional[str] = None  # Comma-separated string for simplicity
-    narrator: Optional[str] = None  # Comma-separated string
-    editor: Optional[str] = None  # Comma-separated string
-    translator: Optional[str] = None  # Comma-separated string
-    illustrator: Optional[str] = None  # Comma-separated string
+    additional_authors: str | None = None  # Comma-separated string for simplicity
+    narrator: str | None = None  # Comma-separated string
+    editor: str | None = None  # Comma-separated string
+    translator: str | None = None  # Comma-separated string
+    illustrator: str | None = None  # Comma-separated string
 
     # Custom metadata fields for batch import
-    global_custom_metadata: Dict[str, Any] = field(default_factory=dict)
-    personal_custom_metadata: Dict[str, Any] = field(default_factory=dict)
+    global_custom_metadata: dict[str, Any] = field(default_factory=dict)
+    personal_custom_metadata: dict[str, Any] = field(default_factory=dict)
 
     # Migration-specific fields
-    reading_status: Optional[str] = None
-    date_read: Optional[str] = None  # Can be date object or string
-    date_started: Optional[str] = None
-    date_added: Optional[str] = None
-    user_rating: Optional[float] = None
-    personal_notes: Optional[str] = None
-    reading_logs: Optional[List] = field(
+    reading_status: str | None = None
+    date_read: str | None = None  # Can be date object or string
+    date_started: str | None = None
+    date_added: str | None = None
+    user_rating: float | None = None
+    personal_notes: str | None = None
+    reading_logs: list | None = field(
         default_factory=list
     )  # For tracking reading session dates
 
@@ -168,10 +169,10 @@ class UserBookAnnotation:
     user_id: str
     book_id: str
     reading_status: str = ""  # User's reading progress (empty = not set)
-    date_added: Optional[datetime] = None  # When user started tracking this book
-    user_rating: Optional[float] = None  # User's personal rating
-    personal_notes: Optional[str] = None  # User's notes about the book
-    custom_metadata: Optional[Dict[str, Any]] = None  # User's custom fields
+    date_added: datetime | None = None  # When user started tracking this book
+    user_rating: float | None = None  # User's personal rating
+    personal_notes: str | None = None  # User's notes about the book
+    custom_metadata: dict[str, Any] | None = None  # User's custom fields
 
     # Removed: ownership_status, media_type, location_id
     # Books are universal and stored at locations, not owned by users
@@ -191,8 +192,8 @@ class SimplifiedBookService:
 
     def _convert_to_date(self, date_value):
         """Convert various date formats to a format suitable for KuzuDB DATE type."""
-        from datetime import date, datetime
         import re
+        from datetime import date, datetime
 
         if not date_value:
             return None
@@ -256,7 +257,7 @@ class SimplifiedBookService:
             print(f"⚠️ [QUERY_CONVERT] Error converting QueryResult: {e}")
             return []
 
-    async def create_standalone_book(self, book_data: SimplifiedBook) -> Optional[str]:
+    async def create_standalone_book(self, book_data: SimplifiedBook) -> str | None:
         """
         Create a book as a standalone global entity.
         Returns book_id if successful, None if failed.
@@ -289,8 +290,8 @@ class SimplifiedBookService:
                 "series_order": book_data.series_order,
                 "media_type": getattr(book_data, "media_type", "") or "",
                 "quantity": getattr(book_data, "quantity", 1) or 1,
-                "created_at_str": datetime.now(timezone.utc).isoformat(),
-                "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                "created_at_str": datetime.now(UTC).isoformat(),
+                "updated_at_str": datetime.now(UTC).isoformat(),
             }
 
             # Remove only the fields that can be None (series_volume and series_order)
@@ -361,6 +362,7 @@ class SimplifiedBookService:
 
                     # Use persistent covers directory in data folder (same logic as book_routes.py)
                     from pathlib import Path
+
                     import requests  # type: ignore
 
                     covers_dir = Path("/app/data/covers")
@@ -426,7 +428,7 @@ class SimplifiedBookService:
                         {
                             "book_id": book_id,
                             "cover_url": final_cover_url,
-                            "updated_at_str": datetime.now(timezone.utc).isoformat(),
+                            "updated_at_str": datetime.now(UTC).isoformat(),
                         },
                     )
 
@@ -460,14 +462,14 @@ class SimplifiedBookService:
                     def __init__(self, name):
                         self.id = str(uuid.uuid4())
                         self.name = name
-                        self.birth_year: Optional[int] = None
-                        self.death_year: Optional[int] = None
+                        self.birth_year: int | None = None
+                        self.death_year: int | None = None
                         self.bio: str = ""
-                        self.openlibrary_id: Optional[str] = None
-                        self.image_url: Optional[str] = None
-                        self.birth_place: Optional[str] = None
-                        self.website: Optional[str] = None
-                        self.created_at = datetime.now(timezone.utc)
+                        self.openlibrary_id: str | None = None
+                        self.image_url: str | None = None
+                        self.birth_place: str | None = None
+                        self.website: str | None = None
+                        self.created_at = datetime.now(UTC)
 
                 person_data = PersonData(name)
 
@@ -475,8 +477,8 @@ class SimplifiedBookService:
                 if enhance_with_api and name and name.strip():
                     try:
                         from app.utils.book_utils import (
-                            search_author_by_name,
                             fetch_author_data,
+                            search_author_by_name,
                         )
 
                         print(f"🔍 [PERSON_API] Searching for author metadata: {name}")
@@ -594,7 +596,7 @@ class SimplifiedBookService:
                                 "role": "authored",
                                 "order_index": 0,
                                 "created_at_str": datetime.now(
-                                    timezone.utc
+                                    UTC
                                 ).isoformat(),
                             },
                         )
@@ -643,7 +645,7 @@ class SimplifiedBookService:
                                     "role": "authored",
                                     "order_index": index + 1,
                                     "created_at_str": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat(),
                                 },
                             )
@@ -699,7 +701,7 @@ class SimplifiedBookService:
                                     "role": "narrated",
                                     "order_index": index,
                                     "created_at_str": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat(),
                                 },
                             )
@@ -747,7 +749,7 @@ class SimplifiedBookService:
                                     "role": "edited",
                                     "order_index": index,
                                     "created_at_str": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat(),
                                 },
                             )
@@ -797,7 +799,7 @@ class SimplifiedBookService:
                                     "role": "translated",
                                     "order_index": index,
                                     "created_at_str": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat(),
                                 },
                             )
@@ -849,7 +851,7 @@ class SimplifiedBookService:
                                     "role": "illustrated",
                                     "order_index": index,
                                     "created_at_str": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat(),
                                 },
                             )
@@ -893,7 +895,7 @@ class SimplifiedBookService:
                                 "book_id": book_id,
                                 "publisher_id": publisher_id,
                                 "created_at_str": datetime.now(
-                                    timezone.utc
+                                    UTC
                                 ).isoformat(),
                             },
                         )
@@ -941,7 +943,7 @@ class SimplifiedBookService:
                                     "book_id": book_id,
                                     "category_id": category_id,
                                     "created_at_str": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat(),
                                 },
                             )
@@ -1014,7 +1016,7 @@ class SimplifiedBookService:
         try:
             # Ensure date_added is set
             if annotation.date_added is None:
-                annotation.date_added = datetime.now(timezone.utc)
+                annotation.date_added = datetime.now(UTC)
 
             # In universal library mode, create a USER_ANNOTATES relationship instead of OWNS
             # This preserves user's personal data without implying ownership
@@ -1092,7 +1094,7 @@ class SimplifiedBookService:
             print(f"Error creating user annotation: {e}")
             return False
 
-    def find_book_by_isbn(self, isbn: str) -> Optional[str]:
+    def find_book_by_isbn(self, isbn: str) -> str | None:
         """Find existing book by ISBN. Returns book_id if found."""
         try:
             # Normalize ISBN: keep digits and the letter X (uppercase)
@@ -1121,7 +1123,7 @@ class SimplifiedBookService:
         except Exception:
             return None
 
-    def find_book_by_title_author(self, title: str, author: str) -> Optional[str]:
+    def find_book_by_title_author(self, title: str, author: str) -> str | None:
         """Find existing book by exact title and author match. Returns book_id if found."""
         try:
             # Normalize title and author for comparison
@@ -1176,7 +1178,7 @@ class SimplifiedBookService:
             print(f"Error finding book by title/author: {e}")
             return None
 
-    async def find_or_create_book(self, book_data: SimplifiedBook) -> Optional[str]:
+    async def find_or_create_book(self, book_data: SimplifiedBook) -> str | None:
         """
         Find existing book or create new one.
         Returns book_id if successful.
@@ -1545,11 +1547,11 @@ class SimplifiedBookService:
         user_id: str,
         reading_status: str = "",
         ownership_status: str = "owned",
-        media_type: Optional[str] = None,
-        user_rating: Optional[float] = None,
-        personal_notes: Optional[str] = None,
-        location_id: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
+        media_type: str | None = None,
+        user_rating: float | None = None,
+        personal_notes: str | None = None,
+        location_id: str | None = None,
+        custom_metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         Complete workflow: Find/create book + create user ownership.
@@ -1647,10 +1649,11 @@ class SimplifiedBookService:
 
             # Step 4: Persist personal metadata (standard fields + custom) AFTER book creation & location assignment
             try:
+                from datetime import datetime as dt
+
                 from app.services.personal_metadata_service import (
                     personal_metadata_service,
                 )
-                from datetime import datetime as dt
 
                 # Build custom_updates dict with all personal fields
                 custom_updates = {}
@@ -1746,11 +1749,11 @@ class SimplifiedBookService:
         user_id: str,
         reading_status: str = "",
         ownership_status: str = "owned",
-        media_type: Optional[str] = None,
-        user_rating: Optional[float] = None,
-        personal_notes: Optional[str] = None,
-        location_id: Optional[str] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
+        media_type: str | None = None,
+        user_rating: float | None = None,
+        personal_notes: str | None = None,
+        location_id: str | None = None,
+        custom_metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         Synchronous wrapper for add_book_to_user_library.
@@ -1797,7 +1800,7 @@ class SimplifiedBookService:
         else:
             return loop.run_until_complete(coro)
 
-    def create_standalone_book_sync(self, book_data: SimplifiedBook) -> Optional[str]:
+    def create_standalone_book_sync(self, book_data: SimplifiedBook) -> str | None:
         """
         Synchronous wrapper for create_standalone_book.
         Use this method from Flask routes and other sync contexts.

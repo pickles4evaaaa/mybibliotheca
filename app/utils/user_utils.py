@@ -19,8 +19,9 @@ def calculate_reading_streak(user_id, streak_offset=0):
     """
     try:
         # Try to use the reading log service to calculate actual streak
-        from app.services import reading_log_service
         from datetime import date, datetime, timedelta
+
+        from app.services import reading_log_service
 
         reading_dates = set()
 

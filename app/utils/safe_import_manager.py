@@ -11,11 +11,11 @@ Key Features:
 - Privacy protection: Users cannot access other users' data
 """
 
+import logging
 import threading
 import time
-import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional, Any
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class SafeImportJobManager:
             job_copy = job_data.copy()
             # Only set created_at if not already provided
             if "created_at" not in job_copy:
-                job_copy["created_at"] = datetime.now(timezone.utc).isoformat()
+                job_copy["created_at"] = datetime.now(UTC).isoformat()
             job_copy["user_id"] = user_id  # Ensure user_id is always set
 
             self._jobs_by_user[user_id][task_id] = job_copy
@@ -125,7 +125,7 @@ class SafeImportJobManager:
 
             # Update the job data
             user_jobs[task_id].update(updates)
-            user_jobs[task_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+            user_jobs[task_id]["updated_at"] = datetime.now(UTC).isoformat()
 
             # Update statistics based on status change
             if "status" in updates:
@@ -141,7 +141,7 @@ class SafeImportJobManager:
 
             return True
 
-    def get_job(self, user_id: str, task_id: str) -> Optional[dict]:
+    def get_job(self, user_id: str, task_id: str) -> dict | None:
         """
         Get a specific import job for a user.
 
@@ -167,7 +167,7 @@ class SafeImportJobManager:
             logger.debug(f"Job {task_id} not found for user {user_id}")
             return None
 
-    def get_user_jobs(self, user_id: str) -> Dict[str, dict]:
+    def get_user_jobs(self, user_id: str) -> dict[str, dict]:
         """
         Get all import jobs for a specific user.
 
@@ -232,7 +232,7 @@ class SafeImportJobManager:
 
         with self._get_user_lock(user_id):
             user_jobs = self._jobs_by_user.get(user_id, {})
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=max_age_hours)
 
             to_remove = []
             for task_id, job in user_jobs.items():
@@ -249,13 +249,13 @@ class SafeImportJobManager:
                             job_time = datetime.fromisoformat(job_time_str)
                             # If no timezone info, assume UTC
                             if job_time.tzinfo is None:
-                                job_time = job_time.replace(tzinfo=timezone.utc)
+                                job_time = job_time.replace(tzinfo=UTC)
                         except ValueError:
                             # Fallback for timestamps without timezone
                             job_time = datetime.fromisoformat(
                                 job_time_str.split("+")[0].split("Z")[0]
                             )
-                            job_time = job_time.replace(tzinfo=timezone.utc)
+                            job_time = job_time.replace(tzinfo=UTC)
 
                         if job_time < cutoff_time:
                             to_remove.append(task_id)
@@ -299,7 +299,7 @@ class SafeImportJobManager:
 
         return total_cleaned
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """
         Get manager statistics for monitoring.
 
@@ -325,7 +325,7 @@ class SafeImportJobManager:
 
     def get_jobs_for_admin_debug(
         self, requesting_user_id: str, include_user_data: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get job information for admin debugging.
 
@@ -393,12 +393,12 @@ def safe_update_import_job(user_id: str, task_id: str, updates: dict) -> bool:
     return safe_import_manager.update_job(user_id, task_id, updates)
 
 
-def safe_get_import_job(user_id: str, task_id: str) -> Optional[dict]:
+def safe_get_import_job(user_id: str, task_id: str) -> dict | None:
     """Get an import job safely with user isolation."""
     return safe_import_manager.get_job(user_id, task_id)
 
 
-def safe_get_user_import_jobs(user_id: str) -> Dict[str, dict]:
+def safe_get_user_import_jobs(user_id: str) -> dict[str, dict]:
     """Get all import jobs for a user safely."""
     return safe_import_manager.get_user_jobs(user_id)
 

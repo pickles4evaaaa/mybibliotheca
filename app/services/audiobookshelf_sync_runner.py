@@ -10,27 +10,28 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from collections import deque
-from typing import Deque, Dict, Any, Optional, Tuple
+from datetime import UTC
+from typing import Any
 
 from flask import current_app
 
-from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
-from app.services.audiobookshelf_service import (
-    get_client_from_settings,
-    AudiobookShelfClient,
-)
 from app.services.audiobookshelf_import_service import AudiobookshelfImportService
 from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
+from app.services.audiobookshelf_service import (
+    AudiobookShelfClient,
+    get_client_from_settings,
+)
+from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job
-import uuid
 
 
 class _AbsSyncRunner:
     def __init__(self):
-        self._queue: Deque[Tuple[str, Dict[str, Any]]] = deque()
+        self._queue: deque[tuple[str, dict[str, Any]]] = deque()
         self._lock = threading.RLock()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._running = False
         self._app = None
 
@@ -162,7 +163,7 @@ class _AbsSyncRunner:
                 except Exception:
                     pass
 
-                task: Optional[Tuple[str, Dict[str, Any]]] = None
+                task: tuple[str, dict[str, Any]] | None = None
                 with self._lock:
                     if self._queue:
                         task = self._queue.popleft()
@@ -271,12 +272,12 @@ class _AbsSyncRunner:
                         except Exception:
                             pass
                         try:
-                            from datetime import datetime, timezone
+                            from datetime import datetime
 
                             save_abs_settings(
                                 {
                                     "last_listening_sync": datetime.now(
-                                        timezone.utc
+                                        UTC
                                     ).isoformat()
                                 }
                             )
@@ -420,10 +421,10 @@ class _AbsSyncRunner:
                     due = (now - float(last_ts)) >= (hours * 3600)
                 else:
                     # crude ISO parse: if older than interval, run
-                    from datetime import datetime, timezone
+                    from datetime import datetime
 
                     dt = datetime.fromisoformat(str(last_ts).replace("Z", "+00:00"))
-                    due = (datetime.now(timezone.utc) - dt).total_seconds() >= (
+                    due = (datetime.now(UTC) - dt).total_seconds() >= (
                         hours * 3600
                     )
             else:
@@ -438,7 +439,7 @@ class _AbsSyncRunner:
             lib_ids = [s.strip() for s in lib_ids.split(",") if s.strip()]
         # Fan out to all users so per-user credentials and preferences are respected
         try:
-            from app.services import user_service, run_async
+            from app.services import run_async, user_service
 
             users = run_async(user_service.get_all_users(limit=1000))  # type: ignore[attr-defined]
         except Exception:
@@ -474,10 +475,10 @@ class _AbsSyncRunner:
                 if isinstance(last_listen, (int, float)):
                     listen_due = (now - float(last_listen)) >= (listen_hours * 3600)
                 else:
-                    from datetime import datetime, timezone
+                    from datetime import datetime
 
                     dt = datetime.fromisoformat(str(last_listen).replace("Z", "+00:00"))
-                    listen_due = (datetime.now(timezone.utc) - dt).total_seconds() >= (
+                    listen_due = (datetime.now(UTC) - dt).total_seconds() >= (
                         listen_hours * 3600
                     )
             else:
@@ -488,7 +489,10 @@ class _AbsSyncRunner:
             # Fan out listening syncs to all users
             try:
                 if not users:
-                    from app.services import user_service, run_async  # type: ignore[attr-defined]
+                    from app.services import (  # type: ignore[attr-defined]
+                        run_async,
+                        user_service,
+                    )
 
                     users = run_async(user_service.get_all_users(limit=1000))
             except Exception:

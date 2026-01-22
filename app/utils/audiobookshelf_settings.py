@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any
 
 from flask import current_app
 
-
-DEFAULTS: Dict[str, Any] = {
+DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "base_url": "",
     "api_key": "",
@@ -41,11 +40,11 @@ def _settings_path() -> str:
     return os.path.join(data_dir, "audiobookshelf_settings.json")
 
 
-def load_abs_settings() -> Dict[str, Any]:
+def load_abs_settings() -> dict[str, Any]:
     path = _settings_path()
     try:
         if os.path.exists(path):
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     merged = DEFAULTS.copy()
@@ -79,7 +78,7 @@ def load_abs_settings() -> Dict[str, Any]:
     return DEFAULTS.copy()
 
 
-def save_abs_settings(update: Dict[str, Any]) -> bool:
+def save_abs_settings(update: dict[str, Any]) -> bool:
     path = _settings_path()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)

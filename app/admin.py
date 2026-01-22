@@ -3,29 +3,28 @@ Admin functionality for Bibliotheca multi-user platform
 Provides admin-only decorators, middleware, and management functions
 """
 
+import logging
 import os
-from typing import Dict, Iterable
+import re
+from collections.abc import Iterable
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
+
+import pytz
 from flask import (
     Blueprint,
-    render_template,
-    redirect,
-    url_for,
-    flash,
-    request,
-    jsonify,
     abort,
     current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
-from flask_login import login_required, current_user
-from .services import user_service, book_service, reading_log_service
-from .forms import AdminPasswordResetForm
-from datetime import datetime
-import pytz
-import re
-import logging
-from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
+from flask_login import current_user, login_required
+
 from app.domain.models import MediaType
 from app.utils.password_policy import (
     ENV_PASSWORD_MIN_LENGTH_KEY,
@@ -35,6 +34,10 @@ from app.utils.password_policy import (
     get_env_password_min_length,
     resolve_min_password_length,
 )
+from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
+
+from .forms import AdminPasswordResetForm
+from .services import book_service, reading_log_service, user_service
 
 admin = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -182,12 +185,12 @@ def load_ai_config():
         pass
 
     env_path = _get_root_env_path()
-    config: Dict[str, str] = {}
+    config: dict[str, str] = {}
 
     # 1. Load .env base values
     if os.path.exists(env_path):
         try:
-            with open(env_path, "r") as f:
+            with open(env_path) as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
@@ -207,7 +210,7 @@ def load_ai_config():
     ai_json_path = os.path.join(data_dir, "ai_config.json")
     if os.path.exists(ai_json_path):
         try:
-            with open(ai_json_path, "r") as jf:
+            with open(ai_json_path) as jf:
                 json_data = json.load(jf)
             # Overlay keys explicitly stored
             for k, v in json_data.items():
@@ -224,7 +227,7 @@ def load_ai_config():
     try:
         ai_legacy_path = os.path.join(data_dir, "ai_settings.json")
         if os.path.exists(ai_legacy_path):
-            with open(ai_legacy_path, "r") as jf2:
+            with open(ai_legacy_path) as jf2:
                 legacy_data = json.load(jf2)
             if isinstance(legacy_data, dict):
                 for k, v in legacy_data.items():
@@ -284,7 +287,7 @@ def save_system_config(config):
         existing_config = {}
         if os.path.exists(config_path):
             try:
-                with open(config_path, "r") as f:
+                with open(config_path) as f:
                     existing_config = json.load(f)
             except (json.JSONDecodeError, Exception):
                 # If file is corrupted, start fresh
@@ -454,7 +457,7 @@ def load_system_config():
         config_path = os.path.join(data_dir, "system_config.json")
 
         if os.path.exists(config_path):
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 return json.load(f)
     except (json.JSONDecodeError, Exception) as e:
         # Log warning if we have current_app context, otherwise print
@@ -510,7 +513,7 @@ def save_smtp_config(config):
         existing_config = {}
         if os.path.exists(config_path):
             try:
-                with open(config_path, "r") as f:
+                with open(config_path) as f:
                     existing_config = json.load(f)
             except (json.JSONDecodeError, Exception):
                 existing_config = {}
@@ -585,7 +588,7 @@ def save_backup_config(config):
         existing_config = {}
         if os.path.exists(config_path):
             try:
-                with open(config_path, "r") as f:
+                with open(config_path) as f:
                     existing_config = json.load(f)
             except (json.JSONDecodeError, Exception):
                 existing_config = {}
@@ -691,7 +694,7 @@ def save_ai_config(config):
 
         existing_lines = []
         if os.path.exists(env_path):
-            with open(env_path, "r") as f:
+            with open(env_path) as f:
                 existing_lines = f.readlines()
 
         # Track which keys we've updated
@@ -1781,7 +1784,7 @@ def test_smtp_connection():
                     "[SMTP] Connection established over SSL",
                     extra_secrets=secret_values,
                 )
-            except socket.timeout:
+            except TimeoutError:
                 _log_force(
                     "error",
                     f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}",
@@ -1805,7 +1808,7 @@ def test_smtp_connection():
                         "message": f"Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.",
                     }
                 ), 500
-            except socket.error as sock_err:
+            except OSError as sock_err:
                 _log_force(
                     "error",
                     f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}",
@@ -1832,7 +1835,7 @@ def test_smtp_connection():
                     f"[SMTP] Connection established to {smtp_server}:{smtp_port}",
                     extra_secrets=secret_values,
                 )
-            except socket.timeout:
+            except TimeoutError:
                 _log_force(
                     "error",
                     f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}",
@@ -1856,7 +1859,7 @@ def test_smtp_connection():
                         "message": f"Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.",
                     }
                 ), 500
-            except socket.error as sock_err:
+            except OSError as sock_err:
                 _log_force(
                     "error",
                     f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}",
@@ -1975,7 +1978,7 @@ def test_smtp_connection():
             extra_secrets=secret_values,
         )
         return jsonify({"success": False, "message": f"SMTP error: {str(e)}"}), 500
-    except socket.timeout:
+    except TimeoutError:
         _log_force(
             "error",
             f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}",

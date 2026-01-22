@@ -18,10 +18,10 @@ Design Principles:
 - Clear separation of concerns
 """
 
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
 import logging
 import re
+from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 class CoverInfo:
     """Unified cover information structure."""
 
-    url: Optional[str] = None
+    url: str | None = None
     has_cover: bool = False
     fallback_icon: str = "bi-book"
-    fallback_image: Optional[str] = None
-    source: Optional[str] = None  # 'user', 'google', 'openlibrary', etc.
+    fallback_image: str | None = None
+    source: str | None = None  # 'user', 'google', 'openlibrary', etc.
 
 
 class UnifiedCoverManager:
@@ -54,7 +54,7 @@ class UnifiedCoverManager:
         self.google_books_pattern = re.compile(r"books\.google\.")
         self.openlibrary_pattern = re.compile(r"covers\.openlibrary\.org")
 
-    def validate_cover_url(self, url: Optional[str]) -> Optional[str]:
+    def validate_cover_url(self, url: str | None) -> str | None:
         """
         Validate and normalize a cover URL.
 
@@ -130,7 +130,7 @@ class UnifiedCoverManager:
         # Get fallback image URL safely (only when in Flask context)
         fallback_image = None
         try:
-            from flask import url_for, has_app_context
+            from flask import has_app_context, url_for
 
             if has_app_context():
                 fallback_image = url_for("serve_static", filename="bookshelf.png")
@@ -147,7 +147,7 @@ class UnifiedCoverManager:
         )
 
     def should_update_cover(
-        self, current_cover: Optional[str], new_cover: Optional[str]
+        self, current_cover: str | None, new_cover: str | None
     ) -> bool:
         """
         Determine if a cover should be updated based on preservation rules.
@@ -184,8 +184,8 @@ class UnifiedCoverManager:
             return False
 
     def process_cover_form_field(
-        self, form_data: Dict[str, Any], current_book: Any
-    ) -> Dict[str, Any]:
+        self, form_data: dict[str, Any], current_book: Any
+    ) -> dict[str, Any]:
         """
         Process cover_url field from form data with smart preservation.
 
@@ -256,7 +256,7 @@ class UnifiedCoverManager:
             # Get fallback URL safely
             fallback_url = "/static/bookshelf.png"  # Default fallback
             try:
-                from flask import url_for, has_app_context
+                from flask import has_app_context, url_for
 
                 if has_app_context():
                     fallback_url = url_for("serve_static", filename="bookshelf.png")

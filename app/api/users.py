@@ -5,19 +5,20 @@ Provides RESTful operations for user management and privacy settings.
 Uses secure API token authentication to bypass CSRF for legitimate API calls.
 """
 
-from flask import Blueprint, request, jsonify, current_app
-from flask_login import current_user
-from typing import Dict, Any, Optional, Union, List
 import traceback
+from typing import Any
 
-from ..api_auth import api_token_required, api_auth_optional
+from flask import Blueprint, current_app, jsonify, request
+from flask_login import current_user
+
+from ..api_auth import api_auth_optional, api_token_required
 from ..services import user_service
 
 # Create API blueprint
 users_api = Blueprint("users_api", __name__, url_prefix="/api/v1/users")
 
 
-def serialize_user_profile(user: Any, include_private: bool = False) -> Dict[str, Any]:
+def serialize_user_profile(user: Any, include_private: bool = False) -> dict[str, Any]:
     """Convert user to API response format."""
     profile = {
         "id": user.id,
@@ -276,7 +277,7 @@ def get_users():
         return jsonify({"status": "error", "message": "Error retrieving users"}), 500
 
 
-def serialize_book_for_api(book: Union[Dict[str, Any], Any]) -> Dict[str, Any]:
+def serialize_book_for_api(book: dict[str, Any] | Any) -> dict[str, Any]:
     """
     Convert book object to API response format.
 
@@ -292,7 +293,7 @@ def serialize_book_for_api(book: Union[Dict[str, Any], Any]) -> Dict[str, Any]:
         return _serialize_book_object(book)
 
 
-def _serialize_book_dict(book: Dict[str, Any]) -> Dict[str, Any]:
+def _serialize_book_dict(book: dict[str, Any]) -> dict[str, Any]:
     """Serialize book dictionary to API format."""
     return {
         # Universal book fields (Book table)
@@ -329,7 +330,7 @@ def _serialize_book_dict(book: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _serialize_book_object(book: Any) -> Dict[str, Any]:
+def _serialize_book_object(book: Any) -> dict[str, Any]:
     """Serialize book object to API format."""
     return {
         # Universal book fields (Book table)
@@ -364,7 +365,7 @@ def _serialize_book_object(book: Any) -> Dict[str, Any]:
     }
 
 
-def _format_authors(authors: List[Any]) -> List[str]:
+def _format_authors(authors: list[Any]) -> list[str]:
     """Format authors list for API response."""
     if not authors:
         return []
@@ -381,7 +382,7 @@ def _format_authors(authors: List[Any]) -> List[str]:
     return formatted_authors
 
 
-def _format_datetime(dt: Any) -> Optional[str]:
+def _format_datetime(dt: Any) -> str | None:
     """Format datetime object to ISO string."""
     if not dt:
         return None

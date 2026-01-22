@@ -6,20 +6,23 @@ Focuses on graph database functionality while maintaining SQLite compatibility.
 Uses secure API token authentication to bypass CSRF for legitimate API calls.
 """
 
-from flask import Blueprint, request, jsonify, current_app
-from flask_login import current_user
-from datetime import datetime
 import traceback
+from datetime import datetime
 
-from ..api_auth import api_token_required, api_auth_optional
-from ..services import book_service
-from ..services.kuzu_service_facade import KuzuServiceFacade as KuzuBookService
+from flask import Blueprint, current_app, jsonify, request
+from flask_login import current_user
+
+from ..api_auth import api_auth_optional, api_token_required
 from ..domain.models import (
     Book as DomainBook,
-    Publisher,
+)
+from ..domain.models import (
     BookContribution,
     ContributionType,
+    Publisher,
 )
+from ..services import book_service
+from ..services.kuzu_service_facade import KuzuServiceFacade as KuzuBookService
 from ..utils.unified_metadata import fetch_unified_by_title
 
 # Create API blueprint

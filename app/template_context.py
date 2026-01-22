@@ -3,9 +3,11 @@ Template context processors for making common objects available in templates.
 """
 
 import os
-from datetime import datetime, date
+from datetime import date, datetime
+
 from flask import url_for
 from flask_login import current_user
+
 from app.debug_system import get_debug_manager
 
 

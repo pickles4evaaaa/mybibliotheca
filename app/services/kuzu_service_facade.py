@@ -11,23 +11,23 @@ and delegates method calls to the appropriate service.
 """
 
 import traceback
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone, date
+from datetime import UTC, date, datetime
+from typing import Any
 
 from ..domain.models import Book, Category, now_utc
-from ..infrastructure.kuzu_repositories import KuzuBookRepository
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
+from ..infrastructure.kuzu_repositories import KuzuBookRepository
+from .kuzu_async_helper import run_async
 from .kuzu_book_service import KuzuBookService
 from .kuzu_category_service import KuzuCategoryService
+from .kuzu_custom_field_service import KuzuCustomFieldService
 from .kuzu_person_service import KuzuPersonService
+from .kuzu_reading_log_service import KuzuReadingLogService
 from .kuzu_relationship_service import KuzuRelationshipService
 from .kuzu_search_service import KuzuSearchService
-from .kuzu_custom_field_service import KuzuCustomFieldService
-from .kuzu_reading_log_service import KuzuReadingLogService
-from .kuzu_async_helper import run_async
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -103,11 +103,11 @@ class KuzuServiceFacade:
 
         return book
 
-    def get_book_by_id_sync(self, book_id: str) -> Optional[Book]:
+    def get_book_by_id_sync(self, book_id: str) -> Book | None:
         """Get a book by ID."""
         return self.book_service.get_book_by_id_sync(book_id)
 
-    def update_book_sync(self, book_id: str, user_id: str, **kwargs) -> Optional[Book]:
+    def update_book_sync(self, book_id: str, user_id: str, **kwargs) -> Book | None:
         """Update a book with filtering for relationship-specific updates."""
 
         # Separate different types of updates based on correct architecture:
@@ -173,17 +173,17 @@ class KuzuServiceFacade:
                 if value is None:
                     return None
                 if isinstance(value, datetime):
-                    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                    return value if value.tzinfo else value.replace(tzinfo=UTC)
                 if isinstance(value, date):
                     return datetime(
-                        value.year, value.month, value.day, tzinfo=timezone.utc
+                        value.year, value.month, value.day, tzinfo=UTC
                     )
                 if isinstance(value, str):
                     s = value.strip()
                     if not s:
                         return None
                     candidate = s.replace("Z", "+00:00")
-                    parsed: Optional[datetime] = None
+                    parsed: datetime | None = None
                     try:
                         parsed = datetime.fromisoformat(candidate)
                     except ValueError:
@@ -198,25 +198,25 @@ class KuzuServiceFacade:
                                 epoch = float(s)
                                 if epoch > 10_000_000_000:
                                     epoch /= 1000.0
-                                return datetime.fromtimestamp(epoch, tz=timezone.utc)
+                                return datetime.fromtimestamp(epoch, tz=UTC)
                             except (ValueError, OSError):
                                 return None
                     if parsed is None:
                         return None
                     if parsed.tzinfo is None:
-                        parsed = parsed.replace(tzinfo=timezone.utc)
+                        parsed = parsed.replace(tzinfo=UTC)
                     else:
-                        parsed = parsed.astimezone(timezone.utc)
+                        parsed = parsed.astimezone(UTC)
                     return parsed
                 return None
 
-            def _norm_status(value: Optional[str]) -> str:
+            def _norm_status(value: str | None) -> str:
                 if not value:
                     return ""
                 return str(value).strip().lower().replace("-", "_")
 
-            personal_kwargs: Dict[str, Any] = {}
-            custom_updates: Dict[str, Any] = {}
+            personal_kwargs: dict[str, Any] = {}
+            custom_updates: dict[str, Any] = {}
 
             for k, v in personal_updates.items():
                 if k == "review":
@@ -413,7 +413,7 @@ class KuzuServiceFacade:
             traceback.print_exc()
             return False
 
-    def find_or_create_book_sync(self, domain_book: Book) -> Optional[Book]:
+    def find_or_create_book_sync(self, domain_book: Book) -> Book | None:
         """Find an existing book or create a new one."""
         return self.book_service.find_or_create_book_sync(domain_book)
 
@@ -423,47 +423,47 @@ class KuzuServiceFacade:
 
     def get_books_for_user(
         self, user_id: str, limit: int = 50, offset: int = 0
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get all books for a user with relationship data."""
         return self.relationship_service.get_books_for_user_sync(user_id, limit, offset)
 
     def get_user_books_sync(
         self, user_id: str, limit: int = 50, offset: int = 0
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get all books for a user."""
         return self.relationship_service.get_books_for_user_sync(user_id, limit, offset)
 
     def get_recently_read_books_for_user(
         self, user_id: str, limit: int = 5
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get recently read books for a user based on reading logs."""
         return self.reading_log_service.get_recently_read_books_sync(user_id, limit)
 
     def get_recently_added_want_to_read_books(
         self, user_id: str, limit: int = 5
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get recently added want-to-read books for a user."""
         return self.relationship_service.get_recently_added_want_to_read_books_sync(
             user_id, limit
         )
 
-    def get_recently_added_books_sync(self, limit: int = 5) -> List[Book]:
+    def get_recently_added_books_sync(self, limit: int = 5) -> list[Book]:
         """Get the most recently added books across the library."""
         return self.relationship_service.get_recently_added_books_sync(limit)
 
     def get_book_by_id_for_user_sync(
         self, book_id: str, user_id: str
-    ) -> Optional[Book]:
+    ) -> Book | None:
         """Get a specific book for a user with relationship data."""
         return self.relationship_service.get_book_by_id_for_user_sync(book_id, user_id)
 
-    def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
+    def get_book_by_uid_sync(self, uid: str, user_id: str) -> Book | None:
         """Get a book by UID with user overlay data."""
         return self.relationship_service.get_book_by_uid_sync(uid, user_id)
 
     def get_user_book_sync(
         self, user_id: str, book_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get user's book by book ID."""
         return self.relationship_service.get_user_book_sync(user_id, book_id)
 
@@ -473,8 +473,8 @@ class KuzuServiceFacade:
         book_id: str,
         reading_status: str = "library_only",
         ownership_status: str = "owned",
-        locations: Optional[List[str]] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
+        locations: list[str] | None = None,
+        custom_metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Add a book to user's library."""
         return self.relationship_service.add_book_to_user_library_sync(
@@ -486,19 +486,19 @@ class KuzuServiceFacade:
             custom_metadata,
         )
 
-    def get_all_books_with_user_overlay(self, user_id: str) -> List[Dict[str, Any]]:
+    def get_all_books_with_user_overlay(self, user_id: str) -> list[dict[str, Any]]:
         """Get all books with user-specific overlay data."""
         return self.relationship_service.get_all_books_with_user_overlay_sync(user_id)
 
     def get_all_books_with_user_overlay_sync(
         self, user_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Sync version of get_all_books_with_user_overlay."""
         return self.relationship_service.get_all_books_with_user_overlay_sync(user_id)
 
     def get_books_with_user_overlay_paginated_sync(
         self, user_id: str, limit: int, offset: int, sort: str = "title_asc"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Paginated list of books with user overlay."""
         return self.relationship_service.get_books_with_user_overlay_paginated_sync(
             user_id, limit, offset, sort
@@ -508,7 +508,7 @@ class KuzuServiceFacade:
         """Total number of Book nodes."""
         return self.relationship_service.get_total_book_count_sync()
 
-    def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
+    def get_library_status_counts_sync(self, user_id: str) -> dict[str, int]:
         """Global reading/ownership status counts for a user across all books."""
         return self.relationship_service.get_library_status_counts_sync(user_id)
 
@@ -518,21 +518,21 @@ class KuzuServiceFacade:
 
     def search_books_sync(
         self, query: str, user_id: str, limit: int = 50
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Search books for a user."""
         return self.search_service.search_books_sync(query, user_id, limit)
 
-    def get_book_by_isbn_for_user_sync(self, isbn: str, user_id: str) -> Optional[Book]:
+    def get_book_by_isbn_for_user_sync(self, isbn: str, user_id: str) -> Book | None:
         """Get a book by ISBN for a specific user."""
         return self.search_service.get_book_by_isbn_for_user_sync(isbn, user_id)
 
     def get_books_with_sharing_users_sync(
         self, days_back: int = 30, limit: int = 20
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get books from users who share reading activity."""
         return self.search_service.get_books_with_sharing_users_sync(days_back, limit)
 
-    def get_currently_reading_shared_sync(self, limit: int = 20) -> List[Book]:
+    def get_currently_reading_shared_sync(self, limit: int = 20) -> list[Book]:
         """Get currently reading books from users who share current reading."""
         return self.search_service.get_currently_reading_shared_sync(limit)
 
@@ -541,39 +541,39 @@ class KuzuServiceFacade:
     # ==========================================
 
     def list_all_categories_sync(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get all categories."""
         return self.category_service.list_all_categories_sync()
 
     def get_category_by_id_sync(
-        self, category_id: str, user_id: Optional[str] = None
-    ) -> Optional[Category]:
+        self, category_id: str, user_id: str | None = None
+    ) -> Category | None:
         """Get a category by ID with full hierarchy."""
         return self.category_service.get_category_by_id_sync(category_id)
 
-    def get_child_categories_sync(self, parent_id: str) -> List[Dict[str, Any]]:
+    def get_child_categories_sync(self, parent_id: str) -> list[dict[str, Any]]:
         """Get child categories for a parent category."""
         return self.category_service.get_child_categories_sync(parent_id)
 
     def get_category_children_sync(
-        self, category_id: str, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, category_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get children of a category."""
         return self.category_service.get_category_children_sync(category_id)
 
     def get_books_by_category_sync(
         self,
         category_id: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         include_subcategories: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get books in a category."""
         return self.category_service.get_books_by_category_sync(
             category_id, include_subcategories
         )
 
-    def get_book_categories_sync(self, book_id: str) -> List[Dict[str, Any]]:
+    def get_book_categories_sync(self, book_id: str) -> list[dict[str, Any]]:
         """Get categories for a book."""
         try:
             # Use run_async to call the async method from book repository
@@ -614,11 +614,11 @@ class KuzuServiceFacade:
         except Exception:
             return []
 
-    def create_category_sync(self, category_data: Dict[str, Any]) -> Optional[Category]:
+    def create_category_sync(self, category_data: dict[str, Any]) -> Category | None:
         """Create a new category."""
         return self.category_service.create_category_sync(category_data)
 
-    def update_category_sync(self, category: Category) -> Optional[Category]:
+    def update_category_sync(self, category: Category) -> Category | None:
         """Update an existing category."""
         return self.category_service.update_category_sync(category)
 
@@ -627,30 +627,30 @@ class KuzuServiceFacade:
         return self.category_service.delete_category_sync(category_id)
 
     def merge_categories_sync(
-        self, primary_category_id: str, merge_category_ids: List[str]
+        self, primary_category_id: str, merge_category_ids: list[str]
     ) -> bool:
         """Merge multiple categories into one."""
         return self.category_service.merge_categories_sync(
             primary_category_id, merge_category_ids
         )
 
-    def get_category_book_counts_sync(self) -> Dict[str, int]:
+    def get_category_book_counts_sync(self) -> dict[str, int]:
         """Get book counts for all categories."""
         return self.category_service.get_category_book_counts_sync()
 
     def search_categories_sync(
-        self, query: str, limit: int = 10, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, query: str, limit: int = 10, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Search categories by name or description."""
         return self.category_service.search_categories_sync(query, limit, user_id)
 
     def get_root_categories_sync(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get root categories (categories without parent)."""
         return self.category_service.get_root_categories_sync(user_id)
 
-    def get_all_categories_sync(self) -> List[Dict[str, Any]]:
+    def get_all_categories_sync(self) -> list[dict[str, Any]]:
         """Get all categories (alias for list_all_categories_sync)."""
         return self.category_service.list_all_categories_sync()
 
@@ -659,18 +659,18 @@ class KuzuServiceFacade:
     # ==========================================
 
     def list_all_persons_sync(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get all persons."""
         return self.person_service.list_all_persons_sync()
 
-    def get_person_by_id_sync(self, person_id: str) -> Optional[Dict[str, Any]]:
+    def get_person_by_id_sync(self, person_id: str) -> dict[str, Any] | None:
         """Get a person by ID."""
         return self.person_service.get_person_by_id_sync(person_id)
 
     def get_books_by_person_sync(
         self, person_id: str, user_id: str
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[dict[str, Any]]]:
         """Get books associated with a person organized by contribution type."""
         # Get all books by this person
         all_books = self.person_service.get_books_by_person_sync(person_id)
@@ -700,13 +700,13 @@ class KuzuServiceFacade:
         """Async version of create_book."""
         return run_async(self.create_book_sync(domain_book, user_id))
 
-    async def get_book_by_id(self, book_id: str) -> Optional[Book]:
+    async def get_book_by_id(self, book_id: str) -> Book | None:
         """Async version of get_book_by_id."""
         return await self.book_service.get_book_by_id(book_id)
 
     async def update_book(
-        self, book_id: str, updates: Dict[str, Any], user_id: str
-    ) -> Optional[Book]:
+        self, book_id: str, updates: dict[str, Any], user_id: str
+    ) -> Book | None:
         """Async version of update_book."""
         return run_async(self.update_book_sync(book_id, user_id, **updates))
 
@@ -716,7 +716,7 @@ class KuzuServiceFacade:
 
     async def get_all_books_with_user_overlay_async(
         self, user_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Async version of get_all_books_with_user_overlay."""
         return run_async(self.get_all_books_with_user_overlay(user_id))
 
@@ -726,12 +726,12 @@ class KuzuServiceFacade:
         """Access to user repository through relationship service."""
         return self.relationship_service.user_repo
 
-    def _dict_to_book(self, book_data: Dict[str, Any]) -> Book:
+    def _dict_to_book(self, book_data: dict[str, Any]) -> Book:
         """Convert dictionary data to Book object."""
         return self.book_service._dict_to_book(book_data)
 
     def _create_enriched_book(
-        self, book_data: Dict[str, Any], relationship_data: Dict[str, Any]
+        self, book_data: dict[str, Any], relationship_data: dict[str, Any]
     ) -> Book:
         """Create an enriched Book object with user-specific attributes."""
         return self.relationship_service._create_enriched_book(
@@ -745,77 +745,77 @@ class KuzuServiceFacade:
     # Non-sync versions of existing methods
     async def get_book_by_id_for_user(
         self, book_id: str, user_id: str
-    ) -> Optional[Book]:
+    ) -> Book | None:
         """Async version of get_book_by_id_for_user_sync."""
         return run_async(self.get_book_by_id_for_user_sync(book_id, user_id))
 
     async def list_all_categories(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Async version of list_all_categories_sync."""
         return run_async(self.list_all_categories_sync(user_id))
 
     async def list_all_persons(
-        self, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Async version of list_all_persons_sync."""
         return run_async(self.list_all_persons_sync(user_id))
 
     async def get_category_by_id(
-        self, category_id: str, user_id: Optional[str] = None
-    ) -> Optional[Category]:
+        self, category_id: str, user_id: str | None = None
+    ) -> Category | None:
         """Async version of get_category_by_id_sync."""
         return run_async(self.get_category_by_id_sync(category_id, user_id))
 
-    async def get_child_categories(self, parent_id: str) -> List[Dict[str, Any]]:
+    async def get_child_categories(self, parent_id: str) -> list[dict[str, Any]]:
         """Async version of get_child_categories_sync."""
         return run_async(self.get_child_categories_sync(parent_id))
 
     async def get_category_children(
-        self, category_id: str, user_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, category_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Async version of get_category_children_sync."""
         return run_async(self.get_category_children_sync(category_id, user_id))
 
     async def get_books_by_category(
         self,
         category_id: str,
-        user_id: Optional[str] = None,
+        user_id: str | None = None,
         include_subcategories: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Async version of get_books_by_category_sync."""
         return run_async(
             self.get_books_by_category_sync(category_id, user_id, include_subcategories)
         )
 
-    async def get_person_by_id(self, person_id: str) -> Optional[Dict[str, Any]]:
+    async def get_person_by_id(self, person_id: str) -> dict[str, Any] | None:
         """Async version of get_person_by_id_sync."""
         return run_async(self.get_person_by_id_sync(person_id))
 
     async def search_books(
         self, query: str, user_id: str, limit: int = 50
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Async version of search_books_sync."""
         return run_async(self.search_books_sync(query, user_id, limit))
 
     async def get_book_by_isbn_for_user(
         self, isbn: str, user_id: str
-    ) -> Optional[Book]:
+    ) -> Book | None:
         """Async version of get_book_by_isbn_for_user_sync."""
         return run_async(self.get_book_by_isbn_for_user_sync(isbn, user_id))
 
     async def get_books_with_sharing_users(
         self, days_back: int = 30, limit: int = 20
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Async version of get_books_with_sharing_users_sync."""
         return run_async(self.get_books_with_sharing_users_sync(days_back, limit))
 
-    async def get_currently_reading_shared(self, limit: int = 20) -> List[Book]:
+    async def get_currently_reading_shared(self, limit: int = 20) -> list[Book]:
         """Async version of get_currently_reading_shared_sync."""
         return run_async(self.get_currently_reading_shared_sync(limit))
 
     # Helper methods
-    def _get_all_descendant_categories(self, category_id: str) -> List[str]:
+    def _get_all_descendant_categories(self, category_id: str) -> list[str]:
         """Get all descendant category IDs for a given category."""
         return self.category_service._get_all_descendant_categories_sync(category_id)
 
@@ -829,7 +829,7 @@ class KuzuServiceFacade:
             )
         )
 
-    def _load_book_relationships(self, book_id: str, user_id: str) -> Dict[str, Any]:
+    def _load_book_relationships(self, book_id: str, user_id: str) -> dict[str, Any]:
         """Load relationship data for a book and user."""
         try:
             relationship = self.relationship_service.get_user_book_sync(
@@ -840,13 +840,13 @@ class KuzuServiceFacade:
             return {}
 
     def _build_category_with_hierarchy(
-        self, category_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, category_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Build category data with full hierarchy information."""
         return self.category_service._build_category_with_hierarchy_sync(category_data)
 
     async def _update_contributors_async(
-        self, book_id: str, contributors: List[Any]
+        self, book_id: str, contributors: list[Any]
     ) -> bool:
         """Update contributor relationships for a book."""
         try:

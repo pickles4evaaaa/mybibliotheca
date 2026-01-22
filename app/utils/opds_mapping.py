@@ -7,10 +7,11 @@ share between Flask views and service-layer code as well as the unit tests.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Set
+from collections.abc import Iterable
+from typing import Any
 
 # Whitelist of MyBibliotheca fields that can be mapped from OPDS sources.
-MB_FIELD_WHITELIST: List[str] = [
+MB_FIELD_WHITELIST: list[str] = [
     "title",
     "subtitle",
     "description",
@@ -31,7 +32,7 @@ MB_FIELD_WHITELIST: List[str] = [
 ]
 
 # Human-readable labels for UI usage (optional).
-MB_FIELD_LABELS: Dict[str, str] = {
+MB_FIELD_LABELS: dict[str, str] = {
     "contributors.AUTHORED": "Contributors · Authors",
     "contributors.NARRATED": "Contributors · Narrators",
     "opds_source_id": "Stable OPDS Identifier",
@@ -44,7 +45,7 @@ MB_FIELD_LABELS: Dict[str, str] = {
 }
 
 # Baseline set of source expressions that are commonly available across OPDS 1 feeds.
-_DEFAULT_SOURCE_BASE: Set[str] = {
+_DEFAULT_SOURCE_BASE: set[str] = {
     "entry.title",
     "entry.subtitle",
     "entry.id",
@@ -69,11 +70,11 @@ _DEFAULT_SOURCE_BASE: Set[str] = {
 }
 
 
-def _normalize_inventory_list(values: Optional[Iterable[Any]]) -> List[str]:
+def _normalize_inventory_list(values: Iterable[Any] | None) -> list[str]:
     if not values:
         return []
-    seen: Set[str] = set()
-    normalized: List[str] = []
+    seen: set[str] = set()
+    normalized: list[str] = []
     for item in values:
         if item is None:
             continue
@@ -85,7 +86,7 @@ def _normalize_inventory_list(values: Optional[Iterable[Any]]) -> List[str]:
     return normalized
 
 
-def build_source_options(inventory: Optional[Dict[str, Any]] = None) -> List[str]:
+def build_source_options(inventory: dict[str, Any] | None = None) -> list[str]:
     """Return a sorted list of valid OPDS source expressions.
 
     Args:
@@ -93,7 +94,7 @@ def build_source_options(inventory: Optional[Dict[str, Any]] = None) -> List[str
             pay attention to are ``entry`` (list of element names) and
             ``link_rels`` (list of rel values).
     """
-    options: Set[str] = set(_DEFAULT_SOURCE_BASE)
+    options: set[str] = set(_DEFAULT_SOURCE_BASE)
     inv = inventory or {}
 
     # Entry element names observed in the feed (e.g., title, summary, id, dcterms:issued).
@@ -113,9 +114,9 @@ def build_source_options(inventory: Optional[Dict[str, Any]] = None) -> List[str
 
 
 def clean_mapping(
-    mapping: Optional[Dict[str, Any]],
-    inventory: Optional[Dict[str, Any]] = None,
-) -> Dict[str, str]:
+    mapping: dict[str, Any] | None,
+    inventory: dict[str, Any] | None = None,
+) -> dict[str, str]:
     """Validate and sanitize a user-provided mapping configuration.
 
     Unknown MyBibliotheca fields or source expressions that are not present in
@@ -127,7 +128,7 @@ def clean_mapping(
     allowed_fields = set(MB_FIELD_WHITELIST)
     valid_sources = set(build_source_options(inventory))
 
-    cleaned: Dict[str, str] = {}
+    cleaned: dict[str, str] = {}
     for raw_key, raw_value in mapping.items():
         key = str(raw_key).strip()
         if key not in allowed_fields:

@@ -1,5 +1,5 @@
 # Miscellaneous routes migrated from the original routes.py
-from flask import Blueprint, redirect, url_for, jsonify
+from flask import Blueprint, jsonify, redirect, url_for
 from flask_login import login_required
 
 misc_bp = Blueprint("misc", __name__)

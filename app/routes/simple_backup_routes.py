@@ -2,23 +2,24 @@
 Simple Backup routes for Bibliotheca admin interface.
 """
 
-from flask import (
-    Blueprint,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    jsonify,
-    send_file,
-    current_app,
-)
-from flask_login import login_required
 import os
 
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
+from flask_login import login_required
+
 from app import csrf
-from app.services.simple_backup_service import get_simple_backup_service
 from app.admin import admin_required
+from app.services.simple_backup_service import get_simple_backup_service
 
 # Create simple backup blueprint
 simple_backup_bp = Blueprint(

@@ -12,41 +12,42 @@ This module provides a comprehensive onboarding wizard that guides new users thr
 The system maintains state through Flask sessions and provides a seamless setup experience.
 """
 
-from flask import (
-    Blueprint,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    session,
-    jsonify,
-)
-from flask_login import login_user, current_user
-from werkzeug.security import generate_password_hash
 import logging
-import uuid
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-import pytz
-from datetime import datetime, timezone
-
-from .advanced_migration_system import AdvancedMigrationSystem, DatabaseVersion
-from .routes.import_routes import (
-    store_job_in_kuzu,
-    start_import_job,
-    auto_create_custom_fields,
-    update_job_in_kuzu,
-)
-from .utils.safe_import_manager import (
-    safe_create_import_job,
-    safe_update_import_job,
-    safe_get_import_job,
-)
-from .services import user_service
 
 # Quiet mode for onboarding logs: set IMPORT_VERBOSE=true to re-enable prints
 import os as _os_for_import_verbosity
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytz
+from flask import (
+    Blueprint,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_login import current_user, login_user
+from werkzeug.security import generate_password_hash
+
+from .advanced_migration_system import AdvancedMigrationSystem, DatabaseVersion
+from .routes.import_routes import (
+    auto_create_custom_fields,
+    start_import_job,
+    store_job_in_kuzu,
+    update_job_in_kuzu,
+)
+from .services import user_service
+from .utils.safe_import_manager import (
+    safe_create_import_job,
+    safe_get_import_job,
+    safe_update_import_job,
+)
 
 _IMPORT_VERBOSE = (
     _os_for_import_verbosity.getenv("VERBOSE") or "false"
@@ -62,9 +63,9 @@ def _dprint(*args, **kwargs):
 
 # Redirect module print to conditional debug print
 print = _dprint
-from .location_service import LocationService
-from .forms import SetupForm
 from .debug_utils import debug_route
+from .forms import SetupForm
+from .location_service import LocationService
 
 # Create blueprint
 onboarding_bp = Blueprint("onboarding", __name__, url_prefix="/onboarding")
@@ -81,7 +82,7 @@ ONBOARDING_STEPS = {
 }
 
 
-def get_onboarding_data() -> Dict:
+def get_onboarding_data() -> dict:
     """Get all onboarding data from session."""
     # Force session to be permanent for better persistence
     session.permanent = True
@@ -99,7 +100,7 @@ def get_onboarding_data() -> Dict:
     return data
 
 
-def update_onboarding_data(data: Dict):
+def update_onboarding_data(data: dict):
     """Update onboarding data in session."""
     logger.info(f"🔍 SESSION DEBUG: update_onboarding_data called with: {data}")
 
@@ -558,10 +559,10 @@ def site_config_step():
             # If metadata settings file does not yet exist, seed it with coarse preferences
             try:
                 from .utils.metadata_settings import (
-                    save_metadata_settings,
                     DEFAULT_BOOK_FIELDS,
                     DEFAULT_PERSON_FIELDS,
                     _get_cache,
+                    save_metadata_settings,
                 )  # type: ignore
 
                 cache = _get_cache()
@@ -697,7 +698,7 @@ def data_options_step():
             )
 
             data_option = request.form.get("data_option")
-            data_options: Dict[str, Any] = {"option": data_option}
+            data_options: dict[str, Any] = {"option": data_option}
 
             # Capture optional automatic backup settings injected by JS
             try:
@@ -785,8 +786,8 @@ def data_options_step():
 
                 elif custom_db_file and custom_db_file.filename:
                     # User uploaded a custom database file
-                    import tempfile
                     import os
+                    import tempfile
 
                     # Save uploaded database file to temporary location
                     temp_dir = tempfile.gettempdir()
@@ -873,8 +874,8 @@ def data_options_step():
                     )
 
                 if uploaded_file and uploaded_file.filename:
-                    import tempfile
                     import os
+                    import tempfile
 
                     # Save uploaded file to temporary location
                     temp_dir = tempfile.gettempdir()
@@ -957,7 +958,7 @@ def data_config_step():
         return redirect(url_for("onboarding.step", step_num=5))
 
 
-def migration_config_step(data_options: Dict):
+def migration_config_step(data_options: dict):
     """Configure migration settings."""
     logger.info(
         f"🔍 ONBOARDING DEBUG: migration_config_step called, method={request.method}"
@@ -1046,7 +1047,7 @@ def migration_config_step(data_options: Dict):
     )
 
 
-def import_config_step(data_options: Dict):
+def import_config_step(data_options: dict):
     """Configure import settings - simplified version that mirrors the library import."""
     logger.info(
         f"🔍 ONBOARDING DEBUG: import_config_step called, method={request.method}"
@@ -1067,7 +1068,7 @@ def import_config_step(data_options: Dict):
 
             # Detect the file type automatically (same logic as direct_import)
             try:
-                with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+                with open(csv_file_path, encoding="utf-8") as csvfile:
                     first_line = csvfile.readline()
 
                 # Determine import type based on headers (same logic as direct_import)
@@ -1171,7 +1172,7 @@ def import_config_step(data_options: Dict):
         logger.info(f"📂 Auto-configuring for CSV file: {csv_file_path}")
 
         # Detect the file type automatically (same logic as POST)
-        with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+        with open(csv_file_path, encoding="utf-8") as csvfile:
             first_line = csvfile.readline()
 
         # Determine import type based on headers
@@ -1201,7 +1202,7 @@ def import_config_step(data_options: Dict):
             logger.info("✅ Auto-detected StoryGraph CSV format")
         else:
             # Check if it's a simple ISBN-only file
-            with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+            with open(csv_file_path, encoding="utf-8") as csvfile:
                 lines = csvfile.readlines()[:5]  # Check first 5 lines
 
             # If all lines look like ISBNs (10 or 13 digits), treat as ISBN-only
@@ -1708,7 +1709,7 @@ def import_progress_json(task_id: str):
         )
 
 
-def execute_onboarding(onboarding_data: Dict) -> bool:
+def execute_onboarding(onboarding_data: dict) -> bool:
     """Execute the complete onboarding configuration."""
     try:
         # Step 1: Create admin user
@@ -1862,7 +1863,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                     # Create user mapping with proper types (Dict[int, str])
                     # At this point we know admin_user.id is not None due to the check above
                     try:
-                        user_mapping: Dict[int, str] = {
+                        user_mapping: dict[int, str] = {
                             int(admin_mapping): admin_user.id
                         }
                     except (ValueError, TypeError) as e:
@@ -1886,8 +1887,8 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
             # Create custom metadata fields first
             if custom_fields:
                 try:
-                    from .services import custom_field_service
                     from .domain.models import CustomFieldDefinition, CustomFieldType
+                    from .services import custom_field_service
 
                     for csv_field, field_config in custom_fields.items():
                         field_name = field_config["name"]
@@ -1958,9 +1959,10 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
 
             try:
                 import csv
+
                 from app.simplified_book_service import (
-                    SimplifiedBookService,
                     SimplifiedBook,
+                    SimplifiedBookService,
                 )
                 from app.utils.metadata_aggregator import fetch_unified_by_isbn
 
@@ -1979,7 +1981,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
                 books_imported = 0
                 errors = 0
 
-                with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+                with open(csv_file_path, encoding="utf-8") as csvfile:
                     reader = csv.DictReader(csvfile)
 
                     for row in reader:
@@ -2180,7 +2182,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
         return False
 
 
-def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
+def execute_onboarding_setup_only(onboarding_data: dict) -> bool:
     """Execute only the basic onboarding setup (user, location, custom fields) without CSV import."""
     try:
         print("🚀 [SETUP] ============ STARTING ONBOARDING SETUP ============")
@@ -2405,8 +2407,8 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 logger.info(f"Creating {len(custom_fields)} custom fields")
 
                 print("🏷️ [SETUP] Importing custom field service...")
-                from .services import custom_field_service
                 from .domain.models import CustomFieldDefinition, CustomFieldType
+                from .services import custom_field_service
 
                 print("🏷️ [SETUP] Imports successful")
 
@@ -2576,7 +2578,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         return False
 
 
-def handle_onboarding_completion(onboarding_data: Dict):
+def handle_onboarding_completion(onboarding_data: dict):
     """Handle the completion of onboarding (login user and redirect)."""
     try:
         print("🎉 [COMPLETION] ============ STARTING COMPLETION PROCESS ============")
@@ -2695,7 +2697,7 @@ def handle_onboarding_completion(onboarding_data: Dict):
         return redirect(url_for("auth.login"))
 
 
-def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[str]:
+def start_onboarding_import_job(user_id: str, import_config: dict) -> str | None:
     """Start a background import job for onboarding using the proven import system."""
     try:
         print("🚀 [IMPORT_JOB] ============ STARTING IMPORT JOB ============")
@@ -2729,7 +2731,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             "success": 0,
             "errors": 0,
             "total": 0,
-            "start_time": datetime.now(timezone.utc).isoformat(),
+            "start_time": datetime.now(UTC).isoformat(),
             "current_book": None,
             "error_messages": [],
             "recent_activity": [],
@@ -2744,7 +2746,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             csv_file_path = import_config.get("csv_file_path")
             print(f"🚀 [IMPORT_JOB] CSV file path: {csv_file_path}")
             if csv_file_path:
-                with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+                with open(csv_file_path, encoding="utf-8") as csvfile:
                     reader = csv.DictReader(csvfile)
                     job_data["total"] = sum(1 for _ in reader)
                     print(f"🚀 [IMPORT_JOB] CSV row count: {job_data['total']}")
@@ -2869,13 +2871,14 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
 def execute_csv_import_with_progress(
     task_id: str,
     csv_file_path: str,
-    field_mappings: Dict[str, str],
+    field_mappings: dict[str, str],
     user_id: str,
-    default_locations: List[str],
+    default_locations: list[str],
 ) -> bool:
     """Execute CSV import with progress tracking."""
     try:
         import csv
+
         from .utils import normalize_goodreads_value
 
         # Get the job safely (for onboarding, jobs are stored in safe manager)
@@ -2924,7 +2927,7 @@ def execute_csv_import_with_progress(
         logger.info(f"📍 Using default locations: {default_locations}")
 
         # Read and process the CSV file
-        with open(csv_file_path, "r", encoding="utf-8", errors="ignore") as csvfile:
+        with open(csv_file_path, encoding="utf-8", errors="ignore") as csvfile:
             # Try to detect if CSV has headers
             first_line = csvfile.readline().strip()
             csvfile.seek(0)  # Reset to beginning
@@ -3077,14 +3080,14 @@ def execute_csv_import_with_progress(
 
 
 def process_single_book_import(
-    book_data: Dict,
+    book_data: dict,
     user_id: str,
-    default_locations: List,
-    personal_custom_metadata: Dict,
+    default_locations: list,
+    personal_custom_metadata: dict,
 ) -> bool:
     """Process a single book import using the unified SimplifiedBookService pipeline."""
     try:
-        from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+        from app.simplified_book_service import SimplifiedBook, SimplifiedBookService
         from app.utils.metadata_aggregator import fetch_unified_by_isbn
 
         title = (book_data.get("title") or "").strip()

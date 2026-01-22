@@ -1,56 +1,58 @@
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, cast
+
 from flask import (
     Blueprint,
-    render_template,
-    redirect,
-    url_for,
+    abort,
+    current_app,
     flash,
+    get_flashed_messages,
+    jsonify,
+    redirect,
+    render_template,
     request,
     session,
-    current_app,
-    jsonify,
-    abort,
-    get_flashed_messages,
+    url_for,
 )
-from flask_login import login_user, logout_user, login_required, current_user
+from flask_login import current_user, login_required, login_user, logout_user
 from werkzeug.security import generate_password_hash
+
+from app.admin import (
+    _log,
+    _log_force,
+    admin_required,
+    get_admin_settings_context,
+    load_ai_config,
+    load_backup_config,
+    load_smtp_config,
+    load_system_config,
+    save_ai_config,
+    save_backup_config,
+    save_smtp_config,
+    save_system_config,
+)
 from app.domain.models import MediaType
-from app.services import user_service, book_service
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+from app.services import book_service, user_service
 from app.services.kuzu_service_facade import (
     _convert_query_result_to_list,
 )  # Reuse helper for query results
-from app.admin import (
-    admin_required,
-    save_ai_config,
-    load_ai_config,
-    save_system_config,
-    load_system_config,
-    get_admin_settings_context,
-    save_smtp_config,
-    load_smtp_config,
-    save_backup_config,
-    load_backup_config,
-    _log,
-    _log_force,
-)
 from app.utils.user_settings import (
     get_default_book_format,
     get_effective_reading_defaults,
 )
-from wtforms.validators import Optional
+
+from .debug_utils import debug_auth, debug_csrf, debug_route
 from .forms import (
-    LoginForm,
-    RegistrationForm,
-    UserProfileForm,
     ChangePasswordForm,
     ForcedPasswordChangeForm,
+    LoginForm,
     ReadingStreakForm,
+    RegistrationForm,
+    UserProfileForm,
 )
-from .debug_utils import debug_route, debug_auth, debug_csrf
-from datetime import datetime, timezone
-from typing import cast, Any, Optional
-import json
-from pathlib import Path
 
 auth = Blueprint("auth", __name__)
 
@@ -76,7 +78,7 @@ def setup():
     debug_auth("=" * 60)
     debug_auth("Redirecting to new onboarding system")
     try:
-        user_count = cast(int, user_service.get_user_count_sync())
+        user_count = cast("int", user_service.get_user_count_sync())
         if user_count and user_count > 0:
             flash("Setup has already been completed.", "info")
             return redirect(url_for("auth.login"))
@@ -94,7 +96,7 @@ def setup():
 def setup_status():
     """API endpoint to check setup status - useful for troubleshooting"""
     try:
-        user_count = cast(int, user_service.get_user_count_sync())
+        user_count = cast("int", user_service.get_user_count_sync())
         return {
             "setup_completed": user_count > 0,
             "user_count": user_count,
@@ -509,8 +511,9 @@ def forced_password_change():
 @login_required
 def debug_info():
     """Debug route to display comprehensive debug information (only if debug mode enabled)"""
-    from .debug_utils import get_debug_info
     from flask import current_app, jsonify
+
+    from .debug_utils import get_debug_info
 
     if not current_app.config.get("DEBUG_MODE", False):
         flash("Debug mode is not enabled.", "error")
@@ -604,8 +607,8 @@ def settings():
         pass
     # Try to read version from pyproject once (could cache later)
     try:
-        import tomllib
         import os
+        import tomllib
 
         pyproject_path = os.path.join(current_app.root_path, "..", "pyproject.toml")
         if os.path.exists(pyproject_path):
@@ -780,9 +783,9 @@ def settings_privacy_partial():
 def settings_reading_prefs_partial():
     # Simple manual form parsing; no WTForms needed
     from app.utils.user_settings import (
+        get_default_reading_status_choices,
         get_library_sort_choices,
         get_library_status_choices,
-        get_default_reading_status_choices,
         load_user_settings,
         save_user_settings,
     )
@@ -837,8 +840,8 @@ def settings_reading_prefs_partial():
 @auth.route("/settings/partial/personal_abs", methods=["GET", "POST"])
 @login_required
 def settings_personal_abs_partial():
-    from app.utils.user_settings import load_user_settings, save_user_settings
     from app.utils.audiobookshelf_settings import load_abs_settings
+    from app.utils.user_settings import load_user_settings, save_user_settings
 
     abs_settings = load_abs_settings()
     if request.method == "POST":
@@ -1027,9 +1030,10 @@ def settings_server_partial(panel: str):
     if panel == "users":
         # Recreate admin.users view inline (no pagination controls yet)
         search = request.args.get("search", "", type=str)
-        from app.services.kuzu_async_helper import run_async
+        from datetime import datetime
+
         from app.domain.models import User as DomainUser
-        from datetime import datetime, timezone as _tz
+        from app.services.kuzu_async_helper import run_async
 
         def _now():
             try:
@@ -1037,7 +1041,7 @@ def settings_server_partial(panel: str):
 
                 return now_utc()
             except Exception:
-                return datetime.now(_tz.utc)
+                return datetime.now(UTC)
 
         users_render = []
         try:
@@ -1098,7 +1102,7 @@ def settings_server_partial(panel: str):
 
                                 if isinstance(ca, (int, float)):
                                     user_obj.created_at = datetime.fromtimestamp(
-                                        ca / 1000, _tz.utc
+                                        ca / 1000, UTC
                                     )
                                 elif isinstance(ca, str):
                                     user_obj.created_at = datetime.fromisoformat(
@@ -1471,7 +1475,8 @@ def settings_server_partial(panel: str):
                         os.makedirs(os.path.dirname(env_path), exist_ok=True)
                         # Use python-dotenv to safely upsert each key
                         try:
-                            from dotenv import set_key, load_dotenv as _load
+                            from dotenv import load_dotenv as _load
+                            from dotenv import set_key
 
                             for k in manage_keys:
                                 if k in updates:
@@ -1484,7 +1489,7 @@ def settings_server_partial(panel: str):
                             existing = {}
                             if os.path.exists(env_path):
                                 try:
-                                    with open(env_path, "r") as rf:
+                                    with open(env_path) as rf:
                                         for line in rf:
                                             s = line.strip()
                                             if s and not s.startswith("#") and "=" in s:
@@ -1759,18 +1764,20 @@ def settings_server_partial(panel: str):
         ctx["ai_config"] = load_ai_config()
         return render_template("settings/partials/server_ai.html", **ctx)
     if panel == "opds":
-        from app.utils.opds_settings import load_opds_settings, save_opds_settings
-        from app.utils.opds_mapping import (
-            clean_mapping,
-            build_source_options,
-            MB_FIELD_WHITELIST,
-            MB_FIELD_LABELS,
-        )
-        from app.services import opds_probe_service as _opds_probe_service
-        from app.services import ensure_opds_sync_runner, get_opds_sync_runner
         import json as _json
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
+
         from markupsafe import Markup, escape
+
+        from app.services import ensure_opds_sync_runner, get_opds_sync_runner
+        from app.services import opds_probe_service as _opds_probe_service
+        from app.utils.opds_mapping import (
+            MB_FIELD_LABELS,
+            MB_FIELD_WHITELIST,
+            build_source_options,
+            clean_mapping,
+        )
+        from app.utils.opds_settings import load_opds_settings, save_opds_settings
 
         try:
             ensure_opds_sync_runner()
@@ -1985,7 +1992,7 @@ def settings_server_partial(panel: str):
                         job_info = runner.enqueue_sync(
                             str(current_user.id), limit=limit_value
                         )
-                        now_iso = _dt.now(_tz.utc).isoformat()
+                        now_iso = _dt.now(UTC).isoformat()
                         message_text = "Sync job queued."
                         sync_task_id = None
                         sync_progress_url = None
@@ -2068,7 +2075,7 @@ def settings_server_partial(panel: str):
                             if test_progress_url:
                                 message_text += f' <a href="{escape(test_progress_url)}" class="link-primary">Track progress</a>'
                         status_message = Markup(message_text)
-                        now_iso = _dt.now(_tz.utc).isoformat()
+                        now_iso = _dt.now(UTC).isoformat()
                         save_opds_settings(
                             {
                                 "last_test_summary": {
@@ -2247,7 +2254,7 @@ def settings_server_partial(panel: str):
                 "url": cell_url,
             }
 
-        def _resolve_entry_link(payload: Optional[dict[str, Any]]) -> Optional[str]:
+        def _resolve_entry_link(payload: dict[str, Any] | None) -> str | None:
             if not isinstance(payload, dict):
                 return None
             links = payload.get("raw_links")
@@ -2321,12 +2328,13 @@ def settings_server_partial(panel: str):
         # Admin-only ABS settings management
         if not current_user.is_admin:
             return '<div class="text-danger small">Not authorized.</div>'
+        import json as _json
+
+        from app.services.audiobookshelf_service import get_client_from_settings
         from app.utils.audiobookshelf_settings import (
             load_abs_settings,
             save_abs_settings,
         )
-        from app.services.audiobookshelf_service import get_client_from_settings
-        import json as _json
 
         settings = load_abs_settings()
         connection_test = None
@@ -2531,8 +2539,8 @@ def settings_server_partial(panel: str):
                 )
             except Exception as e:
                 current_app.logger.error(f"Metadata settings save failed: {e}")
-                import traceback
                 import sys
+                import traceback
 
                 traceback.print_exc(file=sys.stderr)
                 return jsonify({"ok": False, "error": "save_failed"}), 400
@@ -2745,8 +2753,8 @@ def settings_server_partial(panel: str):
             return '<div class="text-danger small">Not authorized.</div>'
         try:
             from app.utils.safe_import_manager import (
-                safe_import_manager,
                 safe_get_import_job,
+                safe_import_manager,
             )
 
             # ABS runner health (best effort)
@@ -3093,7 +3101,7 @@ def test_smtp_connection():
                     "[SMTP] Connection established over SSL",
                     extra_secrets=secret_values,
                 )
-            except socket.timeout:
+            except TimeoutError:
                 _log_force(
                     "error",
                     f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}",
@@ -3117,7 +3125,7 @@ def test_smtp_connection():
                         "message": f"Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.",
                     }
                 ), 500
-            except socket.error as sock_err:
+            except OSError as sock_err:
                 _log_force(
                     "error",
                     f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}",
@@ -3144,7 +3152,7 @@ def test_smtp_connection():
                     f"[SMTP] Connection established to {smtp_server}:{smtp_port}",
                     extra_secrets=secret_values,
                 )
-            except socket.timeout:
+            except TimeoutError:
                 _log_force(
                     "error",
                     f"[SMTP] Connection timeout after 30s to {smtp_server}:{smtp_port}",
@@ -3168,7 +3176,7 @@ def test_smtp_connection():
                         "message": f"Connection refused by {smtp_server}:{smtp_port}. Server may not be accepting connections.",
                     }
                 ), 500
-            except socket.error as sock_err:
+            except OSError as sock_err:
                 _log_force(
                     "error",
                     f"[SMTP] Socket error connecting to {smtp_server}:{smtp_port}: {sock_err}",
@@ -3282,7 +3290,7 @@ def test_smtp_connection():
             extra_secrets=secret_values,
         )
         return jsonify({"success": False, "message": f"SMTP error: {exc}"}), 500
-    except socket.timeout:
+    except TimeoutError:
         _log_force(
             "error",
             f"[SMTP] Operation timeout for {smtp_server}:{smtp_port}",
@@ -3347,8 +3355,8 @@ def save_backup_settings():
 def opds_preview_detail(row_index: int):
     if not current_user.is_admin:
         abort(403)
-    from app.utils.opds_settings import load_opds_settings
     from app.utils.opds_mapping import MB_FIELD_LABELS
+    from app.utils.opds_settings import load_opds_settings
 
     settings = load_opds_settings()
     preview_list = settings.get("last_test_preview") or []
@@ -3434,7 +3442,7 @@ def opds_preview_detail(row_index: int):
             mapped_payload.get(field_name) if isinstance(mapped_payload, dict) else None
         )
         text_value: str
-        link_url: Optional[str] = None
+        link_url: str | None = None
         if isinstance(cell, dict):
             text_value = cell.get("text") or ""
             link_url = cell.get("url") if isinstance(cell.get("url"), str) else None
@@ -3501,8 +3509,8 @@ def test_audiobookshelf_connection():
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "not_authorized"}), 403
     try:
-        from app.utils.audiobookshelf_settings import load_abs_settings
         from app.services.audiobookshelf_service import get_client_from_settings
+        from app.utils.audiobookshelf_settings import load_abs_settings
 
         settings = load_abs_settings()
         client = get_client_from_settings(settings)
@@ -3526,8 +3534,8 @@ def audiobookshelf_test_sync():
         return jsonify({"ok": False, "error": "not_authorized"}), 403
     try:
         # Load settings and enqueue job into ABS runner
-        from app.utils.audiobookshelf_settings import load_abs_settings
         from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
+        from app.utils.audiobookshelf_settings import load_abs_settings
 
         settings = load_abs_settings()
         library_ids = settings.get("library_ids") or []
@@ -3568,9 +3576,9 @@ def audiobookshelf_full_sync():
         return jsonify({"ok": False, "error": "not_authorized"}), 403
     try:
         # Trigger a composite sync for ALL users to respect per-user credentials and prefs
-        from app.utils.audiobookshelf_settings import load_abs_settings
+        from app.services import run_async, user_service
         from app.services.audiobookshelf_sync_runner import get_abs_sync_runner
-        from app.services import user_service, run_async
+        from app.utils.audiobookshelf_settings import load_abs_settings
 
         settings = load_abs_settings()
         if not settings.get("enabled"):
@@ -3676,8 +3684,9 @@ def audiobookshelf_listen_test():
 @auth.route("/privacy_settings", methods=["GET", "POST"])
 @login_required
 def privacy_settings():
-    from app.forms import PrivacySettingsForm, ReadingStreakForm
     import pytz
+
+    from app.forms import PrivacySettingsForm, ReadingStreakForm
 
     form = PrivacySettingsForm()
     streak_form = ReadingStreakForm()
@@ -3758,7 +3767,7 @@ def privacy_settings():
     except:
         timezone_info = {
             "name": "UTC",
-            "current_time": datetime.now(timezone.utc).strftime(
+            "current_time": datetime.now(UTC).strftime(
                 "%Y-%m-%d %H:%M:%S UTC"
             ),
             "offset": "+0000",
@@ -3784,7 +3793,7 @@ def my_activity():
         total_books = len(user_books)
 
         # Get books added this year
-        current_year = datetime.now(timezone.utc).year
+        current_year = datetime.now(UTC).year
         books_this_year = sum(
             1
             for book in user_books

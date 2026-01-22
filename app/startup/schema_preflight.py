@@ -21,22 +21,22 @@ Environment flags:
 
 from __future__ import annotations
 
-import os
-import logging
-import json
 import hashlib
-from pathlib import Path
+import json
+import logging
+import os
 import time
-from typing import Dict, List, Tuple, Any
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.migrations.runner import run_pending as run_additive_migrations
+from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_CACHE: Dict[str, Any] = {}
-_SCHEMA_META: Dict[str, str] = {}
+_SCHEMA_CACHE: dict[str, Any] = {}
+_SCHEMA_META: dict[str, str] = {}
 _PREFLIGHT_RAN = False
 _PREFLIGHT_DB_KEY: str | None = None
 
@@ -62,7 +62,7 @@ def _lock_file() -> Path:
     return _get_data_root() / "schema_preflight.lock"
 
 
-def _load_marker() -> Dict[str, Any]:
+def _load_marker() -> dict[str, Any]:
     mf = _marker_file()
     if not mf.exists():
         return {}
@@ -72,7 +72,7 @@ def _load_marker() -> Dict[str, Any]:
         return {}
 
 
-def _write_marker(meta: Dict[str, Any]):
+def _write_marker(meta: dict[str, Any]):
     try:
         payload = {
             "version": meta.get("version"),
@@ -132,7 +132,7 @@ def _release_lock():
         pass
 
 
-def _load_master_schema() -> Dict[str, Any]:
+def _load_master_schema() -> dict[str, Any]:
     """Load and cache the master schema JSON.
 
     Path resolution order:
@@ -181,12 +181,12 @@ def _column_exists(conn, table: str, column: str) -> bool:
         return True
 
 
-def _detect_missing_columns(conn) -> List[Tuple[str, str, str]]:
+def _detect_missing_columns(conn) -> list[tuple[str, str, str]]:
     schema = _load_master_schema()
-    node_defs: Dict[str, Any] = schema.get("nodes", {})
-    missing: List[Tuple[str, str, str]] = []
+    node_defs: dict[str, Any] = schema.get("nodes", {})
+    missing: list[tuple[str, str, str]] = []
     for table, meta in node_defs.items():
-        columns: Dict[str, str] = meta.get("columns", {})
+        columns: dict[str, str] = meta.get("columns", {})
         pk = meta.get("primary_key", "id")
         for col, col_type in columns.items():
             if col == pk:  # skip PK (cannot ALTER ADD)
@@ -227,15 +227,15 @@ def _relationship_property_exists(conn, rel_type: str, prop: str) -> bool:
 
 def _detect_relationship_changes(conn):
     schema = _load_master_schema()
-    rel_defs: Dict[str, Any] = schema.get("relationships", {})
-    create_missing: List[str] = []
-    add_props: List[Tuple[str, str, str]] = []
+    rel_defs: dict[str, Any] = schema.get("relationships", {})
+    create_missing: list[str] = []
+    add_props: list[tuple[str, str, str]] = []
     for rel_type, meta in rel_defs.items():
         exists = _relationship_table_exists(conn, rel_type)
         if not exists:
             create_missing.append(rel_type)
             continue
-        props: Dict[str, str] = meta.get("properties", {})
+        props: dict[str, str] = meta.get("properties", {})
         for prop, ptype in props.items():
             if not _relationship_property_exists(conn, rel_type, prop):
                 add_props.append((rel_type, prop, ptype))
@@ -254,7 +254,7 @@ def _create_backup_if_needed(reason: str) -> None:
         logger.warning(f"Schema preflight: failed to create backup: {e}")
 
 
-def _apply_alter_statements(conn, to_add: List[Tuple[str, str, str]]):
+def _apply_alter_statements(conn, to_add: list[tuple[str, str, str]]):
     for table, col, col_type in to_add:
         try:
             logger.info(f"Adding missing column {table}.{col} ({col_type})")
@@ -266,9 +266,9 @@ def _apply_alter_statements(conn, to_add: List[Tuple[str, str, str]]):
             raise
 
 
-def _apply_relationship_creates(conn, rel_types: List[str]):
+def _apply_relationship_creates(conn, rel_types: list[str]):
     schema = _load_master_schema()
-    rel_defs: Dict[str, Any] = schema.get("relationships", {})
+    rel_defs: dict[str, Any] = schema.get("relationships", {})
     for rel in rel_types:
         meta = rel_defs.get(rel, {})
         from_label = meta.get("from")
@@ -276,7 +276,7 @@ def _apply_relationship_creates(conn, rel_types: List[str]):
         if not from_label or not to_label:
             logger.warning(f"Cannot create relationship {rel}: missing from/to")
             continue
-        props: Dict[str, str] = meta.get("properties", {})
+        props: dict[str, str] = meta.get("properties", {})
         parts = [f"{k} {v}" for k, v in props.items()]
         prop_section = (",\n            ".join(parts)) if parts else ""
         ddl = f"""
@@ -289,7 +289,7 @@ def _apply_relationship_creates(conn, rel_types: List[str]):
         conn.execute(ddl)
 
 
-def _apply_relationship_alters(conn, props: List[Tuple[str, str, str]]):
+def _apply_relationship_alters(conn, props: list[tuple[str, str, str]]):
     for rel_type, prop, ptype in props:
         try:
             logger.info(
@@ -388,9 +388,9 @@ def run_schema_preflight() -> None:
             "yes",
         )
 
-        missing_node_cols: List[Tuple[str, str, str]] = []
-        create_rel: List[str] = []
-        alter_rel_props: List[Tuple[str, str, str]] = []
+        missing_node_cols: list[tuple[str, str, str]] = []
+        create_rel: list[str] = []
+        alter_rel_props: list[tuple[str, str, str]] = []
 
         if process_nodes:
             missing_node_cols = _detect_missing_columns(conn)
@@ -404,7 +404,7 @@ def run_schema_preflight() -> None:
             if mig_preview.get("status") == "pending"
             else []
         )
-        pending_migration_cols: List[str] = (
+        pending_migration_cols: list[str] = (
             list(raw_missing) if isinstance(raw_missing, (list, tuple, set)) else []
         )
 

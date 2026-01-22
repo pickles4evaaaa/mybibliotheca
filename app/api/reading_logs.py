@@ -5,14 +5,15 @@ Provides RESTful CRUD operations for reading logs using the dual-write service l
 Uses secure API token authentication to bypass CSRF for legitimate API calls.
 """
 
-from flask import Blueprint, request, jsonify, current_app
-from flask_login import current_user
-from datetime import datetime, date
 import traceback
+from datetime import date, datetime
+
+from flask import Blueprint, current_app, jsonify, request
+from flask_login import current_user
 
 from ..api_auth import api_token_required
-from ..services import reading_log_service
 from ..domain.models import ReadingLog as DomainReadingLog
+from ..services import reading_log_service
 from ..utils.user_settings import get_effective_reading_defaults
 
 # Create API blueprint

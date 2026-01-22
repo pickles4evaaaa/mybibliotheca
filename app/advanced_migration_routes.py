@@ -10,24 +10,25 @@ Web interface for the advanced migration system that handles:
 5. Migration status and progress tracking
 """
 
-from flask import (
-    Blueprint,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    jsonify,
-    session,
-)
-from flask_login import login_required, current_user
 import logging
 from pathlib import Path
 
+from flask import (
+    Blueprint,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_login import current_user, login_required
+
 from .advanced_migration_system import AdvancedMigrationSystem, DatabaseVersion
-from .services import user_service
-from .forms import SetupForm
 from .debug_utils import debug_route
+from .forms import SetupForm
+from .services import user_service
 
 # Create blueprint
 migration_bp = Blueprint("advanced_migration", __name__, url_prefix="/migration")

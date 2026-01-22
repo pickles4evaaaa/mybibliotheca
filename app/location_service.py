@@ -7,13 +7,13 @@ Users access locations indirectly through their books.
 The system uses proper graph relationships, not properties on nodes.
 """
 
-from typing import List, Optional, Dict, Any
-import uuid
-from datetime import datetime, timezone
 import os as _os_for_import_verbosity
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 
-from .domain.models import Location
 from .debug_system import debug_log, get_debug_manager
+from .domain.models import Location
 from .infrastructure.kuzu_graph import safe_execute_kuzu_query
 
 # Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
@@ -33,11 +33,11 @@ def _dprint(*args, **kwargs):
 print = _dprint
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """Convert Kuzu QueryResult to a list of simple dict rows."""
     if result is None:
         return []
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     try:
         if hasattr(result, "has_next") and hasattr(result, "get_next"):
             while result.has_next():
@@ -45,7 +45,7 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
                 if len(row) == 1:
                     rows.append({"result": row[0]})
                 else:
-                    row_dict: Dict[str, Any] = {}
+                    row_dict: dict[str, Any] = {}
                     for i, value in enumerate(row):
                         row_dict[f"col_{i}"] = value
                     rows.append(row_dict)
@@ -84,7 +84,7 @@ def _decode_value(v: Any) -> Any:
         return v
 
 
-def _ensure_datetime(v: Any) -> Optional[datetime]:
+def _ensure_datetime(v: Any) -> datetime | None:
     """Ensure value is a datetime. Accepts datetime, ISO string, or bytes-like."""
     try:
         if v is None:
@@ -103,9 +103,9 @@ def _ensure_datetime(v: Any) -> Optional[datetime]:
         return None
 
 
-def _node_to_dict(node: Any) -> Dict[str, Any]:
+def _node_to_dict(node: Any) -> dict[str, Any]:
     """Convert Kuzu node object to a plain dict with str keys and decoded values."""
-    data: Dict[str, Any] = {}
+    data: dict[str, Any] = {}
     if node is None:
         return data
     # Try items() first (mapping-like)
@@ -163,7 +163,7 @@ def _node_to_dict(node: Any) -> Dict[str, Any]:
 class LocationService:
     """Service for managing user locations and book-location relationships."""
 
-    def __init__(self, kuzu_db_path: Optional[str] = None):
+    def __init__(self, kuzu_db_path: str | None = None):
         # Use global safe connection management instead of separate instance
         self.debug_manager = get_debug_manager()
         debug_log(
@@ -173,9 +173,9 @@ class LocationService:
     def create_location(
         self,
         name: str,
-        description: Optional[str] = None,
+        description: str | None = None,
         location_type: str = "home",
-        address: Optional[str] = None,
+        address: str | None = None,
         is_default: bool = False,
     ) -> Location:
         """Create a new location. Locations are independent of users."""
@@ -208,8 +208,8 @@ class LocationService:
             address=address,
             is_default=is_default,
             is_active=True,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         # Store in KuzuDB without any user association
@@ -246,7 +246,7 @@ class LocationService:
 
         return location
 
-    def get_location(self, location_id: str) -> Optional[Location]:
+    def get_location(self, location_id: str) -> Location | None:
         """Get a specific location by ID (universal access)."""
         print(f"DEBUG: get_location called with location_id: {location_id}")
 
@@ -279,17 +279,17 @@ class LocationService:
             is_default=location_data.get("is_default", False),
             is_active=location_data.get("is_active", True),
             created_at=_ensure_datetime(location_data.get("created_at"))
-            or datetime.now(timezone.utc),
+            or datetime.now(UTC),
             updated_at=_ensure_datetime(location_data.get("updated_at"))
             or _ensure_datetime(location_data.get("created_at"))
-            or datetime.now(timezone.utc),
+            or datetime.now(UTC),
         )
         print(f"DEBUG: Created location: {location}")
         return location
 
     def get_user_locations(
         self, user_id: str, active_only: bool = True
-    ) -> List[Location]:
+    ) -> list[Location]:
         """Get all locations that contain books (via STORED_AT relationships)."""
         print(
             f"🏠 [GET_USER_LOCATIONS] Fetching locations with books (active_only: {active_only})"
@@ -305,7 +305,7 @@ class LocationService:
 
         result = safe_execute_kuzu_query(query, {}, operation="location_operation")
 
-        locations: List[Location] = []
+        locations: list[Location] = []
         rows = _convert_query_result_to_list(result)
         for r in rows:
             node = r.get("result") or r.get("col_0")
@@ -322,16 +322,16 @@ class LocationService:
                 is_default=location_data["is_default"],
                 is_active=location_data.get("is_active", True),
                 created_at=_ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
                 updated_at=_ensure_datetime(location_data.get("updated_at"))
                 or _ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
             )
             locations.append(location)
 
         return locations
 
-    def get_all_locations(self, active_only: bool = True) -> List[Location]:
+    def get_all_locations(self, active_only: bool = True) -> list[Location]:
         """Get all locations in the system, regardless of whether they have books."""
 
         # Query all locations in the system
@@ -342,7 +342,7 @@ class LocationService:
 
         result = safe_execute_kuzu_query(query, {}, operation="location_operation")
 
-        locations: List[Location] = []
+        locations: list[Location] = []
         rows = _convert_query_result_to_list(result)
         for r in rows:
             node = r.get("result") or r.get("col_0")
@@ -359,16 +359,16 @@ class LocationService:
                 is_default=location_data["is_default"],
                 is_active=location_data.get("is_active", True),
                 created_at=_ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
                 updated_at=_ensure_datetime(location_data.get("updated_at"))
                 or _ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
             )
             locations.append(location)
 
         return locations
 
-    def update_location(self, location_id: str, **updates) -> Optional[Location]:
+    def update_location(self, location_id: str, **updates) -> Location | None:
         """Update a location."""
         print(f"🏠 [UPDATE_LOCATION] Updating location {location_id} with: {updates}")
 
@@ -396,7 +396,7 @@ class LocationService:
 
         # Build update query
         set_clauses = []
-        params: Dict[str, Any] = {"location_id": location_id}
+        params: dict[str, Any] = {"location_id": location_id}
 
         for key, value in updates.items():
             if hasattr(location, key):
@@ -407,7 +407,7 @@ class LocationService:
         if set_clauses:
             set_clauses.append("l.updated_at = $updated_at")
             # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
-            params["updated_at"] = datetime.now(timezone.utc)
+            params["updated_at"] = datetime.now(UTC)
 
             update_query = f"""
             MATCH (l:Location) 
@@ -440,7 +440,7 @@ class LocationService:
         print(f"🏠 [DELETE_LOCATION] Deleted location {location_id}: '{location.name}'")
         return True
 
-    def get_default_location(self) -> Optional[Location]:
+    def get_default_location(self) -> Location | None:
         """Get the system default location (universal access)."""
 
         # Simply find the default location in the system (locations are universal)
@@ -469,10 +469,10 @@ class LocationService:
                 is_default=location_data["is_default"],
                 is_active=location_data.get("is_active", True),
                 created_at=_ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
                 updated_at=_ensure_datetime(location_data.get("updated_at"))
                 or _ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
             )
             return location
 
@@ -502,10 +502,10 @@ class LocationService:
                 is_default=location_data["is_default"],
                 is_active=location_data.get("is_active", True),
                 created_at=_ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
                 updated_at=_ensure_datetime(location_data.get("updated_at"))
                 or _ensure_datetime(location_data.get("created_at"))
-                or datetime.now(timezone.utc),
+                or datetime.now(UTC),
             )
             print(
                 f"🏠 [GET_DEFAULT] No default found, using first available location: '{location.name}' (ID: {location.id})"
@@ -515,7 +515,7 @@ class LocationService:
         print("🏠 [GET_DEFAULT] No locations found at all")
         return None
 
-    def setup_default_locations(self) -> List[Location]:
+    def setup_default_locations(self) -> list[Location]:
         """Set up default locations for the system."""
         print("🏠 [SETUP_DEFAULT] Setting up default locations")
 
@@ -534,7 +534,7 @@ class LocationService:
         return locations
 
     def get_location_book_count(
-        self, location_id: str, user_id: Optional[str] = None
+        self, location_id: str, user_id: str | None = None
     ) -> int:
         """Get the number of books at a specific location.
 
@@ -590,8 +590,8 @@ class LocationService:
             return 0
 
     def get_all_location_book_counts(
-        self, user_id: Optional[str] = None
-    ) -> Dict[str, int]:
+        self, user_id: str | None = None
+    ) -> dict[str, int]:
         """Get book counts for all locations.
 
         Args:
@@ -620,8 +620,8 @@ class LocationService:
         return counts
 
     def get_books_at_location(
-        self, location_id: str, user_id: Optional[str] = None
-    ) -> List[str]:
+        self, location_id: str, user_id: str | None = None
+    ) -> list[str]:
         """Get list of book IDs at a specific location.
 
         Args:
@@ -646,7 +646,7 @@ class LocationService:
             result = safe_execute_kuzu_query(
                 query, params, operation="location_operation"
             )
-            book_ids: List[str] = []
+            book_ids: list[str] = []
             rows = _convert_query_result_to_list(result)
             for r in rows:
                 book_id = r.get("result") or r.get("col_0")
@@ -731,7 +731,7 @@ class LocationService:
                 {
                     "book_id": book_id,
                     "location_id": location_id,
-                    "created_at": datetime.now(timezone.utc),
+                    "created_at": datetime.now(UTC),
                 },
                 operation="add_book_to_location",
             )
@@ -784,8 +784,8 @@ class LocationService:
             return False
 
     def get_book_locations(
-        self, book_id: str, user_id: Optional[str] = None
-    ) -> List[Location]:
+        self, book_id: str, user_id: str | None = None
+    ) -> list[Location]:
         """Get all locations where a book is stored.
 
         Args:
@@ -806,7 +806,7 @@ class LocationService:
             result = safe_execute_kuzu_query(
                 query, params, operation="location_operation"
             )
-            locations: List[Location] = []
+            locations: list[Location] = []
             rows = _convert_query_result_to_list(result)
             for r in rows:
                 node = r.get("result") or r.get("col_0")
@@ -823,10 +823,10 @@ class LocationService:
                     is_default=location_data["is_default"],
                     is_active=True,
                     created_at=_ensure_datetime(location_data.get("created_at"))
-                    or datetime.now(timezone.utc),
+                    or datetime.now(UTC),
                     updated_at=_ensure_datetime(location_data.get("updated_at"))
                     or _ensure_datetime(location_data.get("created_at"))
-                    or datetime.now(timezone.utc),
+                    or datetime.now(UTC),
                 )
                 locations.append(location)
 
@@ -843,7 +843,7 @@ class LocationService:
             return []
 
     def set_book_location(
-        self, book_id: str, location_id: Optional[str], user_id: str
+        self, book_id: str, location_id: str | None, user_id: str
     ) -> bool:
         """Set a book's primary location by managing STORED_AT relationships.
 

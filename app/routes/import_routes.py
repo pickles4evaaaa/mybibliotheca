@@ -3,35 +3,36 @@ Import/Export routes for the MyBibliotheca application.
 Handles book import functionality including CSV processing, progress tracking, and batch operations.
 """
 
+import asyncio
+import csv
+import json
+import logging
+import os
+import os as _os_for_import_verbosity
+import secrets
+import tempfile
+import threading
+import time
+import traceback
+import uuid
+from datetime import UTC, date, datetime, timedelta
+from typing import Any
+
 from flask import (
     Blueprint,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
+    Response,
     current_app,
+    flash,
     jsonify,
     make_response,
+    redirect,
+    render_template,
+    request,
     session,
-    Response,
+    url_for,
 )
-from flask_login import login_required, current_user
+from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
-from datetime import datetime, date, timedelta, timezone
-from typing import List, Any, Optional, Tuple
-import uuid
-import os
-import csv
-import threading
-import traceback
-import asyncio
-import tempfile
-import secrets
-import logging
-import json
-import os as _os_for_import_verbosity
-import time
 
 # Metadata debug flag (shared with unified metadata module)
 _META_DEBUG_FLAG = os.getenv("METADATA_DEBUG", "0").lower() in (
@@ -61,33 +62,33 @@ def _dprint(*args, **kwargs):
 # Redirect module print to conditional debug print
 print = _dprint
 
-from app.services import (
-    book_service,
-    import_mapping_service,
-    custom_field_service,
-    reading_log_service,
-)
-from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import (
     CustomFieldDefinition,
     CustomFieldType,
     ImportMappingTemplate,
     ReadingLog,
 )
-from app.utils import normalize_goodreads_value
-from app.utils.user_settings import (
-    get_effective_reading_defaults,
-    get_default_book_format,
+from app.services import (
+    book_service,
+    custom_field_service,
+    import_mapping_service,
+    reading_log_service,
 )
-from app.utils.image_processing import process_image_from_url
-from app.utils.book_utils import get_best_cover_for_book
 from app.services.kuzu_async_helper import run_async
+from app.simplified_book_service import SimplifiedBook, SimplifiedBookService
+from app.utils import normalize_goodreads_value
+from app.utils.book_utils import get_best_cover_for_book
+from app.utils.image_processing import process_image_from_url
 from app.utils.safe_import_manager import (
-    safe_import_manager,
     safe_create_import_job,
-    safe_update_import_job,
     safe_get_import_job,
     safe_get_user_import_jobs,
+    safe_import_manager,
+    safe_update_import_job,
+)
+from app.utils.user_settings import (
+    get_default_book_format,
+    get_effective_reading_defaults,
 )
 
 # DEPRECATED: Global dictionary to store import jobs
@@ -107,8 +108,8 @@ PROGRESS_EMIT_INTERVAL = float(os.getenv("IMPORT_PROGRESS_INTERVAL", "0.35"))
 
 
 def _bounded_list(
-    existing: Optional[List[Any]], addition: Any, max_len: int
-) -> List[Any]:
+    existing: list[Any] | None, addition: Any, max_len: int
+) -> list[Any]:
     items = list(existing or [])
     if addition is None:
         return items[-max_len:] if max_len > 0 else items
@@ -125,9 +126,9 @@ def _update_import_progress(
     user_id: str,
     task_id: str,
     *,
-    updates: Optional[dict] = None,
-    processed_book: Optional[Any] = None,
-    error_message: Optional[dict] = None,
+    updates: dict | None = None,
+    processed_book: Any | None = None,
+    error_message: dict | None = None,
 ) -> bool:
     snapshot = safe_get_import_job(user_id, task_id) or {}
     payload = dict(updates or {})
@@ -144,9 +145,9 @@ def _update_import_progress(
 
 def _sanitize_quick_add_inputs(
     days_raw, pages_raw, minutes_raw, user_id
-) -> Tuple[int, int, int, List[str]]:
+) -> tuple[int, int, int, list[str]]:
     """Normalize quick-add form inputs and return (days, pages, minutes, errors)."""
-    errors: List[str] = []
+    errors: list[str] = []
 
     try:
         days = int(days_raw)
@@ -189,8 +190,8 @@ def _sanitize_quick_add_inputs(
 
 
 async def _ensure_unassigned_reading_log_book(
-    user_id: str, location_service=None, default_location_id: Optional[str] = None
-) -> Optional[str]:
+    user_id: str, location_service=None, default_location_id: str | None = None
+) -> str | None:
     """Ensure the placeholder book for bookless logs exists and return its ID."""
     try:
         existing = book_service.search_books_sync(
@@ -260,7 +261,7 @@ def detect_csv_format(csv_file_path):
     Returns tuple of (format_type, confidence_score)
     """
     try:
-        with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+        with open(csv_file_path, encoding="utf-8") as csvfile:
             # Read first line to get headers
             reader = csv.reader(csvfile)
             headers = next(reader, [])
@@ -711,7 +712,7 @@ def import_books():
             temp_path = temp_file.name
         try:
             # Read CSV headers and first few rows for preview
-            with open(temp_path, "r", encoding="utf-8") as csvfile:
+            with open(temp_path, encoding="utf-8") as csvfile:
                 # Try to detect delimiter with improved logic
                 sample = csvfile.read(1024)
                 csvfile.seek(0)
@@ -892,7 +893,7 @@ def import_books():
                 )
 
                 # Handle None return from stub service
-                template_list: List[Any] = []
+                template_list: list[Any] = []
                 if import_templates and hasattr(import_templates, "__iter__"):
                     template_list = list(import_templates)
 
@@ -1231,7 +1232,7 @@ def import_books_execute():
                             field_type=field_type_enum,
                             is_global=is_global,
                             created_by_user_id=current_user.id,
-                            created_at=datetime.now(timezone.utc),
+                            created_at=datetime.now(UTC),
                             description=f'Created during CSV import for column "{csv_field}"',
                         )
 
@@ -1372,7 +1373,7 @@ def import_books_execute():
         "errors": 0,
         "skipped": 0,  # Initialize skipped counter
         "total": 0,
-        "start_time": datetime.now(timezone.utc).isoformat(),
+        "start_time": datetime.now(UTC).isoformat(),
         "current_book": None,
         "error_messages": [],
         "recent_activity": [],
@@ -1381,7 +1382,7 @@ def import_books_execute():
     # Count total rows
     try:
         if csv_file_path:
-            with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+            with open(csv_file_path, encoding="utf-8") as csvfile:
                 reader = csv.DictReader(csvfile)
                 job_data["total"] = sum(1 for _ in reader)
         else:
@@ -1955,7 +1956,7 @@ def direct_import():
 
         # Count total rows
         try:
-            with open(temp_path, "r", encoding="utf-8") as csvfile:
+            with open(temp_path, encoding="utf-8") as csvfile:
                 import csv
 
                 reader = csv.DictReader(csvfile)
@@ -1979,7 +1980,7 @@ def direct_import():
             "errors": 0,
             "skipped": 0,
             "total": total_rows,
-            "start_time": datetime.now(timezone.utc).isoformat(),
+            "start_time": datetime.now(UTC).isoformat(),
             "current_book": None,
             "error_messages": [],
             "recent_activity": [],
@@ -2237,7 +2238,7 @@ def upload_import():
             "errors": 0,
             "skipped": 0,
             "total": 0,
-            "start_time": datetime.now(timezone.utc).isoformat(),
+            "start_time": datetime.now(UTC).isoformat(),
             "current_book": None,
             "error_messages": [],
             "recent_activity": [],
@@ -2245,7 +2246,7 @@ def upload_import():
 
         # Count total rows
         try:
-            with open(csv_file_path, "r", encoding="utf-8") as f:
+            with open(csv_file_path, encoding="utf-8") as f:
                 reader = csv.reader(f)
                 total_rows = sum(1 for row in reader)
                 job_data["total"] = total_rows - 1  # Subtract header row
@@ -2345,7 +2346,7 @@ async def process_simple_import(import_config):
 
     processed_count = success_count = error_count = skipped_count = merged_count = 0
     last_progress_emit = time.perf_counter()
-    pending_processed_entries: List[dict] = []
+    pending_processed_entries: list[dict] = []
     try:
         # Pre-analyze custom fields
         try:
@@ -2358,8 +2359,8 @@ async def process_simple_import(import_config):
             print(f"⚠️ [PROCESS_SIMPLE] Custom field analysis failed: {ce}")
 
         row_count = 0
-        isbn_candidates: List[str] = []
-        with open(csv_file_path, "r", encoding="utf-8") as fh:
+        isbn_candidates: list[str] = []
+        with open(csv_file_path, encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             for idx, scan_row in enumerate(reader, 1):
                 row_count = idx
@@ -2391,7 +2392,7 @@ async def process_simple_import(import_config):
                     f"[IMPORT][ISBN_COLLECT] collected={len(isbn_candidates)} values={isbn_candidates}"
                 )
             seen = set()
-            uniq: List[str] = []
+            uniq: list[str] = []
             for v in isbn_candidates:
                 if v not in seen:
                     seen.add(v)
@@ -2421,7 +2422,7 @@ async def process_simple_import(import_config):
                     )
 
         source_filename = os.path.basename(csv_file_path)
-        with open(csv_file_path, "r", encoding="utf-8") as fh:
+        with open(csv_file_path, encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             for row_num, row in enumerate(reader, 1):
                 try:
@@ -3248,11 +3249,12 @@ def batch_fetch_book_metadata(isbns):
     if _META_DEBUG_FLAG:
         logger.debug(f"[IMPORT][METADATA][BATCH_START] size={len(isbns)} isbns={isbns}")
 
-    from app.utils.unified_metadata import fetch_unified_by_isbn_detailed
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     import os
-    import time
     import random
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.utils.unified_metadata import fetch_unified_by_isbn_detailed
 
     metadata = {}
     failed_isbns = []
@@ -3552,7 +3554,7 @@ def simple_csv_import():
         errors = []
 
         try:
-            with open(temp_path, "r", encoding="utf-8") as csvfile:
+            with open(temp_path, encoding="utf-8") as csvfile:
                 reader = csv.DictReader(csvfile)
                 rows = list(reader)
 
@@ -3690,7 +3692,7 @@ def simple_upload():
             # For unknown format, try to auto-detect column mappings
             field_mappings = {}
             try:
-                with open(temp_path, "r", encoding="utf-8") as csvfile:
+                with open(temp_path, encoding="utf-8") as csvfile:
                     reader = csv.DictReader(csvfile)
                     headers = reader.fieldnames or []
                     print(f"📋 [SIMPLE_UPLOAD] CSV headers detected: {headers}")
@@ -3728,7 +3730,7 @@ def simple_upload():
 
         # Count total books in CSV for progress tracking
         try:
-            with open(temp_path, "r", encoding="utf-8") as csvfile:
+            with open(temp_path, encoding="utf-8") as csvfile:
                 reader = csv.reader(csvfile)
                 # Skip header
                 next(reader, None)
@@ -3839,7 +3841,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
 
     try:
         # Step 1: Read CSV headers to see what custom fields are mapped
-        with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+        with open(csv_file_path, encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
             csv_headers = reader.fieldnames or []
 
@@ -3864,7 +3866,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
 
                 # Try to sample the CSV to infer field type
                 try:
-                    with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+                    with open(csv_file_path, encoding="utf-8") as csvfile:
                         reader = csv.DictReader(csvfile)
                         sample_rows = []
                         for i, row in enumerate(reader):
@@ -4053,7 +4055,7 @@ def import_reading_history():
         csv_file_path = request.args.get("csv_file_path")
         if csv_file_path and os.path.exists(csv_file_path):
             try:
-                with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+                with open(csv_file_path, encoding="utf-8") as csvfile:
                     sample = csvfile.read(1024)
                     csvfile.seek(0)
                     delimiter = ","
@@ -4111,7 +4113,7 @@ def import_reading_history():
         temp_path = temp_file.name
 
         # Read CSV headers and first few rows for preview
-        with open(temp_path, "r", encoding="utf-8") as csvfile:
+        with open(temp_path, encoding="utf-8") as csvfile:
             # Try to detect delimiter
             sample = csvfile.read(1024)
             csvfile.seek(0)
@@ -4209,7 +4211,7 @@ def import_reading_history_execute():
             "errors": 0,
             "skipped": 0,
             "total": 0,
-            "start_time": datetime.now(timezone.utc).isoformat(),
+            "start_time": datetime.now(UTC).isoformat(),
             "current_book": None,
             "error_messages": [],
             "recent_activity": [],
@@ -4217,7 +4219,7 @@ def import_reading_history_execute():
 
         # Count total rows
         try:
-            with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+            with open(csv_file_path, encoding="utf-8") as csvfile:
                 reader = csv.DictReader(csvfile)
                 job_data["total"] = sum(1 for _ in reader)
         except:
@@ -4319,7 +4321,7 @@ def download_reading_history_template():
 
         current_app.logger.info(f"Using template path: {template_path}")
 
-        with open(template_path, "r", encoding="utf-8") as f:
+        with open(template_path, encoding="utf-8") as f:
             template_content = f.read()
 
         return make_response(
@@ -4475,8 +4477,8 @@ def quick_add_reading_history_execute_bulk():
         return render_template("import_reading_quick_add_result.html", **base_context)
 
     today = date.today()
-    success_dates: List[date] = []
-    failed_dates: List[date] = []
+    success_dates: list[date] = []
+    failed_dates: list[date] = []
 
     for offset in range(1, days + 1):
         log_date = today - timedelta(days=offset)
@@ -4877,9 +4879,9 @@ def resolve_reading_history_books(task_id):
 
 async def _process_final_reading_history_import(task_id, job_data, book_resolutions):
     """Finalize reading history import: create any new books, then create reading logs."""
-    from app.services import book_service, reading_log_service
     from app.domain.models import ReadingLog
-    from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
+    from app.services import book_service, reading_log_service
+    from app.simplified_book_service import SimplifiedBook, SimplifiedBookService
 
     # Lazy import location service only if needed
     try:
@@ -5096,8 +5098,8 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
                                 else None
                             )
                         ),
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
                     )
                     created_log = reading_log_service.create_reading_log_sync(rl)
                     if created_log:
@@ -5320,7 +5322,7 @@ async def process_reading_history_import(import_config):
         total_entries = 0
         processed_entries = 0
 
-        with open(csv_file_path, "r", encoding="utf-8") as csvfile:
+        with open(csv_file_path, encoding="utf-8") as csvfile:
             reader = csv.DictReader(csvfile)
 
             for row_num, row in enumerate(reader, 1):

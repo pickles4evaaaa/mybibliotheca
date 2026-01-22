@@ -5,25 +5,26 @@ KuzuSeriesService. Enhancements (sorting modal, editing, cover upload)
 will be layered on subsequently.
 """
 
-from flask import (
-    Blueprint,
-    render_template,
-    request,
-    abort,
-    redirect,
-    url_for,
-    flash,
-    jsonify,
-)
-from flask_login import login_required, current_user
 import logging
-import uuid
 import time
 import traceback
+import uuid
+from pathlib import Path
+
+from flask import (
+    Blueprint,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+from flask_login import current_user, login_required
 
 from app.services.kuzu_series_service import get_series_service
-from app.utils.image_processing import process_image_from_filestorage, get_covers_dir
-from pathlib import Path
+from app.utils.image_processing import get_covers_dir, process_image_from_filestorage
 
 series_bp = Blueprint("series", __name__, template_folder="../templates")
 

@@ -89,3 +89,12 @@ markers = [
 #     "--cov-report=term-missing",
 #     "--cov-report=html"
 # ]
+
+[tool.ruff.lint]
+extend-select = [
+    # Enable entire ruff rule section
+    "I", # Missing required import (auto-fixable)
+    "UP", # Pyupgrade
+    "ISC",  # Checks for implicit literal string concatenation (auto-fixable)
+    "TC", # Rules around TYPE_CHECKING blocks
+]

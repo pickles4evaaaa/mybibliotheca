@@ -5,16 +5,17 @@ Handles communication with AI providers (OpenAI, Ollama) for book information ex
 
 import base64
 import json
-import requests
-from typing import Dict, Any, Optional
-from flask import current_app
 import os
+from typing import Any
+
+import requests
+from flask import current_app
 
 
 class AIService:
     """Service for AI-powered book information extraction"""
 
-    def __init__(self, config: Dict[str, str]):
+    def __init__(self, config: dict[str, str]):
         self.config = config
         self.provider = config.get("AI_PROVIDER", "openai")
         self.timeout = int(config.get("AI_TIMEOUT", "30"))
@@ -34,7 +35,7 @@ class AIService:
 
     def extract_book_info_from_image(
         self, image_data: bytes, filename: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Extract book information from image using AI
 
@@ -110,7 +111,7 @@ class AIService:
             )
 
             if os.path.exists(prompt_path):
-                with open(prompt_path, "r", encoding="utf-8") as f:
+                with open(prompt_path, encoding="utf-8") as f:
                     template_content = f.read()
 
                 # Try to use pystache for templating
@@ -155,7 +156,7 @@ class AIService:
 
     def _extract_with_openai(
         self, image_data: bytes, prompt: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Extract book info using OpenAI Vision API"""
         try:
             # Encode image to base64
@@ -230,7 +231,7 @@ class AIService:
 
     def _extract_with_ollama(
         self, image_data: bytes, prompt: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Extract book info using Ollama local API"""
         try:
             # Encode image to base64
@@ -306,7 +307,7 @@ class AIService:
             current_app.logger.error("Ollama API error traceback: ", exc_info=True)
             return None
 
-    def _parse_ai_response(self, content: str) -> Optional[Dict[str, Any]]:
+    def _parse_ai_response(self, content: str) -> dict[str, Any] | None:
         """Parse AI response and extract JSON data"""
         try:
             # Try to find JSON in the response
@@ -347,7 +348,7 @@ class AIService:
             current_app.logger.error(f"Error parsing AI response: {e}")
             return None
 
-    def test_connection(self) -> Dict[str, Any]:
+    def test_connection(self) -> dict[str, Any]:
         """Test connection to the AI service"""
         try:
             if self.provider == "openai":
@@ -362,7 +363,7 @@ class AIService:
         except Exception as e:
             return {"success": False, "message": f"Connection test failed: {str(e)}"}
 
-    def _test_openai_connection(self) -> Dict[str, Any]:
+    def _test_openai_connection(self) -> dict[str, Any]:
         """Test OpenAI API connection"""
         try:
             headers = {
@@ -392,7 +393,7 @@ class AIService:
         except Exception as e:
             return {"success": False, "message": f"Connection error: {str(e)}"}
 
-    def _test_ollama_connection(self) -> Dict[str, Any]:
+    def _test_ollama_connection(self) -> dict[str, Any]:
         """Test Ollama API connection and fetch available models"""
         try:
             base_url = self.config.get("OLLAMA_BASE_URL", "http://localhost:11434")

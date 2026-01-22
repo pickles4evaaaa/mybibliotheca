@@ -6,9 +6,10 @@ and people enrichment pipelines.
 """
 
 from __future__ import annotations
-from typing import Dict, Any, Optional
-from pathlib import Path
+
 import json
+from pathlib import Path
+from typing import Any
 
 DEFAULT_BOOK_FIELDS = [
     "title",
@@ -43,9 +44,9 @@ DEFAULT_PERSON_FIELDS = [
 ]
 
 
-def _defaults_for(entity: str) -> Dict[str, Dict[str, str]]:
+def _defaults_for(entity: str) -> dict[str, dict[str, str]]:
     fields = DEFAULT_BOOK_FIELDS if entity == "books" else DEFAULT_PERSON_FIELDS
-    data: Dict[str, Dict[str, str]] = {}
+    data: dict[str, dict[str, str]] = {}
     for f in fields:
         data[f] = {"mode": "both", "default": "google"}
     if entity == "people":
@@ -66,7 +67,7 @@ def _defaults_for(entity: str) -> Dict[str, Dict[str, str]]:
 
 # Provider availability map: which providers can supply each field.
 # Used by UI to limit choices and by save() to coerce invalid modes.
-BOOK_FIELD_PROVIDERS: Dict[str, set] = {
+BOOK_FIELD_PROVIDERS: dict[str, set] = {
     "google_books_id": {"google"},
     "openlibrary_id": {"openlibrary"},
     "average_rating": {"google"},
@@ -86,7 +87,7 @@ BOOK_FIELD_PROVIDERS: Dict[str, set] = {
     "series": {"google", "openlibrary"},
 }
 
-PERSON_FIELD_PROVIDERS: Dict[str, set] = {
+PERSON_FIELD_PROVIDERS: dict[str, set] = {
     # Currently only OpenLibrary supplies people data
     "name": {"openlibrary"},
     "birth_date": {"openlibrary"},
@@ -104,14 +105,14 @@ PERSON_FIELD_PROVIDERS: Dict[str, set] = {
 class MetadataSettingsCache:
     def __init__(self, data_dir: str):
         self.path = Path(data_dir) / "metadata_settings.json"
-        self._cache: Optional[Dict[str, Any]] = None
+        self._cache: dict[str, Any] | None = None
 
-    def load(self) -> Dict[str, Any]:
+    def load(self) -> dict[str, Any]:
         if self._cache is not None:
             return self._cache
         if self.path.exists():
             try:
-                with open(self.path, "r") as f:
+                with open(self.path) as f:
                     data = json.load(f)
             except Exception:
                 data = {}
@@ -130,7 +131,7 @@ class MetadataSettingsCache:
         self._cache = {"books": base_books, "people": base_people}
         return self._cache
 
-    def save(self, incoming: Dict[str, Any]) -> bool:
+    def save(self, incoming: dict[str, Any]) -> bool:
         try:
             current = self.load()
             for entity in ["books", "people"]:
@@ -161,7 +162,7 @@ class MetadataSettingsCache:
                             if "google" in allowed_providers
                             else next(iter(allowed_providers))
                         )
-                    entry: Dict[str, Any] = {"mode": mode}
+                    entry: dict[str, Any] = {"mode": mode}
                     if mode == "both":
                         default = str(cfg.get("default", "google")).lower()
                         if default not in ("google", "openlibrary"):
@@ -177,7 +178,7 @@ class MetadataSettingsCache:
             return False
 
 
-_global_cache: Optional[MetadataSettingsCache] = None
+_global_cache: MetadataSettingsCache | None = None
 
 
 def _get_cache() -> MetadataSettingsCache:
@@ -193,15 +194,15 @@ def _get_cache() -> MetadataSettingsCache:
     return _global_cache
 
 
-def get_metadata_settings() -> Dict[str, Any]:
+def get_metadata_settings() -> dict[str, Any]:
     return _get_cache().load()
 
 
-def save_metadata_settings(data: Dict[str, Any]) -> bool:
+def save_metadata_settings(data: dict[str, Any]) -> bool:
     return _get_cache().save(data)
 
 
-def get_field_policy(entity: str, field: str) -> Dict[str, str]:
+def get_field_policy(entity: str, field: str) -> dict[str, str]:
     settings = get_metadata_settings()
     entity_key = "books" if entity == "books" else "people"
     return settings.get(entity_key, {}).get(

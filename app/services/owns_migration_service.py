@@ -16,11 +16,11 @@ Non-destructive: OWNS is not dropped here; separate maintenance task can drop it
 from __future__ import annotations
 
 import json
-from typing import Dict, Any
 import logging
+import os
+from typing import Any
 
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
-import os
 from .personal_metadata_service import personal_metadata_service
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ def _mark_done():
         logger.warning(f"Failed to mark OWNS migration completion: {e}")
 
 
-def migrate_owns_to_personal(limit: int | None = None) -> Dict[str, Any]:
+def migrate_owns_to_personal(limit: int | None = None) -> dict[str, Any]:
     # Fast path: if OWNS schema disabled skip entirely
     if os.getenv("ENABLE_OWNS_SCHEMA", "false").lower() not in ("1", "true", "yes"):
         return {"status": "skipped", "reason": "owns_schema_disabled"}

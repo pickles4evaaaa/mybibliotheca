@@ -9,18 +9,18 @@ improved thread safety and connection management.
 """
 
 import json
-import traceback
+import logging
 import os
-from typing import List, Optional, Dict, Any
-from datetime import datetime, date
+import traceback
+from datetime import date, datetime
+from typing import Any
 
-from ..domain.models import Book, Person, BookContribution, ContributionType
-from ..infrastructure.kuzu_repositories import KuzuUserRepository
+from ..debug_system import debug_log
+from ..domain.models import Book, BookContribution, ContributionType, Person
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
+from ..infrastructure.kuzu_repositories import KuzuUserRepository
 from .kuzu_async_helper import run_async
 from .kuzu_book_service import KuzuBookService
-from ..debug_system import debug_log
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def _safe_get_row_value(row: Any, index: int) -> Any:
             return None
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
     """
@@ -84,7 +84,7 @@ class KuzuRelationshipService:
     improved thread safety and connection management.
     """
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         """
         Initialize relationship service with thread-safe database access.
 
@@ -156,10 +156,10 @@ class KuzuRelationshipService:
 
     def _create_enriched_book(
         self,
-        book_data: Dict[str, Any],
-        relationship_data: Dict[str, Any],
-        locations_data: Optional[List[Dict[str, Any]]] = None,
-        personal_meta: Optional[Dict[str, Any]] = None,
+        book_data: dict[str, Any],
+        relationship_data: dict[str, Any],
+        locations_data: list[dict[str, Any]] | None = None,
+        personal_meta: dict[str, Any] | None = None,
     ) -> Book:
         """Create an enriched Book object with user-specific attributes.
 
@@ -174,7 +174,7 @@ class KuzuRelationshipService:
         self._load_contributors_for_book(book)
 
         # Add user-specific attributes dynamically using setattr
-        combined: Dict[str, Any] = {}
+        combined: dict[str, Any] = {}
         # Legacy OWNS data (reading_status, ownership_status, user_rating, etc.)
         combined.update(relationship_data or {})
         # Personal metadata (HAS_PERSONAL_METADATA) stores json blob in personal_custom_fields; flatten known fields
@@ -371,7 +371,7 @@ class KuzuRelationshipService:
 
     async def get_books_for_user(
         self, user_id: str, limit: int = 50, offset: int = 0
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get all books for a user with relationship data and locations (universal library model)."""
         try:
             # Universal library model: Get ALL books with their STORED_AT locations
@@ -413,7 +413,7 @@ class KuzuRelationshipService:
             traceback.print_exc()
             return []
 
-    async def get_recently_added_books(self, limit: int = 10) -> List[Book]:
+    async def get_recently_added_books(self, limit: int = 10) -> list[Book]:
         """Get the most recently created books (global scope)."""
         try:
             query = """
@@ -435,7 +435,7 @@ class KuzuRelationshipService:
             result = safe_execute_kuzu_query(query, {"limit": limit})
             rows = _convert_query_result_to_list(result)
 
-            books: List[Book] = []
+            books: list[Book] = []
             for row in rows:
                 book_data = row.get("col_0")
                 if not book_data:
@@ -446,7 +446,7 @@ class KuzuRelationshipService:
                     for loc in locations_data
                     if loc and loc.get("id") and loc.get("name")
                 ]
-                relationship_data: Dict[str, Any] = {}
+                relationship_data: dict[str, Any] = {}
                 book = self._create_enriched_book(
                     book_data, relationship_data, valid_locations
                 )
@@ -460,7 +460,7 @@ class KuzuRelationshipService:
 
     async def get_book_by_id_for_user(
         self, book_id: str, user_id: str
-    ) -> Optional[Book]:
+    ) -> Book | None:
         """Get a specific book for a user with relationship data (universal library model)."""
         try:
             # Universal library model: Get ANY book with its STORED_AT locations
@@ -509,8 +509,8 @@ class KuzuRelationshipService:
             return None
 
     def _load_custom_metadata(
-        self, relationship_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, relationship_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Load custom metadata from relationship data."""
         try:
             custom_metadata = {}
@@ -541,8 +541,8 @@ class KuzuRelationshipService:
         book_id: str,
         reading_status: str = "library_only",
         ownership_status: str = "owned",
-        locations: Optional[List[str]] = None,
-        custom_metadata: Optional[Dict[str, Any]] = None,
+        locations: list[str] | None = None,
+        custom_metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Add a book to user's library with custom metadata support (sync version).
 
@@ -558,7 +558,7 @@ class KuzuRelationshipService:
         return True  # Always return success to avoid breaking existing code
 
     async def update_user_book_relationship(
-        self, user_id: str, book_id: str, updates: Dict[str, Any]
+        self, user_id: str, book_id: str, updates: dict[str, Any]
     ) -> bool:
         """Persist personal (user-specific) fields using HAS_PERSONAL_METADATA.
 
@@ -571,7 +571,7 @@ class KuzuRelationshipService:
             from .personal_metadata_service import personal_metadata_service
 
             # Map legacy keys
-            mapped: Dict[str, Any] = {}
+            mapped: dict[str, Any] = {}
             for k, v in updates.items():
                 if k == "review":
                     mapped["user_review"] = v
@@ -675,7 +675,7 @@ class KuzuRelationshipService:
 
     async def get_all_books_with_user_overlay(
         self, user_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get all books with user-specific overlay data (universal library model)."""
         try:
             # Universal library base: get ALL books with their STORED_AT locations
@@ -752,7 +752,7 @@ class KuzuRelationshipService:
             traceback.print_exc()
             return []
 
-    def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
+    def get_book_by_uid_sync(self, uid: str, user_id: str) -> Book | None:
         """Get a book by UID with user overlay data.
 
         Attempts to pull personal data from OWNS relationship if present; falls
@@ -838,7 +838,7 @@ class KuzuRelationshipService:
 
     def get_user_book_sync(
         self, user_id: str, book_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get user's book by book ID - sync wrapper."""
         result = self.get_book_by_uid_sync(book_id, user_id)
         if result:
@@ -862,7 +862,7 @@ class KuzuRelationshipService:
 
     async def get_recently_added_want_to_read_books(
         self, user_id: str, limit: int = 5
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get books recently added to the user's want-to-read list.
 
         NOTE: In universal library mode, this method is deprecated.
@@ -878,22 +878,22 @@ class KuzuRelationshipService:
     # Sync wrappers for backward compatibility
     def get_books_for_user_sync(
         self, user_id: str, limit: int = 50, offset: int = 0
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Sync wrapper for get_books_for_user."""
         return run_async(self.get_books_for_user(user_id, limit, offset))
 
-    def get_recently_added_books_sync(self, limit: int = 10) -> List[Book]:
+    def get_recently_added_books_sync(self, limit: int = 10) -> list[Book]:
         """Sync wrapper for get_recently_added_books."""
         return run_async(self.get_recently_added_books(limit))
 
     def get_book_by_id_for_user_sync(
         self, book_id: str, user_id: str
-    ) -> Optional[Book]:
+    ) -> Book | None:
         """Sync wrapper for get_book_by_id_for_user."""
         return run_async(self.get_book_by_id_for_user(book_id, user_id))
 
     def update_user_book_relationship_sync(
-        self, user_id: str, book_id: str, updates: Dict[str, Any]
+        self, user_id: str, book_id: str, updates: dict[str, Any]
     ) -> bool:
         """Sync wrapper for update_user_book_relationship."""
         return run_async(self.update_user_book_relationship(user_id, book_id, updates))
@@ -904,20 +904,20 @@ class KuzuRelationshipService:
 
     def get_all_books_with_user_overlay_sync(
         self, user_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Sync wrapper for get_all_books_with_user_overlay."""
         return run_async(self.get_all_books_with_user_overlay(user_id))
 
     def get_recently_added_want_to_read_books_sync(
         self, user_id: str, limit: int = 5
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Sync wrapper for get_recently_added_want_to_read_books."""
         return run_async(self.get_recently_added_want_to_read_books(user_id, limit))
 
     # ---------------- Pagination helpers for library -----------------
     async def get_books_with_user_overlay_paginated(
         self, user_id: str, limit: int, offset: int, sort: str = "title_asc"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch a page of books with personal overlay.
 
         Supports basic sorting by title asc/desc. More complex sorts (author) are handled client-side.
@@ -942,7 +942,7 @@ class KuzuRelationshipService:
                 query, {"user_id": user_id, "offset": offset, "limit": limit}
             )
             rows = _convert_query_result_to_list(result)
-            books: List[Dict[str, Any]] = []
+            books: list[dict[str, Any]] = []
             for row in rows:
                 try:
                     book_data = row.get("col_0")
@@ -974,7 +974,7 @@ class KuzuRelationshipService:
 
     def get_books_with_user_overlay_paginated_sync(
         self, user_id: str, limit: int, offset: int, sort: str = "title_asc"
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         return run_async(
             self.get_books_with_user_overlay_paginated(user_id, limit, offset, sort)
         )
@@ -991,13 +991,13 @@ class KuzuRelationshipService:
             logger.warning(f"[RELATIONSHIP_SERVICE] total count error: {e}")
         return 0
 
-    def get_library_status_counts_sync(self, user_id: str) -> Dict[str, int]:
+    def get_library_status_counts_sync(self, user_id: str) -> dict[str, int]:
         """Compute global counts aligned with library filters from user overlay data.
 
         Uses get_all_books_with_user_overlay_sync so that books without a personal
         record remain with empty reading_status (user has not set a personal status).
         """
-        counts: Dict[str, int] = {
+        counts: dict[str, int] = {
             "read": 0,
             "currently_reading": 0,
             "on_hold": 0,

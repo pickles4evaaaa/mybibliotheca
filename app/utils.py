@@ -1,9 +1,10 @@
 import calendar
-from PIL import Image, ImageDraw, ImageFont
-from io import BytesIO
-import requests
 import os
+from io import BytesIO
+
+import requests
 from flask import current_app
+from PIL import Image, ImageDraw, ImageFont
 
 
 def fetch_book_data(isbn):

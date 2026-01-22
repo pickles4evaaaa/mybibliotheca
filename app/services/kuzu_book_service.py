@@ -8,19 +8,20 @@ This service has been migrated to use the SafeKuzuManager pattern for
 improved thread safety and connection management.
 """
 
-import uuid
-import traceback
-from typing import List, Optional, Dict, Any
-from datetime import datetime, timezone
+import logging
 import time
+import traceback
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
 from flask import current_app
 
 from ..domain.models import Book
-from ..infrastructure.kuzu_repositories import KuzuBookRepository
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
+from ..infrastructure.kuzu_repositories import KuzuBookRepository
+from ..utils.simple_cache import cache_delete, cached
 from .kuzu_async_helper import run_async
-from ..utils.simple_cache import cached, cache_delete
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def _safe_get_row_value(row: Any, index: int) -> Any:
             return None
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -103,7 +104,7 @@ class KuzuBookService:
     improved thread safety and connection management.
     """
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         """
         Initialize book service with thread-safe database access.
 
@@ -113,7 +114,7 @@ class KuzuBookService:
         self.user_id = user_id or "book_service"
         self.book_repo = KuzuBookRepository()
 
-    def _dict_to_book(self, book_data: Dict[str, Any]) -> Book:
+    def _dict_to_book(self, book_data: dict[str, Any]) -> Book:
         """Convert dictionary data to Book object."""
         if isinstance(book_data, Book):
             return book_data
@@ -138,8 +139,8 @@ class KuzuBookService:
             rating_count=book_data.get("rating_count"),
             media_type=book_data.get("media_type"),
             custom_metadata=book_data.get("custom_metadata", {}),
-            created_at=book_data.get("created_at", datetime.now(timezone.utc)),
-            updated_at=book_data.get("updated_at", datetime.now(timezone.utc)),
+            created_at=book_data.get("created_at", datetime.now(UTC)),
+            updated_at=book_data.get("updated_at", datetime.now(UTC)),
         )
 
         # Handle series fields - the database stores series as a string, but the model expects a Series object
@@ -166,8 +167,9 @@ class KuzuBookService:
 
             contributors_data = await self.book_repo.get_book_authors(book.id)
 
-            from ..domain.models import Person, BookContribution, ContributionType
             import logging
+
+            from ..domain.models import BookContribution, ContributionType, Person
 
             logger = logging.getLogger(__name__)
 
@@ -225,8 +227,9 @@ class KuzuBookService:
             results = safe_execute_kuzu_query(query, {"book_id": book.id})
             results = _convert_query_result_to_list(results)
 
-            from ..domain.models import Person, BookContribution, ContributionType
             import logging
+
+            from ..domain.models import BookContribution, ContributionType, Person
 
             logger = logging.getLogger(__name__)
 
@@ -289,8 +292,9 @@ class KuzuBookService:
             results = safe_execute_kuzu_query(query, {"book_id": book.id})
             results = _convert_query_result_to_list(results)
 
-            from ..domain.models import Category
             import logging
+
+            from ..domain.models import Category
 
             logger = logging.getLogger(__name__)
 
@@ -310,8 +314,8 @@ class KuzuBookService:
                         aliases=result.get("col_5", []),
                         book_count=result.get("col_9", 0),
                         user_book_count=result.get("col_10", 0),
-                        created_at=result.get("col_11") or datetime.now(timezone.utc),
-                        updated_at=result.get("col_12") or datetime.now(timezone.utc),
+                        created_at=result.get("col_11") or datetime.now(UTC),
+                        updated_at=result.get("col_12") or datetime.now(UTC),
                     )
                     categories.append(category)
 
@@ -341,8 +345,9 @@ class KuzuBookService:
             results = safe_execute_kuzu_query(query, {"book_id": book.id})
             results = _convert_query_result_to_list(results)
 
-            from ..domain.models import Publisher
             import logging
+
+            from ..domain.models import Publisher
 
             logger = logging.getLogger(__name__)
 
@@ -392,8 +397,8 @@ class KuzuBookService:
             t_id = time.perf_counter()
 
             # Set timestamps
-            domain_book.created_at = datetime.now(timezone.utc)
-            domain_book.updated_at = datetime.now(timezone.utc)
+            domain_book.created_at = datetime.now(UTC)
+            domain_book.updated_at = datetime.now(UTC)
             t_ts = time.perf_counter()
 
             # Create the book in Kuzu
@@ -416,7 +421,7 @@ class KuzuBookService:
             raise
 
     @cached(ttl_seconds=300, key_builder=_book_id_key)
-    async def get_book_by_id(self, book_id: str) -> Optional[Book]:
+    async def get_book_by_id(self, book_id: str) -> Book | None:
         """Get a book by ID."""
         try:
             book_data = await self.book_repo.get_by_id(book_id)
@@ -427,8 +432,8 @@ class KuzuBookService:
             return None
 
     async def update_book(
-        self, book_id: str, updates: Dict[str, Any]
-    ) -> Optional[Book]:
+        self, book_id: str, updates: dict[str, Any]
+    ) -> Book | None:
         """Update a book's basic fields."""
         try:
             # Get current book data
@@ -455,7 +460,7 @@ class KuzuBookService:
                 if hasattr(book, field):
                     setattr(book, field, value)
 
-            book.updated_at = datetime.now(timezone.utc)
+            book.updated_at = datetime.now(UTC)
 
             # Prepare update data - ONLY include fields that were actually updated
             book_dict = {}
@@ -603,7 +608,7 @@ class KuzuBookService:
             return False
 
     @cached(ttl_seconds=300, key_builder=_book_isbn_key)
-    async def get_book_by_isbn(self, isbn: str) -> Optional[Book]:
+    async def get_book_by_isbn(self, isbn: str) -> Book | None:
         """Get a book by ISBN (13 or 10)."""
         try:
             # Query for book by ISBN13 or ISBN10
@@ -633,7 +638,7 @@ class KuzuBookService:
         except Exception:
             return None
 
-    def find_or_create_book_sync(self, domain_book: Book) -> Optional[Book]:
+    def find_or_create_book_sync(self, domain_book: Book) -> Book | None:
         """Find an existing book or create a new one (sync version)."""
         try:
             # First try to find existing book by ISBN
@@ -702,11 +707,11 @@ class KuzuBookService:
         return book
 
     @cached(ttl_seconds=300, key_builder=_book_id_key)
-    def get_book_by_id_sync(self, book_id: str) -> Optional[Book]:
+    def get_book_by_id_sync(self, book_id: str) -> Book | None:
         """Sync wrapper for get_book_by_id."""
         return run_async(self.get_book_by_id(book_id))
 
-    def update_book_sync(self, book_id: str, updates: Dict[str, Any]) -> Optional[Book]:
+    def update_book_sync(self, book_id: str, updates: dict[str, Any]) -> Book | None:
         """Sync wrapper for update_book."""
         return run_async(self.update_book(book_id, updates))
 
@@ -715,6 +720,6 @@ class KuzuBookService:
         return run_async(self.delete_book(book_id))
 
     @cached(ttl_seconds=300, key_builder=_book_isbn_key)
-    def get_book_by_isbn_sync(self, isbn: str) -> Optional[Book]:
+    def get_book_by_isbn_sync(self, isbn: str) -> Book | None:
         """Sync wrapper for get_book_by_isbn."""
         return run_async(self.get_book_by_isbn(isbn))

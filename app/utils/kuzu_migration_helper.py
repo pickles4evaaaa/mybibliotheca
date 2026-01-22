@@ -10,8 +10,8 @@ providing the safety guarantees of the new system.
 
 import functools
 import logging
-from typing import Optional, Dict, Any
 from contextlib import contextmanager
+from typing import Any
 
 from .safe_kuzu_manager import (
     get_safe_kuzu_manager,
@@ -39,7 +39,7 @@ class BackwardCompatibleKuzuDB:
     thread safety benefits.
     """
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         self.user_id = user_id or "legacy_user"
         self._manager = get_safe_kuzu_manager()
 
@@ -52,7 +52,7 @@ class BackwardCompatibleKuzuDB:
         deprecated_warning("KuzuGraphDB.connect()", "safe_get_connection()")
         return safe_get_connection(user_id=self.user_id, operation="legacy_connect")
 
-    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+    def execute_query(self, query: str, params: dict[str, Any] | None = None):
         """
         Backward compatibility method for query execution.
 
@@ -72,11 +72,11 @@ class BackwardCompatibleKuzuStorage:
     with thread-safe database access.
     """
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         self.user_id = user_id or "legacy_storage_user"
         self._manager = get_safe_kuzu_manager()
 
-    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+    def execute_query(self, query: str, params: dict[str, Any] | None = None):
         """Execute query with backward compatibility."""
         deprecated_warning("KuzuGraphStorage.execute_query()", "safe_execute_query()")
         return safe_execute_query(
@@ -97,11 +97,11 @@ class BackwardCompatibleKuzuStorage:
 
 
 # Backward compatibility functions that replace the dangerous global singletons
-_legacy_database_instance: Optional[BackwardCompatibleKuzuDB] = None
-_legacy_storage_instance: Optional[BackwardCompatibleKuzuStorage] = None
+_legacy_database_instance: BackwardCompatibleKuzuDB | None = None
+_legacy_storage_instance: BackwardCompatibleKuzuStorage | None = None
 
 
-def get_kuzu_database_safe(user_id: Optional[str] = None) -> BackwardCompatibleKuzuDB:
+def get_kuzu_database_safe(user_id: str | None = None) -> BackwardCompatibleKuzuDB:
     """
     Thread-safe replacement for get_kuzu_database().
 
@@ -133,7 +133,7 @@ def get_kuzu_database_safe(user_id: Optional[str] = None) -> BackwardCompatibleK
 
 
 def get_graph_storage_safe(
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
 ) -> BackwardCompatibleKuzuStorage:
     """
     Thread-safe replacement for get_graph_storage().
@@ -162,7 +162,7 @@ def get_graph_storage_safe(
     return _legacy_storage_instance
 
 
-def get_kuzu_connection_safe(user_id: Optional[str] = None) -> BackwardCompatibleKuzuDB:
+def get_kuzu_connection_safe(user_id: str | None = None) -> BackwardCompatibleKuzuDB:
     """
     Thread-safe replacement for get_kuzu_connection().
 
@@ -225,7 +225,7 @@ def with_safe_kuzu(operation_name: str = "unknown"):
 # Context manager for bulk operations
 @contextmanager
 def safe_kuzu_transaction(
-    user_id: Optional[str] = None, operation: str = "transaction"
+    user_id: str | None = None, operation: str = "transaction"
 ):
     """
     Context manager for safe KuzuDB transactions.
@@ -251,7 +251,7 @@ def safe_kuzu_transaction(
 
     with safe_get_connection(user_id=user_id, operation=operation) as conn:
 
-        def execute_in_transaction(query: str, params: Optional[Dict[str, Any]] = None):
+        def execute_in_transaction(query: str, params: dict[str, Any] | None = None):
             """Execute query within the transaction context."""
             return conn.execute(query, params or {})
 
@@ -264,7 +264,7 @@ def safe_kuzu_transaction(
 
 
 # Health check functions for monitoring migration progress
-def check_migration_status() -> Dict[str, Any]:
+def check_migration_status() -> dict[str, Any]:
     """
     Check the status of migration from dangerous global singletons to safe KuzuDB.
 

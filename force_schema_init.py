@@ -5,9 +5,9 @@ Force KuzuDB schema initialization.
 This script forces a complete schema initialization to fix missing table issues.
 """
 
+import logging
 import os
 import sys
-import logging
 from typing import Any
 
 # Add the app directory to the Python path
@@ -41,7 +41,9 @@ def force_schema_init():
         try:
             logger.info("Running schema preflight (additive upgrade)...")
             # Importing runs preflight as a side-effect; force run explicitly too
-            from app.startup.schema_preflight import run_schema_preflight  # type: ignore
+            from app.startup.schema_preflight import (
+                run_schema_preflight,  # type: ignore
+            )
 
             # Allow forcing even if marker says up-to-date
             os.environ["SCHEMA_PREFLIGHT_FORCE"] = "true"

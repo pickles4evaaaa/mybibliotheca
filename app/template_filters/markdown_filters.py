@@ -3,6 +3,7 @@ Template filters for markdown rendering.
 """
 
 import logging
+
 import mistune
 from markupsafe import Markup, escape
 

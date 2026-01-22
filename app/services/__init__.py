@@ -13,16 +13,16 @@ This package contains decomposed service classes for better maintainability:
 
 try:
     from .kuzu_async_helper import KuzuAsyncHelper, run_async
-    from .kuzu_service_facade import KuzuServiceFacade
-    from .kuzu_user_service import KuzuUserService
     from .kuzu_custom_field_service import KuzuCustomFieldService
     from .kuzu_import_mapping_service import KuzuImportMappingService
     from .kuzu_person_service import KuzuPersonService
     from .kuzu_reading_log_service import KuzuReadingLogService
     from .kuzu_series_service import get_series_service
+    from .kuzu_service_facade import KuzuServiceFacade
+    from .kuzu_user_service import KuzuUserService
     from .opds_probe_service import OPDSProbeService
-    from .opds_sync_service import OPDSSyncService
     from .opds_sync_runner import ensure_opds_sync_runner, get_opds_sync_runner
+    from .opds_sync_service import OPDSSyncService
 
     # For backward compatibility, expose the main service
     KuzuBookService = KuzuServiceFacade

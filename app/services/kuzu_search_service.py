@@ -10,8 +10,8 @@ improved thread safety and connection management.
 
 import re
 import traceback
-from typing import List, Optional, Dict, Any
 from datetime import date, timedelta
+from typing import Any
 
 from ..domain.models import Book
 
@@ -30,16 +30,17 @@ def _safe_get_row_value(row: Any, index: int) -> Any:
             return None
 
 
-from ..infrastructure.kuzu_repositories import KuzuUserRepository
+import logging
+
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
+from ..infrastructure.kuzu_repositories import KuzuUserRepository
 from .kuzu_async_helper import run_async
 from .kuzu_relationship_service import KuzuRelationshipService
-import logging
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -93,7 +94,7 @@ class KuzuSearchService:
     improved thread safety and connection management.
     """
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         """
         Initialize search service with thread-safe database access.
 
@@ -108,7 +109,7 @@ class KuzuSearchService:
 
     async def search_books(
         self, query: str, user_id: str, limit: int = 50
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Search books for a user."""
         try:
             # Get all user books first
@@ -123,7 +124,7 @@ class KuzuSearchService:
                 # If the query is empty or whitespace, return recent slice of library
                 return user_books[:limit]
 
-            def _expand_name_segments(name: str) -> List[str]:
+            def _expand_name_segments(name: str) -> list[str]:
                 cleaned = re.sub(r"[\s,]+", " ", name).strip().lower()
                 if not cleaned:
                     return []
@@ -131,10 +132,10 @@ class KuzuSearchService:
                 # Preserve the full name first for contains matches, followed by individual parts
                 return [cleaned] + segments
 
-            filtered_books: List[Book] = []
+            filtered_books: list[Book] = []
 
             for book in user_books:
-                search_blobs: List[str] = []
+                search_blobs: list[str] = []
 
                 if getattr(book, "title", None):
                     search_blobs.append(book.title.lower())
@@ -196,7 +197,7 @@ class KuzuSearchService:
 
     async def search_books_global(
         self, query: str, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Search all books in the system (not user-specific)."""
         try:
             query_lower = query.lower()
@@ -237,7 +238,7 @@ class KuzuSearchService:
 
     async def get_book_by_isbn_for_user(
         self, isbn: str, user_id: str
-    ) -> Optional[Book]:
+    ) -> Book | None:
         """Get a book by ISBN for a specific user."""
         try:
             books = await self.relationship_service.get_books_for_user(
@@ -255,7 +256,7 @@ class KuzuSearchService:
 
     async def get_books_with_sharing_users(
         self, days_back: int = 30, limit: int = 20
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Get books from users who share reading activity, finished in the last N days."""
         try:
             # Get all users who share reading activity
@@ -300,7 +301,7 @@ class KuzuSearchService:
             traceback.print_exc()
             return []
 
-    async def get_currently_reading_shared(self, limit: int = 20) -> List[Book]:
+    async def get_currently_reading_shared(self, limit: int = 20) -> list[Book]:
         """Get currently reading books from users who share current reading."""
         try:
             # Get all users who share current reading
@@ -348,7 +349,7 @@ class KuzuSearchService:
 
     async def get_recommended_books(
         self, user_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get recommended books for a user based on their reading history."""
         try:
             # This is a simple recommendation system - can be enhanced later
@@ -371,8 +372,8 @@ class KuzuSearchService:
             return []
 
     async def search_by_filters(
-        self, user_id: str, filters: Dict[str, Any], limit: int = 50
-    ) -> List[Book]:
+        self, user_id: str, filters: dict[str, Any], limit: int = 50
+    ) -> list[Book]:
         """Search books with advanced filters."""
         try:
             # Get all user books first
@@ -436,38 +437,38 @@ class KuzuSearchService:
     # Sync wrappers for backward compatibility
     def search_books_sync(
         self, query: str, user_id: str, limit: int = 50
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Sync wrapper for search_books."""
         return run_async(self.search_books(query, user_id, limit))
 
     def search_books_global_sync(
         self, query: str, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Sync wrapper for search_books_global."""
         return run_async(self.search_books_global(query, limit))
 
-    def get_book_by_isbn_for_user_sync(self, isbn: str, user_id: str) -> Optional[Book]:
+    def get_book_by_isbn_for_user_sync(self, isbn: str, user_id: str) -> Book | None:
         """Sync wrapper for get_book_by_isbn_for_user."""
         return run_async(self.get_book_by_isbn_for_user(isbn, user_id))
 
     def get_books_with_sharing_users_sync(
         self, days_back: int = 30, limit: int = 20
-    ) -> List[Book]:
+    ) -> list[Book]:
         """Sync wrapper for get_books_with_sharing_users."""
         return run_async(self.get_books_with_sharing_users(days_back, limit))
 
-    def get_currently_reading_shared_sync(self, limit: int = 20) -> List[Book]:
+    def get_currently_reading_shared_sync(self, limit: int = 20) -> list[Book]:
         """Sync wrapper for get_currently_reading_shared."""
         return run_async(self.get_currently_reading_shared(limit))
 
     def get_recommended_books_sync(
         self, user_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Sync wrapper for get_recommended_books."""
         return run_async(self.get_recommended_books(user_id, limit))
 
     def search_by_filters_sync(
-        self, user_id: str, filters: Dict[str, Any], limit: int = 50
-    ) -> List[Book]:
+        self, user_id: str, filters: dict[str, Any], limit: int = 50
+    ) -> list[Book]:
         """Sync wrapper for search_by_filters."""
         return run_async(self.search_by_filters(user_id, filters, limit))

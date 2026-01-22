@@ -10,7 +10,6 @@ in isolation with a fresh temporary database path.
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
 import logging
 
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
@@ -18,7 +17,7 @@ from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 logger = logging.getLogger(__name__)
 
 # Columns the tests (and upcoming features) expect to exist on Book.
-_BOOK_COLUMNS: List[Tuple[str, str]] = [
+_BOOK_COLUMNS: list[tuple[str, str]] = [
     ("audiobookshelf_id", "STRING"),  # external source id
     ("audio_duration_ms", "INT64"),  # precise duration in ms
     ("media_type", "STRING"),  # print/ebook/audiobook/etc (legacy naming)
@@ -40,7 +39,7 @@ def _column_exists(conn, table: str, column: str) -> bool:
         return True  # ambiguous -> assume exists to stay safe
 
 
-def _detect_missing_book_columns(conn) -> List[Tuple[str, str]]:
+def _detect_missing_book_columns(conn) -> list[tuple[str, str]]:
     missing = []
     for col, typ in _BOOK_COLUMNS:
         if not _column_exists(conn, "Book", col):
@@ -48,9 +47,9 @@ def _detect_missing_book_columns(conn) -> List[Tuple[str, str]]:
     return missing
 
 
-def _ensure_book_columns(dry_run: bool = False) -> Dict[str, List[str]]:
+def _ensure_book_columns(dry_run: bool = False) -> dict[str, list[str]]:
     manager = get_safe_kuzu_manager()
-    added: List[str] = []
+    added: list[str] = []
     with manager.get_connection(operation="migrations_runner") as conn:
         missing = _detect_missing_book_columns(conn)
         if dry_run:
@@ -68,7 +67,7 @@ def _ensure_book_columns(dry_run: bool = False) -> Dict[str, List[str]]:
     return {"added": added}
 
 
-def run_pending(*, dry_run: bool = False) -> Dict[str, object]:  # API expected by tests
+def run_pending(*, dry_run: bool = False) -> dict[str, object]:  # API expected by tests
     """Run (or simulate) idempotent additive migrations.
 
     Args:

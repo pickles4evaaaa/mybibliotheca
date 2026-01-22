@@ -6,10 +6,11 @@ series initials when no cover is available. Stored in the standard covers dir.
 
 from __future__ import annotations
 
-from pathlib import Path
 import uuid
-from PIL import Image, ImageDraw, ImageFont
+from pathlib import Path
+
 from flask import current_app
+from PIL import Image, ImageDraw, ImageFont
 
 from .image_processing import get_covers_dir
 

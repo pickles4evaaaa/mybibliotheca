@@ -5,23 +5,24 @@ These models represent the core business entities independent of persistence con
 They define the structure and relationships according to the planning document.
 """
 
-from dataclasses import dataclass, field
-from dataclasses import fields as dataclass_fields
-from dataclasses import MISSING
-from datetime import datetime, date, timezone
-from typing import Optional, List, Dict, Any, cast
-from enum import Enum
 import json
+from dataclasses import MISSING, dataclass, field
+from dataclasses import fields as dataclass_fields
+from datetime import UTC, date, datetime
+from enum import Enum
+from typing import Any, Optional, cast
 
 from app.utils.password_policy import (
     get_password_requirements as get_policy_password_requirements,
+)
+from app.utils.password_policy import (
     resolve_min_password_length,
 )
 
 
 def now_utc() -> datetime:
     """Timezone-aware UTC now for default timestamps (avoid datetime.utcnow deprecation)."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ReadingStatus(Enum):
@@ -78,11 +79,11 @@ class CustomFieldType(Enum):
 class CustomFieldDefinition:
     """Definition of a custom metadata field that can be applied to books."""
 
-    id: Optional[str] = None
+    id: str | None = None
     name: str = ""  # Internal name (e.g., "reading_pace")
     display_name: str = ""  # User-friendly name (e.g., "Reading Pace")
     field_type: CustomFieldType = CustomFieldType.TEXT
-    description: Optional[str] = None
+    description: str | None = None
 
     # Ownership and sharing
     created_by_user_id: str = ""
@@ -90,18 +91,18 @@ class CustomFieldDefinition:
     is_global: bool = False  # Applies to global book data vs user-specific
 
     # Field configuration
-    default_value: Optional[str] = None
-    placeholder_text: Optional[str] = None
-    help_text: Optional[str] = None
+    default_value: str | None = None
+    placeholder_text: str | None = None
+    help_text: str | None = None
 
     # For list/tags fields - predefined options
-    predefined_options: List[str] = field(default_factory=list)
+    predefined_options: list[str] = field(default_factory=list)
     allow_custom_options: bool = True
 
     # For rating fields
     rating_min: int = 1
     rating_max: int = 5
-    rating_labels: Dict[int, str] = field(
+    rating_labels: dict[int, str] = field(
         default_factory=dict
     )  # e.g., {1: "Poor", 5: "Excellent"}
 
@@ -117,17 +118,17 @@ class CustomFieldDefinition:
 class ImportMappingTemplate:
     """Saved mapping template for CSV imports to avoid re-mapping same formats."""
 
-    id: Optional[str] = None
+    id: str | None = None
     user_id: str = ""
     name: str = ""  # User-friendly name (e.g., "Goodreads Export")
-    description: Optional[str] = None
+    description: str | None = None
 
     # Import source identification
     source_type: str = ""  # "goodreads", "storygraph", "custom"
-    sample_headers: List[str] = field(default_factory=list)  # For matching detection
+    sample_headers: list[str] = field(default_factory=list)  # For matching detection
 
     # Field mappings
-    field_mappings: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    field_mappings: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Format: {
     #   "csv_column_name": {
     #     "action": "map_existing|create_custom|skip",
@@ -139,7 +140,7 @@ class ImportMappingTemplate:
 
     # Usage tracking
     times_used: int = 0
-    last_used: Optional[datetime] = None
+    last_used: datetime | None = None
 
     # Timestamps
     created_at: datetime = field(default_factory=now_utc)
@@ -193,12 +194,12 @@ class ImportMappingTemplate:
 class Author:
     """Author domain model."""
 
-    id: Optional[str] = None
+    id: str | None = None
     name: str = ""
     normalized_name: str = ""  # For fuzzy matching
-    birth_year: Optional[int] = None
-    death_year: Optional[int] = None
-    bio: Optional[str] = None
+    birth_year: int | None = None
+    death_year: int | None = None
+    bio: str | None = None
     created_at: datetime = field(default_factory=now_utc)
 
     def __post_init__(self):
@@ -215,11 +216,11 @@ class Author:
 class Publisher:
     """Publisher domain model."""
 
-    id: Optional[str] = None
+    id: str | None = None
     name: str = ""
     normalized_name: str = ""
-    founded_year: Optional[int] = None
-    country: Optional[str] = None
+    founded_year: int | None = None
+    country: str | None = None
     created_at: datetime = field(default_factory=now_utc)
 
     def __post_init__(self):
@@ -231,15 +232,15 @@ class Publisher:
 class Location:
     """Location domain model for tracking where books are kept."""
 
-    id: Optional[str] = None
+    id: str | None = None
     user_id: str = ""
     name: str = ""
-    description: Optional[str] = None
+    description: str | None = None
     is_default: bool = False
     is_active: bool = True
 
     # Location metadata
-    address: Optional[str] = None
+    address: str | None = None
     location_type: str = "home"  # "home", "office", "vacation", "storage", "other"
 
     # Timestamps
@@ -251,14 +252,14 @@ class Location:
 class Series:
     """Book series domain model."""
 
-    id: Optional[str] = None
+    id: str | None = None
     name: str = ""
     normalized_name: str = ""
-    description: Optional[str] = None
+    description: str | None = None
     # user_cover: explicit custom upload provided by user (preferred if present)
-    user_cover: Optional[str] = None
+    user_cover: str | None = None
     # cover_url: stored first-book cover reference (auto-maintained)
-    cover_url: Optional[str] = None
+    cover_url: str | None = None
     custom_cover: bool = (
         False  # legacy flag; considered True iff user_cover is not None
     )
@@ -276,19 +277,19 @@ class Series:
 class Category:
     """Category/Genre domain model with hierarchical support."""
 
-    id: Optional[str] = None
+    id: str | None = None
     name: str = ""
     normalized_name: str = ""
-    parent_id: Optional[str] = None
-    description: Optional[str] = None
+    parent_id: str | None = None
+    description: str | None = None
     level: int = 0  # Hierarchy level (0 = root)
-    color: Optional[str] = None  # Hex color for visual organization
-    icon: Optional[str] = None  # Bootstrap icon or emoji for display
-    aliases: List[str] = field(default_factory=list)  # Alternative names/spellings
+    color: str | None = None  # Hex color for visual organization
+    icon: str | None = None  # Bootstrap icon or emoji for display
+    aliases: list[str] = field(default_factory=list)  # Alternative names/spellings
 
     # Hierarchy relationships (populated by service layer)
     parent: Optional["Category"] = None
-    children: List["Category"] = field(default_factory=list)
+    children: list["Category"] = field(default_factory=list)
 
     # Usage statistics (populated by service layer)
     book_count: int = 0
@@ -314,7 +315,7 @@ class Category:
         return self.name
 
     @property
-    def breadcrumbs(self) -> List["Category"]:
+    def breadcrumbs(self) -> list["Category"]:
         """Get list of categories from root to this category."""
         if self.parent:
             return self.parent.breadcrumbs + [self]
@@ -328,17 +329,17 @@ class Category:
             return True
         return self.parent.is_descendant_of(category)
 
-    def get_all_ancestors(self) -> List["Category"]:
+    def get_all_ancestors(self) -> list["Category"]:
         """Get all ancestor categories up to root."""
         if not self.parent:
             return []
         return [self.parent] + self.parent.get_all_ancestors()
 
-    def get_ancestors(self) -> List["Category"]:
+    def get_ancestors(self) -> list["Category"]:
         """Alias for get_all_ancestors() for template compatibility."""
         return self.get_all_ancestors()
 
-    def get_all_descendants(self) -> List["Category"]:
+    def get_all_descendants(self) -> list["Category"]:
         """Get all descendant categories recursively."""
         descendants = []
         for child in self.children:
@@ -386,32 +387,32 @@ class ContributionType(Enum):
 class Person:
     """Person domain model - represents contributors (authors, narrators, editors, etc.)."""
 
-    id: Optional[str] = None
+    id: str | None = None
     name: str = ""
     normalized_name: str = ""  # For fuzzy matching
 
     # Optional biographical information
-    birth_date: Optional[str] = None  # Full birth date string from OpenLibrary
-    death_date: Optional[str] = None  # Full death date string from OpenLibrary
-    birth_year: Optional[int] = None
-    death_year: Optional[int] = None
-    birth_place: Optional[str] = None
-    bio: Optional[str] = None
-    website: Optional[str] = None
+    birth_date: str | None = None  # Full birth date string from OpenLibrary
+    death_date: str | None = None  # Full death date string from OpenLibrary
+    birth_year: int | None = None
+    death_year: int | None = None
+    birth_place: str | None = None
+    bio: str | None = None
+    website: str | None = None
 
     # External service IDs
-    openlibrary_id: Optional[str] = None
-    wikidata_id: Optional[str] = None
-    imdb_id: Optional[str] = None
+    openlibrary_id: str | None = None
+    wikidata_id: str | None = None
+    imdb_id: str | None = None
 
     # Additional metadata
-    fuller_name: Optional[str] = None  # Full name with titles, etc.
-    title: Optional[str] = None  # Professional title (e.g., "Dr.", "Professor")
-    alternate_names: Optional[str] = None  # JSON string of alternate names
-    official_links: Optional[str] = None  # JSON string of official links
+    fuller_name: str | None = None  # Full name with titles, etc.
+    title: str | None = None  # Professional title (e.g., "Dr.", "Professor")
+    alternate_names: str | None = None  # JSON string of alternate names
+    official_links: str | None = None  # JSON string of official links
 
     # Media
-    image_url: Optional[str] = None
+    image_url: str | None = None
 
     # Timestamps
     created_at: datetime = field(default_factory=now_utc)
@@ -441,11 +442,11 @@ class BookContribution:
     person_id: str = ""
     book_id: str = ""
     contribution_type: ContributionType = ContributionType.AUTHORED
-    order: Optional[int] = None  # For ordering multiple contributors of same type
-    notes: Optional[str] = None  # Additional context about the contribution
+    order: int | None = None  # For ordering multiple contributors of same type
+    notes: str | None = None  # Additional context about the contribution
 
     # For display purposes
-    person: Optional[Person] = None
+    person: Person | None = None
 
     # Timestamps
     created_at: datetime = field(default_factory=now_utc)
@@ -455,57 +456,57 @@ class BookContribution:
 class Book:
     """Core book domain model - represents global book data shared across users."""
 
-    id: Optional[str] = None
+    id: str | None = None
     # Note: We intentionally do NOT declare an InitVar named 'author' here because
     # a property with the same name exists below. We'll handle 'author' and 'name'
     # in a custom __init__ to keep a clean API for tests while preserving the property.
     title: str = ""
     normalized_title: str = ""
-    subtitle: Optional[str] = None
-    isbn13: Optional[str] = None
-    isbn10: Optional[str] = None
-    asin: Optional[str] = None
-    description: Optional[str] = None
-    published_date: Optional[date] = None
-    page_count: Optional[int] = None
+    subtitle: str | None = None
+    isbn13: str | None = None
+    isbn10: str | None = None
+    asin: str | None = None
+    description: str | None = None
+    published_date: date | None = None
+    page_count: int | None = None
     language: str = "en"
-    cover_url: Optional[str] = None
-    google_books_id: Optional[str] = None
-    openlibrary_id: Optional[str] = None
-    opds_source_id: Optional[str] = None
-    opds_source_updated_at: Optional[str] = None
-    opds_source_entry_hash: Optional[str] = None
+    cover_url: str | None = None
+    google_books_id: str | None = None
+    openlibrary_id: str | None = None
+    opds_source_id: str | None = None
+    opds_source_updated_at: str | None = None
+    opds_source_entry_hash: str | None = None
 
     # Global metadata (not user-specific)
-    average_rating: Optional[float] = None
-    rating_count: Optional[int] = None
+    average_rating: float | None = None
+    rating_count: int | None = None
 
     # Custom metadata fields (global, shared across all users)
-    custom_metadata: Dict[str, Any] = field(default_factory=dict)
+    custom_metadata: dict[str, Any] = field(default_factory=dict)
 
     # Timestamps
     created_at: datetime = field(default_factory=now_utc)
     updated_at: datetime = field(default_factory=now_utc)
 
     # Relationships (will be resolved via repository)
-    contributors: List[BookContribution] = field(default_factory=list)
-    publisher: Optional[Publisher] = None
-    series: Optional[Series] = None
-    series_volume: Optional[str] = None
-    series_order: Optional[int] = None
-    categories: List[Category] = field(default_factory=list)
+    contributors: list[BookContribution] = field(default_factory=list)
+    publisher: Publisher | None = None
+    series: Series | None = None
+    series_volume: str | None = None
+    series_order: int | None = None
+    categories: list[Category] = field(default_factory=list)
 
     # Raw category data from API/CSV (temporary field for processing)
-    raw_categories: Optional[Any] = None
+    raw_categories: Any | None = None
 
     # Core format field (physical, ebook, audiobook, kindle, etc.) now global
-    media_type: Optional[str] = None
+    media_type: str | None = None
 
     # Quantity field to track number of copies owned
     quantity: int = 1
 
     def __init__(
-        self, author: Optional[str] = None, name: Optional[str] = None, **kwargs
+        self, author: str | None = None, name: str | None = None, **kwargs
     ):
         """Custom initializer to accept legacy-friendly aliases.
         Accepts:
@@ -580,7 +581,7 @@ class Book:
         return title.strip().lower()
 
     @property
-    def authors(self) -> List["Author"]:
+    def authors(self) -> list["Author"]:
         """Get authors from contributors for backward compatibility."""
         author_contributors = [
             c
@@ -598,7 +599,7 @@ class Book:
         ]
 
     @property
-    def narrators(self) -> List["Person"]:
+    def narrators(self) -> list["Person"]:
         """Get narrators from contributors."""
         narrator_contributors = [
             c
@@ -608,7 +609,7 @@ class Book:
         return [c.person for c in narrator_contributors if c.person]
 
     @property
-    def editors(self) -> List["Person"]:
+    def editors(self) -> list["Person"]:
         """Get editors from contributors."""
         editor_contributors = [
             c
@@ -618,7 +619,7 @@ class Book:
         return [c.person for c in editor_contributors if c.person]
 
     @property
-    def translators(self) -> List["Person"]:
+    def translators(self) -> list["Person"]:
         """Get translators from contributors."""
         translator_contributors = [
             c
@@ -628,7 +629,7 @@ class Book:
         return [c.person for c in translator_contributors if c.person]
 
     @property
-    def illustrators(self) -> List["Person"]:
+    def illustrators(self) -> list["Person"]:
         """Get illustrators from contributors."""
         illustrator_contributors = [
             c
@@ -639,7 +640,7 @@ class Book:
 
     def get_contributors_by_type(
         self, contribution_type: ContributionType
-    ) -> List["Person"]:
+    ) -> list["Person"]:
         """Get contributors by contribution type."""
         type_contributors = [
             c for c in self.contributors if c.contribution_type == contribution_type
@@ -648,7 +649,7 @@ class Book:
 
     def get_contributors_by_type_str(
         self, contribution_type_str: str
-    ) -> List["Person"]:
+    ) -> list["Person"]:
         """Get contributors by contribution type string (for template compatibility)."""
         try:
             contribution_type = ContributionType(contribution_type_str.lower())
@@ -671,12 +672,12 @@ class Book:
         return ""
 
     @property
-    def primary_isbn(self) -> Optional[str]:
+    def primary_isbn(self) -> str | None:
         """Get the primary ISBN (prefer ISBN13 over ISBN10)."""
         return self.isbn13 or self.isbn10
 
     @property
-    def uid(self) -> Optional[str]:
+    def uid(self) -> str | None:
         """Alias for id for backward compatibility."""
         return self.id
 
@@ -710,7 +711,7 @@ class Book:
 class User:
     """User domain model."""
 
-    id: Optional[str] = None
+    id: str | None = None
     username: str = ""
     email: str = ""
     password_hash: str = ""
@@ -725,9 +726,9 @@ class User:
     is_active: bool = True
     password_must_change: bool = False
     failed_login_attempts: int = 0
-    locked_until: Optional[datetime] = None
-    last_login: Optional[datetime] = None
-    password_changed_at: Optional[datetime] = None
+    locked_until: datetime | None = None
+    last_login: datetime | None = None
+    password_changed_at: datetime | None = None
 
     # Reading settings
     reading_streak_offset: int = 0
@@ -736,10 +737,10 @@ class User:
     timezone: str = "UTC"
 
     # User metadata (future enhancement)
-    display_name: Optional[str] = None
-    bio: Optional[str] = None
-    location: Optional[str] = None
-    website: Optional[str] = None
+    display_name: str | None = None
+    bio: str | None = None
+    location: str | None = None
+    website: str | None = None
 
     # System fields
     created_at: datetime = field(default_factory=now_utc)
@@ -783,7 +784,7 @@ class User:
         """
         import re
 
-        min_length = cast(int, resolve_min_password_length())
+        min_length = cast("int", resolve_min_password_length())
         if len(password) < min_length:
             return False
 
@@ -827,7 +828,7 @@ class User:
         return True
 
     @staticmethod
-    def get_password_requirements() -> List[str]:
+    def get_password_requirements() -> list[str]:
         """Return a list of password requirements for display to users"""
         return get_policy_password_requirements()
 
@@ -838,7 +839,7 @@ class User:
         # Use timezone-aware comparison; coerce naive locked_until to UTC if needed
         now = now_utc()
         if self.locked_until is not None and self.locked_until.tzinfo is None:
-            locked_until = self.locked_until.replace(tzinfo=timezone.utc)
+            locked_until = self.locked_until.replace(tzinfo=UTC)
         else:
             locked_until = self.locked_until
         return now < locked_until if locked_until is not None else False
@@ -881,49 +882,49 @@ class UserBookRelationship:
     # Default empty reading status in overlays; keep enum type optional via Optional[str] in storage layers
     reading_status: ReadingStatus = ReadingStatus.PLAN_TO_READ
     date_added: datetime = field(default_factory=now_utc)
-    start_date: Optional[datetime] = None
-    finish_date: Optional[datetime] = None
+    start_date: datetime | None = None
+    finish_date: datetime | None = None
 
     # Ownership and location tracking
     ownership_status: OwnershipStatus = OwnershipStatus.OWNED
     media_type: MediaType = MediaType.PHYSICAL
 
     # Borrowing/Loaning tracking
-    borrowed_from: Optional[str] = None  # Name or contact info
-    borrowed_from_user_id: Optional[str] = (
+    borrowed_from: str | None = None  # Name or contact info
+    borrowed_from_user_id: str | None = (
         None  # If borrowed from another user in system
     )
-    borrowed_date: Optional[datetime] = None
-    borrowed_due_date: Optional[datetime] = None
+    borrowed_date: datetime | None = None
+    borrowed_due_date: datetime | None = None
 
-    loaned_to: Optional[str] = None  # Name or contact info
-    loaned_to_user_id: Optional[str] = None  # If loaned to another user in system
-    loaned_date: Optional[datetime] = None
-    loaned_due_date: Optional[datetime] = None
+    loaned_to: str | None = None  # Name or contact info
+    loaned_to_user_id: str | None = None  # If loaned to another user in system
+    loaned_date: datetime | None = None
+    loaned_due_date: datetime | None = None
 
     # Location tracking - can be in multiple locations
-    locations: List[str] = field(default_factory=list)  # List of location IDs
-    primary_location_id: Optional[str] = None
+    locations: list[str] = field(default_factory=list)  # List of location IDs
+    primary_location_id: str | None = None
 
     # User-specific data
-    user_rating: Optional[float] = None
-    rating_date: Optional[datetime] = None
-    user_review: Optional[str] = None
-    review_date: Optional[datetime] = None
+    user_rating: float | None = None
+    rating_date: datetime | None = None
+    user_review: str | None = None
+    review_date: datetime | None = None
     is_review_spoiler: bool = False
 
     # Personal organization
-    personal_notes: Optional[str] = None
-    user_tags: List[str] = field(default_factory=list)
+    personal_notes: str | None = None
+    user_tags: list[str] = field(default_factory=list)
 
     # Custom metadata fields (user-specific)
-    custom_metadata: Dict[str, Any] = field(default_factory=dict)
+    custom_metadata: dict[str, Any] = field(default_factory=dict)
 
     # Reading analytics (StoryGraph-style)
-    reading_sessions: List[Dict[str, Any]] = field(default_factory=list)
-    pace: Optional[str] = None  # "slow", "medium", "fast"
-    character_driven: Optional[bool] = None
-    moods: List[str] = field(default_factory=list)
+    reading_sessions: list[dict[str, Any]] = field(default_factory=list)
+    pace: str | None = None  # "slow", "medium", "fast"
+    character_driven: bool | None = None
+    moods: list[str] = field(default_factory=list)
 
     # Source tracking
     source: str = "manual"  # "manual", "goodreads", "storygraph", "admin_assigned"
@@ -939,11 +940,11 @@ class ReadingLog:
 
     user_id: str
     date: date
-    id: Optional[str] = None
-    book_id: Optional[str] = None  # Now optional to allow general reading logs
+    id: str | None = None
+    book_id: str | None = None  # Now optional to allow general reading logs
     pages_read: int = 0
     minutes_read: int = 0
-    notes: Optional[str] = None
+    notes: str | None = None
     created_at: datetime = field(default_factory=now_utc)
     updated_at: datetime = field(default_factory=now_utc)
 
@@ -954,21 +955,21 @@ class ImportTask:
 
     user_id: str
     task_type: str  # "goodreads_import", "storygraph_import", "simple_csv"
-    id: Optional[str] = None
+    id: str | None = None
     status: str = "pending"  # "pending", "running", "completed", "failed"
     progress: int = 0  # 0-100
     total_items: int = 0
     processed_items: int = 0
 
     # Task data
-    file_path: Optional[str] = None
-    parameters: Dict[str, Any] = field(default_factory=dict)
+    file_path: str | None = None
+    parameters: dict[str, Any] = field(default_factory=dict)
 
     # Results
-    results: Dict[str, Any] = field(default_factory=dict)
-    error_message: Optional[str] = None
+    results: dict[str, Any] = field(default_factory=dict)
+    error_message: str | None = None
 
     # Timestamps
     created_at: datetime = field(default_factory=now_utc)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

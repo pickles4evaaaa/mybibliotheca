@@ -8,18 +8,20 @@ Critical Fix #2: Eliminates the dangerous global singleton pattern that
 caused database access conflicts in multi-user scenarios.
 """
 
-import threading
-import logging
-import kuzu  # type: ignore
-import os
-import time
-import json
-import re
 import atexit
-from pathlib import Path
-from typing import Optional, Dict, Any, List, Generator, Iterable
+import json
+import logging
+import os
+import re
+import threading
+import time
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import kuzu  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,7 @@ class SafeKuzuManager:
     - Deadlock prevention with timeout mechanisms
     """
 
-    def __init__(self, database_path: Optional[str] = None):
+    def __init__(self, database_path: str | None = None):
         """Initialize manager state (no heavy I/O)."""
         if database_path:
             self.database_path = database_path
@@ -64,21 +66,21 @@ class SafeKuzuManager:
 
         # Thread safety controls
         self._lock = threading.RLock()  # Reentrant lock for nested calls
-        self._database: Optional[kuzu.Database] = None
+        self._database: kuzu.Database | None = None
         self._is_initialized = False
-        self._fatal_init_error: Optional[Exception] = (
+        self._fatal_init_error: Exception | None = (
             None  # cached first fatal init error
         )
 
         # Connection tracking for debugging and monitoring
-        self._active_connections: Dict[int, Dict[str, Any]] = {}
+        self._active_connections: dict[int, dict[str, Any]] = {}
         self._connection_count = 0
         self._total_connections_created = 0
 
         # Performance and safety metrics
         self._last_access_time = None
         self._initialization_time = None
-        self._lock_wait_times: List[float] = []
+        self._lock_wait_times: list[float] = []
 
         logger.info(f"SafeKuzuManager initialized for database: {self.database_path}")
         try:
@@ -89,15 +91,15 @@ class SafeKuzuManager:
             self._creator_pid = None
 
         # Corruption prevention / integrity monitoring
-        self._integrity_thread: Optional[threading.Thread] = None
+        self._integrity_thread: threading.Thread | None = None
         self._integrity_stop = threading.Event()
         self._integrity_interval_sec = self._load_probe_interval()
-        self._last_integrity_probe: Optional[datetime] = None
+        self._last_integrity_probe: datetime | None = None
 
         # Quiesce (write pause) controls for backups
         self._quiesce_condition = threading.Condition(self._lock)
         self._writes_quiesced = False
-        self._pending_quiesce_reason: Optional[str] = None
+        self._pending_quiesce_reason: str | None = None
 
         # Shutdown marker path (directory containing DB)
         self._db_dir = (
@@ -159,11 +161,11 @@ class SafeKuzuManager:
         """Write a marker indicating a clean shutdown completed."""
         try:
             self._db_dir.mkdir(parents=True, exist_ok=True)
-            self._shutdown_marker.write_text(datetime.now(timezone.utc).isoformat())
+            self._shutdown_marker.write_text(datetime.now(UTC).isoformat())
         except Exception:
             pass
 
-    def _consume_shutdown_marker(self) -> Dict[str, Any]:
+    def _consume_shutdown_marker(self) -> dict[str, Any]:
         """Check for previous clean shutdown marker at startup.
 
         Returns a dict with status info used for logging / anomaly decisions.
@@ -175,7 +177,7 @@ class SafeKuzuManager:
                 try:
                     ts = datetime.fromisoformat(ts_text)
                     info["marker_age_seconds"] = (
-                        datetime.now(timezone.utc) - ts
+                        datetime.now(UTC) - ts
                     ).total_seconds()
                 except Exception:
                     pass
@@ -215,7 +217,7 @@ class SafeKuzuManager:
     def _run_integrity_probe(self):
         """Perform lightweight counts on core node types and log anomalies."""
         core_nodes: Iterable[str] = ("User", "Book", "Person")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with self.get_connection(operation="integrity_probe") as conn:
             anomalies = []
             totals = {}
@@ -282,11 +284,11 @@ class SafeKuzuManager:
     # ------------------------------------------------------------------
     # Corruption / anomaly logging
     # ------------------------------------------------------------------
-    def _log_corruption_event(self, payload: Dict[str, Any]):
+    def _log_corruption_event(self, payload: dict[str, Any]):
         try:
             logs_dir = Path("logs")
             logs_dir.mkdir(parents=True, exist_ok=True)
-            payload = {**payload, "timestamp": datetime.now(timezone.utc).isoformat()}
+            payload = {**payload, "timestamp": datetime.now(UTC).isoformat()}
             with (logs_dir / "corruption_events.log").open("a") as f:
                 f.write(json.dumps(payload, separators=(",", ":")) + "\n")
         except Exception:
@@ -326,13 +328,13 @@ class SafeKuzuManager:
                 }
             )
 
-    def _get_thread_info(self) -> Dict[str, Any]:
+    def _get_thread_info(self) -> dict[str, Any]:
         """Get current thread information for tracking."""
         thread = threading.current_thread()
         return {
             "thread_id": threading.get_ident(),
             "thread_name": thread.name,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "is_main_thread": threading.main_thread() == thread,
         }
 
@@ -422,7 +424,7 @@ class SafeKuzuManager:
                         )
                         raise open_err
                     try:
-                        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
                         backup_dir = db_path.parent / "corrupt_backups"
                         backup_dir.mkdir(parents=True, exist_ok=True)
                         # Copy existing before destructive action
@@ -509,7 +511,7 @@ class SafeKuzuManager:
             self._initialize_schema()
 
             self._is_initialized = True
-            self._initialization_time = datetime.now(timezone.utc)
+            self._initialization_time = datetime.now(UTC)
 
             # Start integrity probe thread if configured
             self._start_integrity_probe_thread()
@@ -543,8 +545,8 @@ class SafeKuzuManager:
 
     @contextmanager
     def get_connection(
-        self, user_id: Optional[str] = None, operation: str = "unknown"
-    ) -> Generator[kuzu.Connection, None, None]:
+        self, user_id: str | None = None, operation: str = "unknown"
+    ) -> Generator[kuzu.Connection]:
         """
         Get a thread-safe KuzuDB connection with automatic cleanup.
 
@@ -613,14 +615,14 @@ class SafeKuzuManager:
                 self._connection_count += 1
                 self._total_connections_created += 1
                 connection_id = self._total_connections_created
-                self._last_access_time = datetime.now(timezone.utc)
+                self._last_access_time = datetime.now(UTC)
 
                 # Track active connection
                 self._active_connections[thread_info["thread_id"]] = {
                     "connection_id": connection_id,
                     "user_id": user_id,
                     "operation": operation,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "thread_info": thread_info,
                 }
 
@@ -703,8 +705,8 @@ class SafeKuzuManager:
     def execute_query(
         self,
         query: str,
-        params: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
+        params: dict[str, Any] | None = None,
+        user_id: str | None = None,
         operation: str = "query",
     ) -> Any:
         """
@@ -801,7 +803,8 @@ class SafeKuzuManager:
             )
 
         def _sanitize_dt_value(k: str, v: Any):
-            from datetime import datetime, timezone, date as _date
+            from datetime import date as _date
+            from datetime import datetime
 
             if v is None:
                 return None
@@ -838,13 +841,13 @@ class SafeKuzuManager:
                         val = float(s2)
                         if val > 10_000_000_000:  # ms
                             val = val / 1000.0
-                        return datetime.fromtimestamp(val, tz=timezone.utc).isoformat()
+                        return datetime.fromtimestamp(val, tz=UTC).isoformat()
                     except Exception:
                         return None
             # Leave other types untouched
             return v
 
-        sanitized_params: Optional[Dict[str, Any]] = None
+        sanitized_params: dict[str, Any] | None = None
         if params:
             sanitized_params = {}
             for k, v in params.items():
@@ -876,7 +879,7 @@ class SafeKuzuManager:
                 return result[0] if result else None
             return result
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         """
         Get comprehensive health and performance metrics.
 
@@ -945,7 +948,7 @@ class SafeKuzuManager:
             Number of stale entries cleaned up
         """
         with self._lock:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(
+            cutoff_time = datetime.now(UTC) - timedelta(
                 minutes=max_age_minutes
             )
             stale_threads = []
@@ -1670,7 +1673,7 @@ class SafeKuzuManager:
 
 # Global thread-safe instance
 # This replaces the dangerous _kuzu_database global singleton
-_safe_kuzu_manager: Optional[SafeKuzuManager] = None
+_safe_kuzu_manager: SafeKuzuManager | None = None
 _manager_lock = threading.Lock()
 
 
@@ -1696,7 +1699,7 @@ def get_safe_kuzu_manager() -> SafeKuzuManager:
     return _safe_kuzu_manager
 
 
-def reset_safe_kuzu_manager(database_path: Optional[str] = None) -> None:
+def reset_safe_kuzu_manager(database_path: str | None = None) -> None:
     """
     Reset the global SafeKuzuManager instance.
 
@@ -1724,8 +1727,8 @@ def is_safe_kuzu_initialized() -> bool:
 
 def safe_execute_query(
     query: str,
-    params: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    params: dict[str, Any] | None = None,
+    user_id: str | None = None,
     operation: str = "query",
 ) -> Any:
     """
@@ -1757,8 +1760,8 @@ def safe_execute_query(
 
 def safe_query_value(
     query: str,
-    params: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    params: dict[str, Any] | None = None,
+    user_id: str | None = None,
     operation: str = "query",
     default: Any = None,
 ) -> Any:
@@ -1789,12 +1792,12 @@ def safe_query_value(
 
 def safe_query_list(
     query: str,
-    params: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    params: dict[str, Any] | None = None,
+    user_id: str | None = None,
     operation: str = "query",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Execute a query and return list of dict rows (column_name -> value)."""
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     try:
         result = safe_execute_query(query, params, user_id=user_id, operation=operation)
         # If already a python list of dicts
@@ -1808,7 +1811,7 @@ def safe_query_list(
         # Kuzu result iteration
         while result.has_next():
             row = result.get_next()
-            record: Dict[str, Any] = {}
+            record: dict[str, Any] = {}
             col_names = result.get_column_names()
             for i, col in enumerate(col_names):
                 try:
@@ -1821,7 +1824,7 @@ def safe_query_list(
     return rows
 
 
-def safe_get_connection(user_id: Optional[str] = None, operation: str = "unknown"):
+def safe_get_connection(user_id: str | None = None, operation: str = "unknown"):
     """
     Get a thread-safe KuzuDB connection context manager.
 
@@ -1845,7 +1848,7 @@ def safe_get_connection(user_id: Optional[str] = None, operation: str = "unknown
     return manager.get_connection(user_id=user_id, operation=operation)
 
 
-def get_kuzu_health_status() -> Dict[str, Any]:
+def get_kuzu_health_status() -> dict[str, Any]:
     """
     Get comprehensive health status of the KuzuDB system.
 

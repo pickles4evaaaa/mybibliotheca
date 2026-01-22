@@ -1,6 +1,7 @@
 import os
-import secrets
 import platform
+import secrets
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file(s)

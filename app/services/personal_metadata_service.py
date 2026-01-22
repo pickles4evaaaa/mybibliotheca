@@ -16,16 +16,15 @@ Sharing model:
 
 from __future__ import annotations
 
-from __future__ import annotations
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
-from pathlib import Path
+import logging
+import os
 import shutil
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
-import os
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +33,12 @@ logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
+import hashlib
 import threading
 from contextlib import contextmanager
-import hashlib
 
 
 def _lock_dir() -> Path:
@@ -49,7 +48,7 @@ def _lock_dir() -> Path:
     return d
 
 
-_pm_locks: Dict[tuple, threading.Lock] = {}
+_pm_locks: dict[tuple, threading.Lock] = {}
 
 
 @contextmanager
@@ -61,7 +60,7 @@ def _with_pm_lock(user_id: str, book_id: str):
         _pm_locks[key] = lock
     # Cross-process file lock (best-effort) to reduce write conflicts between workers
     # File name derived from hash of (user, book)
-    h = hashlib.sha1(f"{user_id}:{book_id}".encode("utf-8")).hexdigest()
+    h = hashlib.sha1(f"{user_id}:{book_id}".encode()).hexdigest()
     fpath = _lock_dir() / f"pm_{h}.lock"
     import time
 
@@ -245,7 +244,7 @@ CREATE REL TABLE {self.REL_NAME}(
             for row in rows:
                 # Support dict or list style
                 if isinstance(row, dict):
-                    row_dict: Dict[str, Any] = row  # local alias for type clarity
+                    row_dict: dict[str, Any] = row  # local alias for type clarity
 
                     def getv(i: int, key: str):
                         col_key = f"col_{i}"
@@ -278,7 +277,7 @@ CREATE REL TABLE {self.REL_NAME}(
                     custom_metadata_raw = row[9] if len(row) > 9 else None  # type: ignore[index]
                 if not user_id or not book_id:
                     continue
-                custom_updates: Dict[str, Any] = {}
+                custom_updates: dict[str, Any] = {}
                 for k, v in {
                     "reading_status": reading_status,
                     "ownership_status": ownership_status,
@@ -413,7 +412,7 @@ CREATE REL TABLE {self.REL_NAME}(
 
     def _fetch_relationship(
         self, user_id: str, book_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         query_new = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
         RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields, r.created_at, r.updated_at
@@ -510,7 +509,7 @@ CREATE REL TABLE {self.REL_NAME}(
                     return None
             return None
 
-    def get_personal_metadata(self, user_id: str, book_id: str) -> Dict[str, Any]:
+    def get_personal_metadata(self, user_id: str, book_id: str) -> dict[str, Any]:
         # Ensure migration attempted before reads
         self._ensure_relationship_schema()
         self._maybe_run_owns_migration()
@@ -539,13 +538,13 @@ CREATE REL TABLE {self.REL_NAME}(
         user_id: str,
         book_id: str,
         *,
-        personal_notes: Optional[str] = None,
-        user_review: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        finish_date: Optional[datetime] = None,
-        custom_updates: Optional[Dict[str, Any]] = None,
+        personal_notes: str | None = None,
+        user_review: str | None = None,
+        start_date: datetime | None = None,
+        finish_date: datetime | None = None,
+        custom_updates: dict[str, Any] | None = None,
         merge: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create or update the HAS_PERSONAL_METADATA relationship.
 
         Args:
@@ -578,7 +577,7 @@ CREATE REL TABLE {self.REL_NAME}(
         start_raw = json_blob.get("start_date")
         finish_raw = json_blob.get("finish_date")
 
-        def _sanitize_ts_param(v: Any) -> Optional[str]:
+        def _sanitize_ts_param(v: Any) -> str | None:
             """Return ISO string or None. Treat '', whitespace, and invalid formats as None."""
             if v is None:
                 return None
@@ -598,7 +597,7 @@ CREATE REL TABLE {self.REL_NAME}(
                         val = float(s2)
                         if val > 10_000_000_000:  # likely ms
                             val = val / 1000.0
-                        return datetime.fromtimestamp(val, tz=timezone.utc).isoformat()
+                        return datetime.fromtimestamp(val, tz=UTC).isoformat()
                     except Exception:
                         return None
             # Unsupported type
@@ -639,7 +638,7 @@ CREATE REL TABLE {self.REL_NAME}(
         try:
             # Retry loop to mitigate transient write-write conflicts
             attempts = 0
-            last_err: Optional[Exception] = None
+            last_err: Exception | None = None
             while attempts < 3:
                 try:
                     with _with_pm_lock(user_id, book_id):
@@ -683,7 +682,7 @@ CREATE REL TABLE {self.REL_NAME}(
             ):
                 # Try legacy path with same retry shim just in case
                 attempts = 0
-                last_err2: Optional[Exception] = None
+                last_err2: Exception | None = None
                 while attempts < 2:
                     try:
                         with _with_pm_lock(user_id, book_id):

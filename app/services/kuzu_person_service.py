@@ -8,18 +8,18 @@ This service has been migrated to use the SafeKuzuManager pattern for
 improved thread safety and connection management.
 """
 
-import traceback
-from typing import List, Optional, Dict, Any
-
-from ..infrastructure.kuzu_repositories import KuzuPersonRepository
-from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
-from .kuzu_async_helper import run_async
 import logging
+import traceback
+from typing import Any
+
+from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
+from ..infrastructure.kuzu_repositories import KuzuPersonRepository
+from .kuzu_async_helper import run_async
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -73,7 +73,7 @@ class KuzuPersonService:
     improved thread safety and connection management.
     """
 
-    def __init__(self, user_id: Optional[str] = None):
+    def __init__(self, user_id: str | None = None):
         """
         Initialize person service with thread-safe database access.
 
@@ -83,7 +83,7 @@ class KuzuPersonService:
         self.user_id = user_id or "person_service"
         self.person_repo = KuzuPersonRepository()
 
-    async def list_all_persons(self) -> List[Dict[str, Any]]:
+    async def list_all_persons(self) -> list[dict[str, Any]]:
         """Get all persons."""
         try:
             # The method exists in KuzuBookRepository, not KuzuPersonRepository
@@ -94,14 +94,14 @@ class KuzuPersonService:
         except Exception:
             return []
 
-    async def get_person_by_id(self, person_id: str) -> Optional[Dict[str, Any]]:
+    async def get_person_by_id(self, person_id: str) -> dict[str, Any] | None:
         """Get a person by ID."""
         try:
             return await self.person_repo.get_by_id(person_id)
         except Exception:
             return None
 
-    def get_person_by_id_sync(self, person_id: str) -> Optional[Dict[str, Any]]:
+    def get_person_by_id_sync(self, person_id: str) -> dict[str, Any] | None:
         """Get a person by ID (sync version with detailed debugging)."""
         try:
             # First, let's see what persons exist in the database
@@ -152,8 +152,8 @@ class KuzuPersonService:
             return None
 
     async def create_person(
-        self, person_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, person_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Create a new person."""
         try:
             # Use the person repository to create (it's a sync method)
@@ -169,8 +169,8 @@ class KuzuPersonService:
             return None
 
     async def update_person(
-        self, person_id: str, updates: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, person_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Update a person's information."""
         try:
             # Update the person node in Kuzu using safe query execution
@@ -268,7 +268,7 @@ class KuzuPersonService:
             traceback.print_exc()
             return False
 
-    async def find_person_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def find_person_by_name(self, name: str) -> dict[str, Any] | None:
         """Find a person by name (case-insensitive)."""
         try:
             query = """
@@ -296,7 +296,7 @@ class KuzuPersonService:
         except Exception:
             return None
 
-    async def get_books_by_person(self, person_id: str) -> List[Dict[str, Any]]:
+    async def get_books_by_person(self, person_id: str) -> list[dict[str, Any]]:
         """Get all books associated with a person (as author, illustrator, etc.)."""
         try:
             query = """
@@ -334,7 +334,7 @@ class KuzuPersonService:
             traceback.print_exc()
             return []
 
-    async def get_contribution_type_counts(self) -> Dict[str, int]:
+    async def get_contribution_type_counts(self) -> dict[str, int]:
         """Get counts of people by contribution type."""
         try:
             query = """
@@ -366,19 +366,19 @@ class KuzuPersonService:
             return {}
 
     # Sync wrappers for backward compatibility
-    def list_all_persons_sync(self) -> List[Dict[str, Any]]:
+    def list_all_persons_sync(self) -> list[dict[str, Any]]:
         """Get all persons (sync version)."""
         return run_async(self.list_all_persons())
 
     def create_person_sync(
-        self, person_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, person_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Create a new person (sync version)."""
         return run_async(self.create_person(person_data))
 
     def update_person_sync(
-        self, person_id: str, updates: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, person_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Update a person's information (sync version)."""
         return run_async(self.update_person(person_id, updates))
 
@@ -386,14 +386,14 @@ class KuzuPersonService:
         """Delete a person (sync version)."""
         return run_async(self.delete_person(person_id))
 
-    def find_person_by_name_sync(self, name: str) -> Optional[Dict[str, Any]]:
+    def find_person_by_name_sync(self, name: str) -> dict[str, Any] | None:
         """Find a person by name (sync version)."""
         return run_async(self.find_person_by_name(name))
 
-    def get_books_by_person_sync(self, person_id: str) -> List[Dict[str, Any]]:
+    def get_books_by_person_sync(self, person_id: str) -> list[dict[str, Any]]:
         """Get all books associated with a person (sync version)."""
         return run_async(self.get_books_by_person(person_id))
 
-    def get_contribution_type_counts_sync(self) -> Dict[str, int]:
+    def get_contribution_type_counts_sync(self) -> dict[str, int]:
         """Get counts of people by contribution type (sync version)."""
         return run_async(self.get_contribution_type_counts())

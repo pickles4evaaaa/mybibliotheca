@@ -5,15 +5,16 @@ A simplified, graph-native design that leverages Kuzu's strengths.
 Focus on simple nodes and clear relationships.
 """
 
-import os
 import json
-import kuzu  # type: ignore
 import logging
-import uuid
+import os
 import traceback
-from typing import Optional, Dict, Any, List
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+import kuzu  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -21,18 +22,18 @@ logger = logging.getLogger(__name__)
 class KuzuGraphDB:
     """Simplified Kuzu graph database with clean schema design."""
 
-    def __init__(self, database_path: Optional[str] = None):
+    def __init__(self, database_path: str | None = None):
         if database_path:
             self.database_path = database_path
         else:
             # Get the directory from environment or use default, then append the database name
             kuzu_dir = os.getenv("KUZU_DB_PATH", "data/kuzu")
             self.database_path = os.path.join(kuzu_dir, "bibliotheca.db")
-        self._database: Optional[kuzu.Database] = None
-        self._connection: Optional[kuzu.Connection] = None
+        self._database: kuzu.Database | None = None
+        self._connection: kuzu.Connection | None = None
         self._is_initialized = False
 
-    def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+    def _execute_query(self, query: str, params: dict[str, Any] | None = None):
         """Execute a query and normalize the result to always return a QueryResult."""
         if self._connection is None:
             raise Exception("Connection not established")
@@ -1000,19 +1001,19 @@ class KuzuGraphDB:
 
     # Repository-expected methods that delegate to storage layer
 
-    def create_node(self, node_type: str, data: Dict[str, Any]) -> bool:
+    def create_node(self, node_type: str, data: dict[str, Any]) -> bool:
         """Create a node using the storage layer."""
         storage = KuzuGraphStorage(self)
         node_id = data.get("id", str(uuid.uuid4()))
         return storage.store_node(node_type, node_id, data)
 
-    def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_type: str, node_id: str) -> dict[str, Any] | None:
         """Get a node using the storage layer."""
         storage = KuzuGraphStorage(self)
         return storage.get_node(node_type, node_id)
 
     def update_node(
-        self, node_type: str, node_id: str, updates: Dict[str, Any]
+        self, node_type: str, node_id: str, updates: dict[str, Any]
     ) -> bool:
         """Update a node using the storage layer."""
         storage = KuzuGraphStorage(self)
@@ -1025,21 +1026,21 @@ class KuzuGraphDB:
 
     def get_nodes_by_type(
         self, node_type: str, limit: int = 100, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get nodes by type using the storage layer."""
         storage = KuzuGraphStorage(self)
         return storage.get_nodes_by_type(node_type, limit, offset)
 
     def find_nodes_by_type(
         self, node_type: str, limit: int = 100, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Find nodes by type using the storage layer."""
         storage = KuzuGraphStorage(self)
         return storage.find_nodes_by_type(node_type, limit, offset)
 
     def query(
-        self, cypher_query: str, params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, cypher_query: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Execute a Cypher query and return results."""
         try:
             result = self.connection.execute(cypher_query, params or {})
@@ -1088,7 +1089,7 @@ class KuzuGraphDB:
         rel_type: str,
         to_type: str,
         to_id: str,
-        properties: Optional[Dict[str, Any]] = None,
+        properties: dict[str, Any] | None = None,
     ) -> bool:
         """Create a relationship between two nodes."""
         try:
@@ -1127,7 +1128,7 @@ class KuzuGraphStorage:
         self.connection = connection
         self.kuzu_conn = connection.connection
 
-    def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
+    def _execute_query(self, query: str, params: dict[str, Any] | None = None):
         """Execute a query and normalize the result to always return a QueryResult."""
         result = self.kuzu_conn.execute(query, params or {})  # type: ignore
 
@@ -1136,7 +1137,7 @@ class KuzuGraphStorage:
             return result[0] if result else None
         return result
 
-    def _row_values(self, row: Any) -> List[Any]:
+    def _row_values(self, row: Any) -> list[Any]:
         """Safely convert a Kuzu row to a list of values."""
         try:
             if isinstance(row, (list, tuple)):
@@ -1153,8 +1154,8 @@ class KuzuGraphStorage:
                 return []
 
     def query(
-        self, cypher_query: str, params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, cypher_query: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Execute a Cypher query and return results - compatibility method for services."""
         try:
             params = params or {}
@@ -1196,7 +1197,7 @@ class KuzuGraphStorage:
 
     # Node Operations
 
-    def store_node(self, node_type: str, node_id: str, data: Dict[str, Any]) -> bool:
+    def store_node(self, node_type: str, node_id: str, data: dict[str, Any]) -> bool:
         """Store a node in Kuzu."""
         try:
             print(f"[KUZU_STORAGE] 📝 Storing {node_type} node: {node_id}")
@@ -1315,9 +1316,9 @@ class KuzuGraphStorage:
             # Add metadata
             serialized_data["id"] = node_id
             if not serialized_data.get("created_at"):
-                serialized_data["created_at"] = datetime.now(timezone.utc)
+                serialized_data["created_at"] = datetime.now(UTC)
             if not serialized_data.get("updated_at"):
-                serialized_data["updated_at"] = datetime.now(timezone.utc)
+                serialized_data["updated_at"] = datetime.now(UTC)
 
             # Print debug info after ensuring datetime
             for ts_field in ["created_at", "updated_at"]:
@@ -1375,7 +1376,7 @@ class KuzuGraphStorage:
             traceback.print_exc()
             return False
 
-    def get_node(self, node_type: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def get_node(self, node_type: str, node_id: str) -> dict[str, Any] | None:
         """Get a node by type and ID."""
         try:
             query = f"MATCH (n:{node_type}) WHERE n.id = $node_id RETURN n.id, n"
@@ -1407,7 +1408,7 @@ class KuzuGraphStorage:
             logger.error(f"Failed to get {node_type} node {node_id}: {e}")
             return None
 
-    def _serialize_datetime_values(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _serialize_datetime_values(self, data: dict[str, Any]) -> dict[str, Any]:
         """Keep datetime objects as datetime objects for Kuzu storage."""
         serialized = {}
         for key, value in data.items():
@@ -1419,7 +1420,7 @@ class KuzuGraphStorage:
         return serialized
 
     def update_node(
-        self, node_type: str, node_id: str, updates: Dict[str, Any]
+        self, node_type: str, node_id: str, updates: dict[str, Any]
     ) -> bool:
         """Update specific fields of a node."""
         try:
@@ -1439,7 +1440,7 @@ class KuzuGraphStorage:
                     pass
             serialized_updates = self._serialize_datetime_values(updates)
             # KuzuDB requires datetime objects for TIMESTAMP fields, not strings
-            serialized_updates["updated_at"] = datetime.now(timezone.utc)
+            serialized_updates["updated_at"] = datetime.now(UTC)
 
             print(f"🔧 [UPDATE_NODE] Serialized updates: {serialized_updates}")
 
@@ -1492,7 +1493,7 @@ class KuzuGraphStorage:
 
     def get_nodes_by_type(
         self, node_type: str, limit: int = 100, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get all nodes of a specific type with pagination."""
         try:
             # Use RETURN n.* to get all properties as separate columns
@@ -1535,7 +1536,7 @@ class KuzuGraphStorage:
 
     def find_nodes_by_type(
         self, node_type: str, limit: int = 100, offset: int = 0
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Alias for get_nodes_by_type to maintain compatibility."""
         return self.get_nodes_by_type(node_type, limit, offset)
 
@@ -1548,7 +1549,7 @@ class KuzuGraphStorage:
         rel_type: str,
         to_type: str,
         to_id: str,
-        properties: Optional[Dict[str, Any]] = None,
+        properties: dict[str, Any] | None = None,
     ) -> bool:
         """Create a relationship between two nodes."""
         try:
@@ -1650,7 +1651,7 @@ class KuzuGraphStorage:
 
             # Ensure created_at is set as datetime object (not ISO string)
             if "created_at" not in processed_props:
-                processed_props["created_at"] = datetime.now(timezone.utc)
+                processed_props["created_at"] = datetime.now(UTC)
             elif isinstance(processed_props["created_at"], str):
                 try:
                     if processed_props["created_at"].endswith("Z"):
@@ -1661,7 +1662,7 @@ class KuzuGraphStorage:
                         processed_props["created_at"]
                     )
                 except (ValueError, TypeError):
-                    processed_props["created_at"] = datetime.now(timezone.utc)
+                    processed_props["created_at"] = datetime.now(UTC)
 
             # Build properties clause
             if processed_props:
@@ -1723,8 +1724,8 @@ class KuzuGraphStorage:
             return False
 
     def get_relationships(
-        self, from_type: str, from_id: str, rel_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        self, from_type: str, from_id: str, rel_type: str | None = None
+    ) -> list[dict[str, Any]]:
         """Get all relationships from a node."""
         try:
             if rel_type:
@@ -1789,7 +1790,7 @@ class KuzuGraphStorage:
         book_id: str,
         field_name: str,
         field_value: str,
-        field_type: Optional[str] = None,
+        field_type: str | None = None,
     ) -> bool:
         """
         Store custom metadata for a user-book relationship.
@@ -1916,7 +1917,7 @@ class KuzuGraphStorage:
                         "book_id": book_id,
                         "field_name": field_name,
                         "field_value": field_value,
-                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "created_at": datetime.now(UTC).isoformat(),
                     }
                     if field_definition_id is None:
                         logger.error(
@@ -1954,7 +1955,7 @@ class KuzuGraphStorage:
                             "field_id": field_definition_id,
                             "book_id": book_id,
                             "field_value": field_value,
-                            "updated_at": datetime.now(timezone.utc),
+                            "updated_at": datetime.now(UTC),
                         },
                     )
 
@@ -1972,8 +1973,8 @@ class KuzuGraphStorage:
     # Advanced Graph Queries
 
     def execute_cypher(
-        self, query: str, parameters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, query: str, parameters: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Execute a custom Cypher query."""
         try:
             parameters = parameters or {}
@@ -2110,8 +2111,8 @@ def get_graph_storage() -> "KuzuGraphStorage":
 # Convenience functions for migration
 def safe_execute_kuzu_query(
     query: str,
-    params: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    params: dict[str, Any] | None = None,
+    user_id: str | None = None,
     operation: str = "query",
 ):
     """
@@ -2153,7 +2154,7 @@ def safe_execute_kuzu_query(
 
 
 def safe_get_kuzu_connection(
-    user_id: Optional[str] = None, operation: str = "connection"
+    user_id: str | None = None, operation: str = "connection"
 ):
     """
     Get a thread-safe KuzuDB connection context manager.

@@ -1,19 +1,20 @@
-import time
-import threading
-import functools
 import asyncio
+import functools
 import hashlib
-from typing import Any, Optional, Tuple, Dict, Callable
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
 
 
 class TTLCache:
     """Very small in-process TTL cache suitable for single-worker setups."""
 
     def __init__(self):
-        self._store: Dict[str, Tuple[Any, float]] = {}
+        self._store: dict[str, tuple[Any, float]] = {}
         self._lock = threading.Lock()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         now = time.time()
         with self._lock:
             item = self._store.get(key)
@@ -40,11 +41,11 @@ class TTLCache:
 
 
 _cache = TTLCache()
-_user_versions: Dict[str, int] = {}
+_user_versions: dict[str, int] = {}
 _version_lock = threading.Lock()
 
 
-def cache_get(key: str) -> Optional[Any]:
+def cache_get(key: str) -> Any | None:
     return _cache.get(key)
 
 
@@ -64,7 +65,7 @@ def bump_user_library_version(user_id: str) -> int:
         return current
 
 
-def cached(ttl_seconds: int = 60, key_builder: Optional[Callable] = None):
+def cached(ttl_seconds: int = 60, key_builder: Callable | None = None):
     """
     Decorator to cache function results.
     Supports both sync and async functions.

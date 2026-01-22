@@ -5,21 +5,22 @@ A simplified approach that focuses on direct database backup/restore
 with minimal complexity and maximum reliability.
 """
 
-import os
 import contextlib
-import shutil
-import zipfile
-import tempfile
-import logging
 import json
+import logging
+import os
+import shutil
+import tempfile
 import threading
+import uuid
+import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
-import uuid
+from typing import Any
 
 from flask import current_app
+
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
 
@@ -54,9 +55,9 @@ class SimpleBackupInfo:
     file_path: str
     file_size: int
     description: str = ""
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "id": self.id,
@@ -69,7 +70,7 @@ class SimpleBackupInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SimpleBackupInfo":
+    def from_dict(cls, data: dict[str, Any]) -> "SimpleBackupInfo":
         """Create from dictionary."""
         data["created_at"] = datetime.fromisoformat(data["created_at"])
         return cls(**data)
@@ -78,7 +79,7 @@ class SimpleBackupInfo:
 class SimpleBackupService:
     """Simplified backup and restore service for Bibliotheca."""
 
-    def __init__(self, base_dir: Optional[str] = None):
+    def __init__(self, base_dir: str | None = None):
         """Initialize the simple backup service."""
         self.base_dir = Path(base_dir) if base_dir else Path.cwd()
         self.data_dir = self.base_dir / "data"
@@ -100,12 +101,12 @@ class SimpleBackupService:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
         # Load existing backup index
-        self._backup_index: Dict[str, SimpleBackupInfo] = self._load_backup_index()
+        self._backup_index: dict[str, SimpleBackupInfo] = self._load_backup_index()
 
         # Scheduler internals
-        self._scheduler_thread: Optional[threading.Thread] = None
+        self._scheduler_thread: threading.Thread | None = None
         self._scheduler_stop = threading.Event()
-        self._last_scheduled_backup: Optional[datetime] = None
+        self._last_scheduled_backup: datetime | None = None
         # Initialize settings (creates defaults if missing)
         self._settings = self._load_or_create_settings()
         # Auto-start scheduler if enabled
@@ -115,7 +116,7 @@ class SimpleBackupService:
         self._create_lock = threading.Lock()
 
     # -------------------------- Settings & Scheduling -----------------------
-    def _load_or_create_settings(self) -> Dict[str, Any]:
+    def _load_or_create_settings(self) -> dict[str, Any]:
         defaults = {
             "enabled": True,
             "frequency": "daily",  # future: weekly
@@ -126,7 +127,7 @@ class SimpleBackupService:
         }
         try:
             if self.backup_settings_file.exists():
-                with open(self.backup_settings_file, "r") as f:
+                with open(self.backup_settings_file) as f:
                     data = json.load(f)
                 # Merge defaults
                 merged = {**defaults, **data}
@@ -151,7 +152,7 @@ class SimpleBackupService:
                 json.dump(self._settings, f, indent=2)
 
             # Verify the file was written correctly by reading it back and comparing
-            with open(temp_file, "r") as f:
+            with open(temp_file) as f:
                 verified = json.load(f)
 
             # Validate that all critical settings were saved correctly
@@ -234,13 +235,13 @@ class SimpleBackupService:
 
     # -----------------------------------------------------------------------
 
-    def _load_backup_index(self) -> Dict[str, SimpleBackupInfo]:
+    def _load_backup_index(self) -> dict[str, SimpleBackupInfo]:
         """Load the backup index from disk."""
         if not self.backup_index_file.exists():
             return {}
 
         try:
-            with open(self.backup_index_file, "r") as f:
+            with open(self.backup_index_file) as f:
                 content = f.read().strip()
 
             # Try to handle corrupted JSON by finding the first complete JSON object
@@ -319,8 +320,8 @@ class SimpleBackupService:
             logger.error(f"Failed to save backup index: {e}")
 
     def create_backup(
-        self, name: Optional[str] = None, description: str = "", reason: str = "manual"
-    ) -> Optional[SimpleBackupInfo]:
+        self, name: str | None = None, description: str = "", reason: str = "manual"
+    ) -> SimpleBackupInfo | None:
         """
         Create a simple backup of the KuzuDB database.
 
@@ -652,7 +653,7 @@ class SimpleBackupService:
                 metadata_path = temp_path / "backup_metadata.json"
                 backup_metadata = {}
                 if metadata_path.exists():
-                    with open(metadata_path, "r") as f:
+                    with open(metadata_path) as f:
                         backup_metadata = json.load(f)
 
                 backup_type = backup_metadata.get(
@@ -1166,11 +1167,11 @@ class SimpleBackupService:
                     logger.error(f"Error copying {source.name}: {e}")
                     raise
 
-    def list_backups(self) -> List[SimpleBackupInfo]:
+    def list_backups(self) -> list[SimpleBackupInfo]:
         """Get list of all backups."""
         return list(self._backup_index.values())
 
-    def get_backup(self, backup_id: str) -> Optional[SimpleBackupInfo]:
+    def get_backup(self, backup_id: str) -> SimpleBackupInfo | None:
         """Get backup info by ID."""
         return self._backup_index.get(backup_id)
 
@@ -1198,7 +1199,7 @@ class SimpleBackupService:
             logger.error(f"Failed to delete simple backup {backup_id}: {e}")
             return False
 
-    def get_backup_stats(self) -> Dict[str, Any]:
+    def get_backup_stats(self) -> dict[str, Any]:
         """Get simple backup statistics."""
         backups = self.list_backups()
 
@@ -1313,7 +1314,7 @@ class SimpleBackupService:
 
 
 # Global instance
-_simple_backup_service: Optional[SimpleBackupService] = None
+_simple_backup_service: SimpleBackupService | None = None
 
 
 def get_simple_backup_service() -> SimpleBackupService:

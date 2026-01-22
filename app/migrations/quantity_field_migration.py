@@ -8,7 +8,6 @@ This migration:
 from __future__ import annotations
 
 import logging
-from typing import Dict
 
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
@@ -29,7 +28,7 @@ def _column_exists(conn, table: str, column: str) -> bool:
         return True
 
 
-def run_quantity_migration(dry_run: bool = False) -> Dict[str, object]:
+def run_quantity_migration(dry_run: bool = False) -> dict[str, object]:
     """
     Ensure quantity field exists and has proper default values for existing books.
 

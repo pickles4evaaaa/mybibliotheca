@@ -8,8 +8,8 @@ import logging
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
 # Add infrastructure path for direct imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,30 +23,30 @@ except Exception:
 
 try:
     from app.infrastructure.kuzu_repositories import (
-        KuzuUserRepository,
         KuzuBookRepository,
-        KuzuUserBookRepository,
         KuzuLocationRepository,
+        KuzuUserBookRepository,
+        KuzuUserRepository,
     )
 except ImportError:
     from .infrastructure.kuzu_repositories import (
-        KuzuUserRepository,
         KuzuBookRepository,
-        KuzuUserBookRepository,
         KuzuLocationRepository,
+        KuzuUserBookRepository,
+        KuzuUserRepository,
     )
 
 # Try to import domain models, fall back to basic classes if not available
 try:
     from app.domain.models import (
-        User,
         Book,
-        Person,
         Category,
         Location,
-        ReadingStatus,
-        OwnershipStatus,
         MediaType,
+        OwnershipStatus,
+        Person,
+        ReadingStatus,
+        User,
     )  # type: ignore[assignment]
 
     # If import succeeds, we don't need fallback classes
@@ -91,11 +91,11 @@ class KuzuIntegrationService:
 
     def __init__(self):
         """Initialize the integration service."""
-        self.db: Optional[KuzuGraphDB] = None
-        self.user_repo: Optional[KuzuUserRepository] = None
-        self.book_repo: Optional[KuzuBookRepository] = None
-        self.user_book_repo: Optional[KuzuUserBookRepository] = None
-        self.location_repo: Optional[KuzuLocationRepository] = None
+        self.db: KuzuGraphDB | None = None
+        self.user_repo: KuzuUserRepository | None = None
+        self.book_repo: KuzuBookRepository | None = None
+        self.user_book_repo: KuzuUserBookRepository | None = None
+        self.location_repo: KuzuLocationRepository | None = None
         self._initialized = False
 
     def initialize(self):
@@ -157,7 +157,7 @@ class KuzuIntegrationService:
     # User Management
     # ========================================
 
-    async def create_user(self, user_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def create_user(self, user_data: dict[str, Any]) -> dict[str, Any] | None:
         """Create a new user."""
         if not self._ensure_initialized():
             return None
@@ -188,7 +188,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to create user: {e}")
             return None
 
-    async def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_user(self, user_id: str) -> dict[str, Any] | None:
         """Get user by ID."""
         if not self._ensure_initialized():
             return None
@@ -204,7 +204,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to get user {user_id}: {e}")
             return None
 
-    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+    async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         """Get user by username."""
         if not self._ensure_initialized():
             return None
@@ -221,7 +221,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to get user by username {username}: {e}")
             return None
 
-    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Get user by email."""
         if not self._ensure_initialized():
             return None
@@ -239,7 +239,7 @@ class KuzuIntegrationService:
 
     async def get_user_by_username_or_email(
         self, username_or_email: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get user by username or email."""
         if not self._ensure_initialized():
             return None
@@ -264,7 +264,7 @@ class KuzuIntegrationService:
             )
             return None
 
-    def _user_to_dict(self, user) -> Dict[str, Any]:
+    def _user_to_dict(self, user) -> dict[str, Any]:
         """Convert user object to dictionary."""
         # Handle both dict and object inputs
         if isinstance(user, dict):
@@ -306,7 +306,7 @@ class KuzuIntegrationService:
         try:
             user_repo = self._get_user_repo()
             # Fast path COUNT
-            count_val: Optional[int] = None
+            count_val: int | None = None
             try:
                 safe_manager = user_repo.safe_manager  # type: ignore[attr-defined]
                 raw = safe_manager.execute_query(
@@ -340,8 +340,8 @@ class KuzuIntegrationService:
             return 0
 
     async def update_user(
-        self, user_id: str, user_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, user_id: str, user_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Update an existing user."""
         if not self._ensure_initialized():
             return None
@@ -365,7 +365,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to update user {user_id}: {e}")
             return None
 
-    async def get_all_users(self, limit: int = 1000) -> List[Dict[str, Any]]:
+    async def get_all_users(self, limit: int = 1000) -> list[dict[str, Any]]:
         """Get all users."""
         if not self._ensure_initialized():
             return []
@@ -382,7 +382,7 @@ class KuzuIntegrationService:
     # Book Management
     # ========================================
 
-    async def create_book(self, book_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def create_book(self, book_data: dict[str, Any]) -> dict[str, Any] | None:
         """Create a new book with authors and categories."""
         if not self._ensure_initialized():
             return None
@@ -420,7 +420,7 @@ class KuzuIntegrationService:
 
     async def create_book_with_relationships(
         self, book: "Book"
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Create a new book with full domain model including relationships."""
         if not self._ensure_initialized():
             return None
@@ -432,9 +432,9 @@ class KuzuIntegrationService:
 
             # Set timestamps if missing
             if not hasattr(book, "created_at") or not book.created_at:
-                book.created_at = datetime.now(timezone.utc)
+                book.created_at = datetime.now(UTC)
             if not hasattr(book, "updated_at") or not book.updated_at:
-                book.updated_at = datetime.now(timezone.utc)
+                book.updated_at = datetime.now(UTC)
 
             # Use the clean repository which handles relationships
             book_repo = self._get_book_repo()
@@ -451,7 +451,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to create book with relationships: {e}")
             return None
 
-    async def find_book_by_isbn(self, isbn: str) -> Optional[Dict[str, Any]]:
+    async def find_book_by_isbn(self, isbn: str) -> dict[str, Any] | None:
         """Find a book by ISBN."""
         if not self._ensure_initialized():
             return None
@@ -485,7 +485,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to find book by ISBN {isbn}: {e}")
             return None
 
-    async def get_book(self, book_id: str) -> Optional[Dict[str, Any]]:
+    async def get_book(self, book_id: str) -> dict[str, Any] | None:
         """Get book by ID with full details."""
         if not self._ensure_initialized():
             return None
@@ -502,7 +502,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to get book {book_id}: {e}")
             return None
 
-    async def search_books(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    async def search_books(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search books by title or author."""
         if not self._ensure_initialized():
             return []
@@ -516,7 +516,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to search books: {e}")
             return []
 
-    async def _book_to_dict(self, book) -> Dict[str, Any]:
+    async def _book_to_dict(self, book) -> dict[str, Any]:
         """Convert book object to dictionary with full details."""
         book_dict = {
             "id": book.id,
@@ -583,8 +583,8 @@ class KuzuIntegrationService:
         return book_dict
 
     async def _book_to_dict_from_data(
-        self, book_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, book_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """Convert book data dictionary to standardized dictionary format."""
         book_dict = {
             "id": book_data.get("id"),
@@ -674,19 +674,19 @@ class KuzuIntegrationService:
     # ========================================
 
     async def add_book_to_library(
-        self, user_id: str, book_id: str, ownership_data: Dict[str, Any]
+        self, user_id: str, book_id: str, ownership_data: dict[str, Any]
     ) -> bool:
         """Add a book to user's library."""
         if not self._ensure_initialized():
             return False
 
         try:
-            from app.domain.models import OwnershipStatus, MediaType
+            from app.domain.models import MediaType, OwnershipStatus
 
             # Ensure date_added is a proper datetime object
             date_added_value = ownership_data.get("date_added")
             if date_added_value is None:
-                final_date_added = datetime.now(timezone.utc)
+                final_date_added = datetime.now(UTC)
             elif isinstance(date_added_value, datetime):
                 final_date_added = date_added_value
             elif isinstance(date_added_value, str):
@@ -696,16 +696,16 @@ class KuzuIntegrationService:
                         date_added_value.replace("Z", "+00:00")
                     )
                 except ValueError:
-                    final_date_added = datetime.now(timezone.utc)
+                    final_date_added = datetime.now(UTC)
             elif isinstance(date_added_value, (int, float)):
                 try:
                     # Try to parse as timestamp
                     final_date_added = datetime.fromtimestamp(date_added_value)
                 except (ValueError, OSError):
-                    final_date_added = datetime.now(timezone.utc)
+                    final_date_added = datetime.now(UTC)
             else:
                 # Fallback to current time for any other type
-                final_date_added = datetime.now(timezone.utc)
+                final_date_added = datetime.now(UTC)
 
             # Create ownership relationship
             user_book_repo = self._get_user_book_repo()
@@ -775,10 +775,10 @@ class KuzuIntegrationService:
     async def get_user_library(
         self,
         user_id: str,
-        reading_status: Optional[str] = None,
+        reading_status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get user's library with optional filtering."""
         if not self._ensure_initialized():
             return []
@@ -918,7 +918,7 @@ class KuzuIntegrationService:
     # Statistics and Analytics
     # ========================================
 
-    async def get_user_statistics(self, user_id: str) -> Dict[str, Any]:
+    async def get_user_statistics(self, user_id: str) -> dict[str, Any]:
         """Get comprehensive user library statistics."""
         if not self._ensure_initialized():
             return {}
@@ -934,7 +934,7 @@ class KuzuIntegrationService:
 
     async def get_reading_timeline(
         self, user_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get user's reading timeline."""
         if not self._ensure_initialized():
             return []
@@ -953,8 +953,8 @@ class KuzuIntegrationService:
     # ========================================
 
     async def create_location(
-        self, user_id: str, location_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, user_id: str, location_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Create a new location for user."""
         if not self._ensure_initialized():
             return None
@@ -982,7 +982,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to create location: {e}")
             return None
 
-    async def get_user_locations(self, user_id: str) -> List[Dict[str, Any]]:
+    async def get_user_locations(self, user_id: str) -> list[dict[str, Any]]:
         """Get all locations for a user."""
         if not self._ensure_initialized():
             return []
@@ -996,7 +996,7 @@ class KuzuIntegrationService:
             logger.error(f"Failed to get user locations: {e}")
             return []
 
-    def _location_to_dict(self, location) -> Dict[str, Any]:
+    def _location_to_dict(self, location) -> dict[str, Any]:
         """Convert location object to dictionary."""
         return {
             "id": location.id,

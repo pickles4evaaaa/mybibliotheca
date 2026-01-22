@@ -11,10 +11,9 @@ Notes:
 - Does not persist settings; rely on utils.audiobookshelf_settings for that
 """
 
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any
 
 import requests  # type: ignore
-
 
 DEFAULT_TIMEOUT = 8
 
@@ -25,7 +24,7 @@ class AudiobookShelfClient:
         self.api_key = api_key or ""
         self.timeout = timeout
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -36,7 +35,7 @@ class AudiobookShelfClient:
             path = "/" + path
         return f"{self.base_url}{path}"
 
-    def test_connection(self) -> Dict[str, Any]:
+    def test_connection(self) -> dict[str, Any]:
         """Ping a simple endpoint to validate connectivity and auth.
 
         Returns: { ok: bool, message: str, libraries?: list }
@@ -88,7 +87,7 @@ class AudiobookShelfClient:
         except Exception as e:
             return {"ok": False, "message": f"Connection failed: {e}"}
 
-    def list_libraries(self) -> Tuple[bool, List[Dict[str, Any]], str]:
+    def list_libraries(self) -> tuple[bool, list[dict[str, Any]], str]:
         """Return (ok, libraries, message)."""
         res = self.test_connection()
         return (
@@ -99,7 +98,7 @@ class AudiobookShelfClient:
 
     def list_library_items(
         self, library_id: str, page: int = 1, size: int = 50
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List items in a library. Returns dict with ok, items, total, message.
 
         Uses ABS endpoint: /api/libraries/{library_id}/items?page=&size=
@@ -201,7 +200,7 @@ class AudiobookShelfClient:
                 )
             )
 
-            last_err: Optional[str] = None
+            last_err: str | None = None
             for url, params in attempts:
                 try:
                     resp = requests.get(
@@ -230,7 +229,7 @@ class AudiobookShelfClient:
         except Exception as e:
             return {"ok": False, "message": f"Failed to list items: {e}", "items": []}
 
-    def get_item(self, item_id: str, expanded: bool = True) -> Dict[str, Any]:
+    def get_item(self, item_id: str, expanded: bool = True) -> dict[str, Any]:
         """Get a single item. Always returns shape { ok, item, message? }.
 
         Tries a few known variants and normalizes the response so callers can
@@ -238,7 +237,7 @@ class AudiobookShelfClient:
         """
         if not item_id:
             return {"ok": False, "message": "Missing item_id"}
-        attempts: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+        attempts: list[tuple[str, dict[str, Any] | None]] = []
         # Primary
         attempts.append(
             (self._url(f"/api/items/{item_id}"), {"expanded": 1} if expanded else None)
@@ -251,7 +250,7 @@ class AudiobookShelfClient:
             attempts.append((self._url(f"/api/items/{item_id}"), {"full": 1}))
         # Some deployments expose libraryItems path
         attempts.append((self._url(f"/api/library-items/{item_id}"), None))
-        last_err: Optional[str] = None
+        last_err: str | None = None
         try:
             for url, params in attempts:
                 try:
@@ -286,7 +285,7 @@ class AudiobookShelfClient:
         except Exception as e:
             return {"ok": False, "message": f"Failed to get item: {e}"}
 
-    def build_cover_url(self, cover_path: Optional[str]) -> Optional[str]:
+    def build_cover_url(self, cover_path: str | None) -> str | None:
         """Build absolute URL for a given coverPath from ABS item."""
         if not cover_path:
             return None
@@ -296,7 +295,7 @@ class AudiobookShelfClient:
             cover_path = "/" + cover_path
         return f"{self.base_url}{cover_path}"
 
-    def get_me(self) -> Dict[str, Any]:
+    def get_me(self) -> dict[str, Any]:
         """Fetch authenticated user info (/api/me). Returns { ok, user?, message? }."""
         try:
             resp = requests.get(
@@ -315,11 +314,11 @@ class AudiobookShelfClient:
     # --- Listening sessions/progress helpers ---
     def list_user_sessions(
         self,
-        user_id: Optional[str] = None,
-        updated_after: Optional[str] = None,
+        user_id: str | None = None,
+        updated_after: str | None = None,
         limit: int = 100,
         page: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Fetch listening sessions or play progress for a user.
 
         Tries multiple ABS endpoints since API variants differ. Returns { ok, sessions, total }.
@@ -327,7 +326,7 @@ class AudiobookShelfClient:
         """
         try:
             headers = self._headers()
-            base_attempts: List[Tuple[str, Dict[str, Any]]] = []
+            base_attempts: list[tuple[str, dict[str, Any]]] = []
             # Prefer "me" endpoints if user_id not specified
             if not user_id:
                 # Official endpoints
@@ -360,7 +359,7 @@ class AudiobookShelfClient:
                 )
 
             # Add updatedAfter filters if provided
-            attempts: List[Tuple[str, Dict[str, Any]]] = []
+            attempts: list[tuple[str, dict[str, Any]]] = []
             for url, params in base_attempts:
                 attempts.append((url, params))
                 if updated_after:
@@ -370,7 +369,7 @@ class AudiobookShelfClient:
                         params2[k] = updated_after
                     attempts.append((url, params2))
 
-            last_err: Optional[str] = None
+            last_err: str | None = None
 
             def _parse_sessions(data: Any) -> tuple[list, int]:
                 if isinstance(data, list):
@@ -418,11 +417,11 @@ class AudiobookShelfClient:
             }
 
     def get_user_progress_for_item(
-        self, item_id: str, user_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, item_id: str, user_id: str | None = None
+    ) -> dict[str, Any]:
         """Fetch a user's progress/bookmark for a specific item."""
         try:
-            attempts: List[Tuple[str, Optional[Dict[str, Any]]]] = []
+            attempts: list[tuple[str, dict[str, Any] | None]] = []
             # Primary according to docs
             attempts.append((self._url(f"/api/me/progress/{item_id}"), None))
             # Fallbacks seen in some clients
@@ -437,7 +436,7 @@ class AudiobookShelfClient:
                 )
             # Additional generic fallback sometimes exposed
             attempts.append((self._url(f"/api/progress/{item_id}"), None))
-            last_err: Optional[str] = None
+            last_err: str | None = None
             for url, params in attempts:
                 try:
                     resp = requests.get(
@@ -461,8 +460,8 @@ class AudiobookShelfClient:
 
 
 def get_client_from_settings(
-    settings: Dict[str, Any],
-) -> Optional[AudiobookShelfClient]:
+    settings: dict[str, Any],
+) -> AudiobookShelfClient | None:
     base_url = (settings or {}).get("base_url") or ""
     api_key = (settings or {}).get("api_key") or ""
     if not base_url:

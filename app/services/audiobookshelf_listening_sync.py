@@ -14,20 +14,21 @@ Constraints:
 
 from __future__ import annotations
 
-from typing import Dict, Any, Optional, List, Callable, cast
-from datetime import datetime, timezone
 import logging
 import os
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, cast
 
-from app.services.audiobookshelf_service import AudiobookShelfClient
-from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
+from app.services.audiobookshelf_service import AudiobookShelfClient
 from app.services.personal_metadata_service import personal_metadata_service
+from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
+def _parse_iso(ts: str | None) -> datetime | None:
     if not ts:
         return None
     try:
@@ -39,7 +40,7 @@ def _parse_iso(ts: Optional[str]) -> Optional[datetime]:
             val = float(ts)
             if val > 10_000_000_000:  # likely ms
                 val = val / 1000.0
-            return datetime.utcfromtimestamp(val).replace(tzinfo=timezone.utc)
+            return datetime.utcfromtimestamp(val).replace(tzinfo=UTC)
         except Exception:
             return None
 
@@ -62,7 +63,7 @@ class AudiobookshelfListeningSync:
         )
         self.debug = bool(settings_debug or env_debug)
 
-    def _dbg(self, msg: str, extra: Optional[Dict[str, Any]] = None):
+    def _dbg(self, msg: str, extra: dict[str, Any] | None = None):
         if self.debug:
             try:
                 # Use ERROR so messages appear even when LOG_LEVEL=ERROR
@@ -73,7 +74,7 @@ class AudiobookshelfListeningSync:
             except Exception:
                 pass
 
-    def _find_book_id_by_abs_item(self, item: Dict[str, Any]) -> Optional[str]:
+    def _find_book_id_by_abs_item(self, item: dict[str, Any]) -> str | None:
         """Resolve local Book.id by ABS identifiers: prefer audiobookshelf_id then ISBN then title/author."""
         abs_id = item.get("id") or item.get("_id") or item.get("itemId")
         if abs_id:
@@ -113,7 +114,7 @@ class AudiobookshelfListeningSync:
         minimal = bool(abs_id) and not any(
             k in (item or {}) for k in ("media", "metadata", "title")
         )
-        fetched_item: Optional[Dict[str, Any]] = None
+        fetched_item: dict[str, Any] | None = None
         if minimal:
             try:
                 gi = self.client.get_item(str(abs_id))
@@ -221,7 +222,7 @@ class AudiobookshelfListeningSync:
         )
         return None
 
-    def _ensure_abs_user_id(self, settings: Dict[str, Any]) -> Optional[str]:
+    def _ensure_abs_user_id(self, settings: dict[str, Any]) -> str | None:
         """Resolve ABS user id if missing using /api/me and persist it for future calls."""
         abs_user_id = settings.get("abs_user_id") or None
         if abs_user_id:
@@ -249,7 +250,7 @@ class AudiobookshelfListeningSync:
         return None
 
     def _apply_progress(
-        self, book_id: str, position_ms: int, updated_at: Optional[datetime]
+        self, book_id: str, position_ms: int, updated_at: datetime | None
     ):
         """Deprecated: use _upsert_progress to coalesce writes. Retained for compatibility."""
         try:
@@ -261,10 +262,10 @@ class AudiobookshelfListeningSync:
         self,
         book_id: str,
         position_ms: int,
-        updated_at: Optional[datetime],
+        updated_at: datetime | None,
         finished_flag: bool,
         *,
-        progress_pct: Optional[float] = None,
+        progress_pct: float | None = None,
         has_listening_activity: bool = False,
     ):
         """Coalesce personal metadata updates into a single write to reduce conflicts.
@@ -276,7 +277,7 @@ class AudiobookshelfListeningSync:
         - If not finished and 0 < progress_pct < 100, set reading_status='currently_reading' (and clear finish_date if previously set)
         - Ensure start_date exists
         """
-        updates: Dict[str, Any] = {"progress_ms": int(position_ms)}
+        updates: dict[str, Any] = {"progress_ms": int(position_ms)}
         if updated_at:
             updates["last_listened_at"] = updated_at.isoformat()
         # Persist progress percentage when available (rounded to one decimal place)
@@ -298,7 +299,7 @@ class AudiobookshelfListeningSync:
         try:
             if not meta.get("start_date"):
                 personal_metadata_service.ensure_start_date(
-                    self.user_id, book_id, (updated_at or datetime.now(timezone.utc))
+                    self.user_id, book_id, (updated_at or datetime.now(UTC))
                 )
         except Exception:
             pass
@@ -308,7 +309,7 @@ class AudiobookshelfListeningSync:
             isinstance(progress_pct, (int, float)) and float(progress_pct) >= 100.0
         ):
             updates["reading_status"] = "read"
-            finish_date_arg = updated_at or datetime.now(timezone.utc)
+            finish_date_arg = updated_at or datetime.now(UTC)
             # Ensure percentage is 100 when marked finished, even if not provided
             if updates.get("progress_percentage") is None:
                 updates["progress_percentage"] = 100.0
@@ -356,10 +357,10 @@ class AudiobookshelfListeningSync:
 
     def _is_finished_from_payload(
         self,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         *,
-        position_ms: Optional[int] = None,
-        duration_ms: Optional[int] = None,
+        position_ms: int | None = None,
+        duration_ms: int | None = None,
     ) -> bool:
         """Detect finished strictly from ABS explicit markers.
 
@@ -408,8 +409,8 @@ class AudiobookshelfListeningSync:
         self,
         book_id: str,
         minutes: int,
-        when: Optional[datetime],
-        pages: Optional[int] = None,
+        when: datetime | None,
+        pages: int | None = None,
     ):
         """Best-effort: create/update a reading log entry for the day with minutes_read (and optional pages_read)."""
         try:
@@ -419,7 +420,7 @@ class AudiobookshelfListeningSync:
             from app.services.kuzu_reading_log_service import KuzuReadingLogService
 
             svc = KuzuReadingLogService()
-            d = (when or datetime.now(timezone.utc)).date()
+            d = (when or datetime.now(UTC)).date()
             rl = ReadingLog(
                 id=None,
                 user_id=self.user_id,
@@ -428,7 +429,7 @@ class AudiobookshelfListeningSync:
                 pages_read=int(pages or 0),
                 minutes_read=int(minutes),
                 notes=None,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
             created = svc.create_reading_log_sync(rl)
             if created and self.debug:
@@ -448,27 +449,27 @@ class AudiobookshelfListeningSync:
     def sync(
         self,
         page_size: int = 100,
-        seed_item_ids: Optional[List[str]] = None,
-        progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
-    ) -> Dict[str, Any]:
+        seed_item_ids: list[str] | None = None,
+        progress_cb: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         """Run an incremental listening sync for the user. Returns small summary dict."""
         settings = load_abs_settings()
         abs_user_id = self._ensure_abs_user_id(settings)
         last = settings.get("last_listening_sync")
-        updated_after: Optional[str] = None
+        updated_after: str | None = None
         if last is not None:
             updated_after = str(last)
         page = 0  # ABS API pages are 0-indexed
         processed = 0
         matched = 0
-        expected_total: Optional[int] = None
+        expected_total: int | None = None
 
         # Track last seen position per book to compute deltas when ABS doesn't provide listened ms
-        last_pos_ms_by_book: Dict[str, int] = {}
+        last_pos_ms_by_book: dict[str, int] = {}
         # Cache page_count per book to estimate pages during sessions
-        page_count_cache: Dict[str, Optional[int]] = {}
+        page_count_cache: dict[str, int | None] = {}
         # Cache audio duration per book (ms) for percentage fallback
-        duration_ms_cache: Dict[str, Optional[int]] = {}
+        duration_ms_cache: dict[str, int | None] = {}
 
         self._dbg(
             "Start listening sync",
@@ -499,7 +500,7 @@ class AudiobookshelfListeningSync:
                 sessions = sorted(
                     sessions,
                     key=lambda x: _parse_iso(x.get("updatedAt") or x.get("updated_at"))
-                    or datetime.now(timezone.utc),
+                    or datetime.now(UTC),
                 )
             except Exception:
                 pass
@@ -530,7 +531,7 @@ class AudiobookshelfListeningSync:
                                 if not book_id:
                                     continue
                                 # Normalize progress
-                                pos_ms: Optional[int] = None
+                                pos_ms: int | None = None
                                 for key in (
                                     "positionMs",
                                     "position_ms",
@@ -558,7 +559,7 @@ class AudiobookshelfListeningSync:
                                     or prog.get("last_updated")
                                 )
                                 # Try to detect duration for finish heuristic
-                                dur_ms: Optional[int] = None
+                                dur_ms: int | None = None
                                 for dk in ("durationMs", "duration_ms", "duration"):
                                     dv = prog.get(dk)
                                     if isinstance(dv, (int, float)):
@@ -637,10 +638,10 @@ class AudiobookshelfListeningSync:
                         continue
                     matched += 1
                     # Normalize progress fields
-                    pos_ms: Optional[int] = None
-                    updated_at: Optional[datetime] = None
+                    pos_ms: int | None = None
+                    updated_at: datetime | None = None
                     finished_flag: bool = False
-                    progress_pct: Optional[float] = None
+                    progress_pct: float | None = None
 
                     for key in (
                         "positionMs",
@@ -696,21 +697,21 @@ class AudiobookshelfListeningSync:
                                     _v = prog.get("progressPercent")
                                     if isinstance(_v, (int, float, str)):
                                         try:
-                                            progress_pct = float(cast(Any, _v))
+                                            progress_pct = float(cast("Any", _v))
                                         except Exception:
                                             pass
                                 if progress_pct is None and "percentComplete" in prog:
                                     _v = prog.get("percentComplete")
                                     if isinstance(_v, (int, float, str)):
                                         try:
-                                            progress_pct = float(cast(Any, _v))
+                                            progress_pct = float(cast("Any", _v))
                                         except Exception:
                                             pass
                                 if progress_pct is None and "progress" in prog:
                                     _v = prog.get("progress")
                                     if isinstance(_v, (int, float, str)):
                                         try:
-                                            progress_pct = float(cast(Any, _v))
+                                            progress_pct = float(cast("Any", _v))
                                         except Exception:
                                             pass
                                 # timestamps
@@ -733,7 +734,7 @@ class AudiobookshelfListeningSync:
                             s.get("updatedAt") or s.get("updated_at")
                         )
                     # Detect finished state via flags or duration parity
-                    duration_ms: Optional[int] = None
+                    duration_ms: int | None = None
                     for k in ("durationMs", "duration_ms", "duration", "durationSec"):
                         dv = s.get(k)
                         if isinstance(dv, (int, float)):
@@ -822,7 +823,7 @@ class AudiobookshelfListeningSync:
                     except Exception:
                         progress_pct = None
                     # Derive minutes listened for ReadingLog
-                    minutes_from_session: Optional[int] = None
+                    minutes_from_session: int | None = None
                     for key in (
                         "msPlayed",
                         "msListened",
@@ -864,7 +865,7 @@ class AudiobookshelfListeningSync:
                         minutes_from_session = max(1, int(duration_ms // 60000))
 
                     # Estimate pages if we know both duration and page_count
-                    pages_from_session: Optional[int] = None
+                    pages_from_session: int | None = None
                     try:
                         if (
                             (minutes_from_session and minutes_from_session > 0)
@@ -956,7 +957,7 @@ class AudiobookshelfListeningSync:
         # Record last sync time
         try:
             save_abs_settings(
-                {"last_listening_sync": datetime.now(timezone.utc).isoformat()}
+                {"last_listening_sync": datetime.now(UTC).isoformat()}
             )
         except Exception:
             pass
@@ -969,7 +970,7 @@ class AudiobookshelfListeningSync:
         self._dbg("Listening sync complete", summary)
         return summary
 
-    def sync_item_progress(self, item_or_id: Any) -> Dict[str, Any]:
+    def sync_item_progress(self, item_or_id: Any) -> dict[str, Any]:
         """Sync progress for a single ABS item (libraryItemId) for this user.
 
         - Resolves local Book by audiobookshelf_id/ISBN/title
@@ -1025,7 +1026,7 @@ class AudiobookshelfListeningSync:
                 }
             prog = gp.get("progress") or {}
             # Normalize position
-            pos_ms: Optional[int] = None
+            pos_ms: int | None = None
             for key in ("positionMs", "position_ms", "position", "currentTimeMs"):
                 v = prog.get(key)
                 if isinstance(v, (int, float)):
@@ -1044,14 +1045,14 @@ class AudiobookshelfListeningSync:
                 or prog.get("last_updated")
             )
             # Detect finished for per-item progress and set finish_date
-            dur_ms: Optional[int] = None
+            dur_ms: int | None = None
             for dk in ("durationMs", "duration_ms", "duration"):
                 dv = prog.get(dk)
                 if isinstance(dv, (int, float)):
                     dur_ms = int(dv if dv > 10_000_000 else dv * 1000)
                     break
             # Derive minutes from explicit listened time if available; otherwise from position
-            minutes: Optional[int] = None
+            minutes: int | None = None
             for key in (
                 "msPlayed",
                 "msListened",
@@ -1087,7 +1088,7 @@ class AudiobookshelfListeningSync:
             ):
                 pos_ms = dur_ms
             # Compute progress percentage if possible
-            progress_pct: Optional[float] = None
+            progress_pct: float | None = None
             try:
                 for pk in (
                     "progressPercent",

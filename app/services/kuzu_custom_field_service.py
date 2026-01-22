@@ -4,12 +4,12 @@ Kuzu Custom Field Service
 Handles custom metadata fields for books using KuzuDB.
 """
 
-import traceback
 import json
 import logging
 import os
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+import traceback
+from datetime import UTC, datetime
+from typing import Any
 
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 
@@ -25,7 +25,7 @@ def is_reserved_core_field(field_name: str) -> bool:
     return field_name.lower() in RESERVED_CORE_BOOK_FIELDS
 
 
-def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
+def _convert_query_result_to_list(result) -> list[dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
 
@@ -177,8 +177,8 @@ class KuzuCustomFieldService:
             self._ddl_ensured = False
 
     def get_custom_metadata_for_display(
-        self, custom_metadata: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, custom_metadata: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Convert custom metadata to display format."""
 
         if not custom_metadata:
@@ -211,7 +211,7 @@ class KuzuCustomFieldService:
 
         return display_items
 
-    def _get_field_definition(self, field_name: str) -> Optional[Dict[str, Any]]:
+    def _get_field_definition(self, field_name: str) -> dict[str, Any] | None:
         """Get field definition by name."""
         # Never treat reserved core fields as custom field definitions
         if is_reserved_core_field(field_name):
@@ -240,7 +240,7 @@ class KuzuCustomFieldService:
         except Exception:
             return None
 
-    def get_user_fields_sync(self, user_id: str) -> List[Dict[str, Any]]:
+    def get_user_fields_sync(self, user_id: str) -> list[dict[str, Any]]:
         """Return ALL custom field definitions (global + personal) for display.
 
         Simplified semantics (post-OWNS removal):
@@ -258,7 +258,7 @@ class KuzuCustomFieldService:
             result = safe_execute_kuzu_query(query)
             results = _convert_query_result_to_list(result)
             seen_names = set()
-            fields: List[Dict[str, Any]] = []
+            fields: list[dict[str, Any]] = []
             for row in results:
                 name_val = row.get("col_1")
                 if not name_val:
@@ -290,8 +290,8 @@ class KuzuCustomFieldService:
             return []
 
     def create_field_sync(
-        self, user_id: str, field_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, user_id: str, field_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         field_name = field_data.get("name", "unknown_field")
         is_global = field_data.get("is_global", False)  # Default to personal fields
 
@@ -337,8 +337,8 @@ class KuzuCustomFieldService:
                 return existing_field
 
             # Field doesn't exist, create new one (recording creator for auditing only)
-            field_id = f"field_{datetime.now(timezone.utc).timestamp()}"
-            current_time = datetime.now(timezone.utc)
+            field_id = f"field_{datetime.now(UTC).timestamp()}"
+            current_time = datetime.now(UTC)
 
             # Validate field type
             valid_types = [
@@ -428,7 +428,7 @@ class KuzuCustomFieldService:
             return None
 
     def save_custom_metadata_sync(
-        self, book_id: str, user_id: str, custom_metadata: Dict[str, Any]
+        self, book_id: str, user_id: str, custom_metadata: dict[str, Any]
     ) -> bool:
         """Save custom metadata according to the new architecture:
         - Global fields: stored directly on Book node as properties
@@ -504,7 +504,7 @@ class KuzuCustomFieldService:
                 merged_global_metadata = existing_global_metadata.copy()
                 merged_global_metadata.update(global_metadata)
 
-                current_time = datetime.now(timezone.utc)
+                current_time = datetime.now(UTC)
 
                 if existing_global_results and len(existing_global_results) > 0:
                     # Update existing global metadata
@@ -605,7 +605,7 @@ class KuzuCustomFieldService:
                 merged_personal_metadata = existing_personal_metadata.copy()
                 merged_personal_metadata.update(personal_metadata)
 
-                current_time = datetime.now(timezone.utc)
+                current_time = datetime.now(UTC)
 
                 if existing_results and len(existing_results) > 0:
                     # Update existing relationship
@@ -673,7 +673,7 @@ class KuzuCustomFieldService:
             traceback.print_exc()
             return False
 
-    def get_custom_metadata_sync(self, book_id: str, user_id: str) -> Dict[str, Any]:
+    def get_custom_metadata_sync(self, book_id: str, user_id: str) -> dict[str, Any]:
         """Get custom metadata for a book from the new architecture:
         - Global fields: from Book node properties
         - Personal fields: from HAS_PERSONAL_METADATA relationship
@@ -800,7 +800,7 @@ class KuzuCustomFieldService:
 
     def get_user_fields_with_calculated_usage_sync(
         self, user_id: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Return all field definitions with basic metadata (usage stats omitted).
 
         Mirrors simplified semantics: visibility is universal regardless of creator.
@@ -820,7 +820,7 @@ class KuzuCustomFieldService:
             global_field_names = set()
             personal_field_names = set()
             seen = set()
-            field_rows: List[Dict[str, Any]] = []
+            field_rows: list[dict[str, Any]] = []
             for r in rows:
                 raw_name = r.get("col_1")
                 if raw_name is None:
@@ -839,7 +839,7 @@ class KuzuCustomFieldService:
                 field_rows.append(r)
 
             # 2. Compute usage for global fields (count books where field has non-empty value)
-            global_counts: Dict[str, int] = {n: 0 for n in global_field_names}
+            global_counts: dict[str, int] = {n: 0 for n in global_field_names}
             if global_field_names:
                 g_query = """
                 MATCH (b:Book)-[r:HAS_GLOBAL_METADATA]->(gm:GlobalMetadata)
@@ -867,7 +867,7 @@ class KuzuCustomFieldService:
                             global_counts[fname] += 1
 
             # 3. Compute usage for personal fields (count books for THIS user where field has value)
-            personal_counts: Dict[str, int] = {n: 0 for n in personal_field_names}
+            personal_counts: dict[str, int] = {n: 0 for n in personal_field_names}
             if personal_field_names:
                 p_query = """
                 MATCH (u:User {id: $user_id})-[r:HAS_PERSONAL_METADATA]->(b:Book)
@@ -895,7 +895,7 @@ class KuzuCustomFieldService:
                             personal_counts[fname] += 1
 
             # 4. Build final list with usage counts
-            fields: List[Dict[str, Any]] = []
+            fields: list[dict[str, Any]] = []
             for r in field_rows:
                 raw_name = r.get("col_1")
                 if raw_name is None:
@@ -927,7 +927,7 @@ class KuzuCustomFieldService:
             traceback.print_exc()
             return []
 
-    def get_field_by_id_sync(self, field_id: str) -> Optional[Dict[str, Any]]:
+    def get_field_by_id_sync(self, field_id: str) -> dict[str, Any] | None:
         """Get a custom field by its ID."""
         logger.debug(f" Getting field by ID: {field_id}")
 
@@ -1020,8 +1020,8 @@ class KuzuCustomFieldService:
             return None
 
     def update_field_sync(
-        self, field_id: str, user_id: str, field_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, field_id: str, user_id: str, field_data: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Update a custom field definition."""
         logger.debug(f" Updating field {field_id} for user {user_id}")
 
@@ -1034,7 +1034,7 @@ class KuzuCustomFieldService:
             if field.get("created_by_user_id") != user_id:
                 return None
 
-            current_time = datetime.now(timezone.utc)
+            current_time = datetime.now(UTC)
 
             # Update field definition
             query = """
@@ -1133,8 +1133,8 @@ class KuzuCustomFieldService:
             return False
 
     def get_available_fields_sync(
-        self, user_id: str, is_global: Optional[bool] = None
-    ) -> List[Dict[str, Any]]:
+        self, user_id: str, is_global: bool | None = None
+    ) -> list[dict[str, Any]]:
         """Get available fields for a user, optionally filtered by global status."""
         logger.debug(
             f" Getting available fields for user {user_id}, is_global={is_global}"
@@ -1204,8 +1204,8 @@ class KuzuCustomFieldService:
     def ensure_custom_fields_exist(
         self,
         user_id: str,
-        global_custom_metadata: Dict[str, Any],
-        personal_custom_metadata: Dict[str, Any],
+        global_custom_metadata: dict[str, Any],
+        personal_custom_metadata: dict[str, Any],
     ) -> bool:
         """
         Ensure that custom field definitions exist for all fields in the metadata.
@@ -1363,7 +1363,7 @@ class KuzuCustomFieldService:
                         {
                             "book_id": book_id,
                             "json": json.dumps(data),
-                            "updated_at": datetime.now(timezone.utc),
+                            "updated_at": datetime.now(UTC),
                         },
                     )
                     cleaned += 1
@@ -1411,7 +1411,7 @@ class KuzuCustomFieldService:
                             "user_id": user_id,
                             "book_id": book_id,
                             "json": json.dumps(data),
-                            "updated_at": datetime.now(timezone.utc),
+                            "updated_at": datetime.now(UTC),
                         },
                     )
                     personal_cleaned += 1

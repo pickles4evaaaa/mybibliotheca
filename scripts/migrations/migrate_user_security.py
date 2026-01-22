@@ -6,8 +6,8 @@ Adds: failed_login_attempts, locked_until, last_login, share_current_reading,
 """
 
 import os
-import sys
 import sqlite3
+import sys
 from datetime import datetime
 
 

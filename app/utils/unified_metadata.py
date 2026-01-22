@@ -8,12 +8,13 @@ search passthrough to the enhanced search implementation.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import re
-import requests
-import os
 import logging
+import os
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
+
+import requests
 
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv("METADATA_DEBUG", "0").lower() in ("1", "true", "yes", "on")
@@ -25,14 +26,14 @@ _REQUEST_TIMEOUT = int(os.getenv("METADATA_REQUEST_TIMEOUT", "8"))
 _FETCH_TIMEOUT = int(os.getenv("METADATA_FETCH_TIMEOUT", "20"))
 
 
-def _normalize_isbn_value(val: Optional[str]) -> str:
+def _normalize_isbn_value(val: str | None) -> str:
     """Return an uppercase ISBN string stripped of separators (or empty string)."""
     if not val:
         return ""
     return re.sub(r"[^0-9Xx]", "", str(val)).upper()
 
 
-def _isbn10_to_13(isbn10: Optional[str]) -> Optional[str]:
+def _isbn10_to_13(isbn10: str | None) -> str | None:
     """Convert ISBN-10 to ISBN-13 (prefix 978) including checksum."""
     digits = _normalize_isbn_value(isbn10)
     if len(digits) != 10 or not re.fullmatch(r"[0-9]{9}[0-9X]", digits):
@@ -47,7 +48,7 @@ def _isbn10_to_13(isbn10: Optional[str]) -> Optional[str]:
     return prefix_core + str(check)
 
 
-def _isbn13_to_10(isbn13: Optional[str]) -> Optional[str]:
+def _isbn13_to_10(isbn13: str | None) -> str | None:
     """Convert ISBN-13 (978/979) to ISBN-10, recalculating checksum."""
     digits = _normalize_isbn_value(isbn13)
     if (
@@ -68,7 +69,7 @@ def _isbn13_to_10(isbn13: Optional[str]) -> Optional[str]:
     return core + check_char
 
 
-def _collect_isbn_variants(val: Optional[str]) -> set[str]:
+def _collect_isbn_variants(val: str | None) -> set[str]:
     """Return normalized ISBN plus convertible variants suitable for comparisons."""
     norm = _normalize_isbn_value(val)
     if not norm:
@@ -86,14 +87,14 @@ def _collect_isbn_variants(val: Optional[str]) -> set[str]:
 
 
 def _pick_preferred_identifier(
-    values: Any, preferred_norm: Optional[str]
-) -> Optional[str]:
+    values: Any, preferred_norm: str | None
+) -> str | None:
     """Select the identifier matching preferred_norm if available."""
     if not values:
         return None
     if not isinstance(values, list):
         values = [values]
-    filtered: List[Tuple[str, str]] = []
+    filtered: list[tuple[str, str]] = []
     for raw in values:
         if not raw:
             continue
@@ -110,7 +111,7 @@ def _pick_preferred_identifier(
     return filtered[0][0]
 
 
-def _extract_series_label(val: Any) -> Optional[str]:
+def _extract_series_label(val: Any) -> str | None:
     """Normalize OpenLibrary series metadata to a clean string."""
     if not val:
         return None
@@ -129,7 +130,7 @@ def _extract_series_label(val: Any) -> Optional[str]:
         return None
 
 
-def _load_openlibrary_edition_payload(isbn: str) -> Dict[str, Any]:
+def _load_openlibrary_edition_payload(isbn: str) -> dict[str, Any]:
     """Fetch the edition JSON for an ISBN (best-effort)."""
     try:
         resp = requests.get(
@@ -142,14 +143,14 @@ def _load_openlibrary_edition_payload(isbn: str) -> Dict[str, Any]:
 
 
 def _build_payload_from_edition(
-    edition_payload: Dict[str, Any],
-    target_isbn13: Optional[str],
-    target_isbn10: Optional[str],
-) -> Dict[str, Any]:
+    edition_payload: dict[str, Any],
+    target_isbn13: str | None,
+    target_isbn10: str | None,
+) -> dict[str, Any]:
     if not edition_payload:
         return {}
 
-    def _extract_desc(val: Any) -> Optional[str]:
+    def _extract_desc(val: Any) -> str | None:
         if isinstance(val, dict):
             return val.get("value")
         if isinstance(val, str):
@@ -207,7 +208,7 @@ def _build_payload_from_edition(
     }
 
 
-def _normalize_date(val: Optional[str]) -> Optional[str]:
+def _normalize_date(val: str | None) -> str | None:
     """Normalize a date string to ISO (YYYY-MM-DD) suitable for HTML date inputs.
 
     Handles common formats:
@@ -275,7 +276,7 @@ def _normalize_date(val: Optional[str]) -> Optional[str]:
     return None
 
 
-def _date_specificity(date_str: Optional[str]) -> int:
+def _date_specificity(date_str: str | None) -> int:
     """Return a rough specificity score for a date string before normalization.
 
     Scores:
@@ -317,7 +318,7 @@ def _date_specificity(date_str: Optional[str]) -> int:
     return 0
 
 
-def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
+def _fetch_google_by_isbn(isbn: str) -> dict[str, Any]:
     """Fetch Google Books metadata for an ISBN.
 
     Picks the best item by:
@@ -530,7 +531,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
         return {}
 
 
-def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
+def _fetch_openlibrary_by_isbn(isbn: str) -> dict[str, Any]:
     """Fetch OpenLibrary metadata for an ISBN using the lightweight data API."""
     bibkey = f"ISBN:{isbn}"
     url = f"https://openlibrary.org/api/books?bibkeys={bibkey}&format=json&jscmd=data"
@@ -685,15 +686,15 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
         return {}
 
 
-def _choose_longer_text(a: Optional[str], b: Optional[str]) -> Optional[str]:
+def _choose_longer_text(a: str | None, b: str | None) -> str | None:
     if a and b:
         return a if len(a) >= len(b) else b
     return a or b or None
 
 
-def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_dicts(google: dict[str, Any], openlib: dict[str, Any]) -> dict[str, Any]:
     """Merge two metadata dicts with sensible precedence rules."""
-    merged: Dict[str, Any] = {}
+    merged: dict[str, Any] = {}
 
     # Lazy import for policies to avoid import cycles when app not fully initialized.
     # Provide a consistent function signature to keep type checkers happy.
@@ -760,7 +761,7 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
     )
 
     # Authors & categories: union preserving order (Google first)
-    authors: List[str] = []
+    authors: list[str] = []
     seen_authors = set()
     for src in [google.get("authors") or [], openlib.get("authors") or []]:
         for name in src:
@@ -772,9 +773,9 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
     merged["authors"] = authors
 
     # Extract 'Series:' indicators from categories before merging
-    def _peel_series(src: Dict[str, Any]) -> Tuple[Optional[str], List[str]]:
+    def _peel_series(src: dict[str, Any]) -> tuple[str | None, list[str]]:
         series_name = None
-        cats: List[str] = []
+        cats: list[str] = []
         for c in src.get("categories") or []:
             if isinstance(c, str):
                 s = c.strip()
@@ -790,7 +791,7 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
     # Light normalization before dedupe: trim, collapse spaces, strip trailing errant punctuation
     import re as _re
 
-    def _norm_cat(val: str) -> Optional[str]:
+    def _norm_cat(val: str) -> str | None:
         if not isinstance(val, str):
             return None
         s = val.strip()
@@ -804,7 +805,7 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
     g_cats = [c for c in (_norm_cat(c) for c in g_cats) if c]
     o_cats = [c for c in (_norm_cat(c) for c in o_cats) if c]
 
-    categories: List[str] = []
+    categories: list[str] = []
     seen_cats = set()
     for src in [g_cats, o_cats]:
         for c in src:
@@ -844,7 +845,7 @@ def _merge_dicts(google: Dict[str, Any], openlib: Dict[str, Any]) -> Dict[str, A
     merged["openlibrary_id"] = openlib.get("openlibrary_id")
 
     # Prefer Google ISBNs, fallback to OpenLibrary when missing
-    def _norm_isbn(v: Optional[str]) -> Optional[str]:
+    def _norm_isbn(v: str | None) -> str | None:
         if not v:
             return None
         import re as _re
@@ -922,9 +923,9 @@ def _unified_fetch_pair(isbn: str):
         return {}, {}, {"input": "empty"}
     if not _isbn_valid(isbn_clean):
         return {}, {}, {"input": "invalid_format"}
-    google: Dict[str, Any] = {}
-    openlib: Dict[str, Any] = {}
-    _errors: Dict[str, str] = {}
+    google: dict[str, Any] = {}
+    openlib: dict[str, Any] = {}
+    _errors: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=2) as ex:
         future_map = {
             ex.submit(_fetch_google_by_isbn, isbn_clean): "google",
@@ -965,7 +966,7 @@ def _unified_fetch_pair(isbn: str):
     return google, openlib, _errors
 
 
-def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str, str]]:
+def fetch_unified_by_isbn_detailed(isbn: str) -> tuple[dict[str, Any], dict[str, str]]:
     """Public detailed fetch returning (merged_metadata, provider_errors).
 
     If both providers empty, merged_metadata is {} and errors indicate causes.
@@ -975,9 +976,9 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
     google, openlib, _errors = _unified_fetch_pair(isbn)
     req_variants = _collect_isbn_variants(isbn)
     req_isbn = _normalize_isbn_value(isbn)
-    dropped_providers: List[str] = []
+    dropped_providers: list[str] = []
 
-    def _filter_provider(name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _filter_provider(name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not payload or not req_variants:
             return payload
         provider_variants: set[str] = set()
@@ -1030,7 +1031,7 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
         pass
 
     # ISBN mismatch detection
-    warnings: List[str] = []
+    warnings: list[str] = []
     if dropped_providers:
         labels = {"google": "Google Books", "openlib": "OpenLibrary"}
         friendly = ", ".join(labels.get(name, name) for name in dropped_providers)
@@ -1082,7 +1083,7 @@ def fetch_unified_by_isbn_detailed(isbn: str) -> Tuple[Dict[str, Any], Dict[str,
     return merged, _errors
 
 
-def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
+def fetch_unified_by_isbn(isbn: str) -> dict[str, Any]:
     """Fetch and merge Google Books and OpenLibrary metadata for an ISBN (parallel IO).
 
     Now aggressively normalizes the ISBN (strip non-digit/X) so that upstream
@@ -1093,8 +1094,8 @@ def fetch_unified_by_isbn(isbn: str) -> Dict[str, Any]:
 
 
 def fetch_unified_by_title(
-    title: str, max_results: int = 10, author: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    title: str, max_results: int = 10, author: str | None = None
+) -> list[dict[str, Any]]:
     """Passthrough to enhanced title search across Google Books and OpenLibrary, with optional author filter."""
     from app.utils.book_search import search_books_by_title
 

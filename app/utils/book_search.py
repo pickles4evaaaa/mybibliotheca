@@ -5,16 +5,17 @@ This module provides title-based search across Google Books API and OpenLibrary,
 with intelligent ranking and deduplication of results.
 """
 
-import requests
-from difflib import SequenceMatcher
-from typing import List, Dict, Optional, Any
-import re
-from urllib.parse import quote_plus
-import time
-import os as _os_for_verbose
-from collections import OrderedDict
-import threading
 import copy
+import os as _os_for_verbose
+import re
+import threading
+import time
+from collections import OrderedDict
+from difflib import SequenceMatcher
+from typing import Any
+from urllib.parse import quote_plus
+
+import requests
 
 # Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
 _IMPORT_VERBOSE = (_os_for_verbose.getenv("VERBOSE") or "false").lower() == "true" or (
@@ -31,31 +32,31 @@ def _dprint(*args, **kwargs):
 print = _dprint
 
 
-_SEARCH_CACHE_TTL = int((_os_for_verbose.getenv("BOOK_SEARCH_CACHE_TTL") or "300"))
-_SEARCH_CACHE_MAX = int((_os_for_verbose.getenv("BOOK_SEARCH_CACHE_MAX") or "128"))
-_SEARCH_CACHE: "OrderedDict[tuple, tuple[float, List[Dict[str, Any]]]]" = OrderedDict()
+_SEARCH_CACHE_TTL = int(_os_for_verbose.getenv("BOOK_SEARCH_CACHE_TTL") or "300")
+_SEARCH_CACHE_MAX = int(_os_for_verbose.getenv("BOOK_SEARCH_CACHE_MAX") or "128")
+_SEARCH_CACHE: "OrderedDict[tuple, tuple[float, list[dict[str, Any]]]]" = OrderedDict()
 _SEARCH_CACHE_LOCK = threading.RLock()
 
 _GOOGLE_CONNECT_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_GOOGLE_CONNECT_TIMEOUT") or "2.5")
+    _os_for_verbose.getenv("BOOK_SEARCH_GOOGLE_CONNECT_TIMEOUT") or "2.5"
 )
 _GOOGLE_READ_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_GOOGLE_READ_TIMEOUT") or "3.5")
+    _os_for_verbose.getenv("BOOK_SEARCH_GOOGLE_READ_TIMEOUT") or "3.5"
 )
 _OPENLIBRARY_CONNECT_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_OPENLIBRARY_CONNECT_TIMEOUT") or "2.5")
+    _os_for_verbose.getenv("BOOK_SEARCH_OPENLIBRARY_CONNECT_TIMEOUT") or "2.5"
 )
 _OPENLIBRARY_READ_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_OPENLIBRARY_READ_TIMEOUT") or "4.5")
+    _os_for_verbose.getenv("BOOK_SEARCH_OPENLIBRARY_READ_TIMEOUT") or "4.5"
 )
 _GOOGLE_RESULT_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_GOOGLE_RESULT_TIMEOUT") or "3.8")
+    _os_for_verbose.getenv("BOOK_SEARCH_GOOGLE_RESULT_TIMEOUT") or "3.8"
 )
 _OPENLIBRARY_RESULT_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_OPENLIBRARY_RESULT_TIMEOUT") or "5.0")
+    _os_for_verbose.getenv("BOOK_SEARCH_OPENLIBRARY_RESULT_TIMEOUT") or "5.0"
 )
 _BOOK_SEARCH_GLOBAL_TIMEOUT = float(
-    (_os_for_verbose.getenv("BOOK_SEARCH_GLOBAL_TIMEOUT") or "5.5")
+    _os_for_verbose.getenv("BOOK_SEARCH_GLOBAL_TIMEOUT") or "5.5"
 )
 
 
@@ -75,7 +76,7 @@ def _purge_search_cache_locked() -> None:
         _SEARCH_CACHE.popitem(last=False)
 
 
-def _search_cache_get(key: tuple) -> Optional[List[Dict[str, Any]]]:
+def _search_cache_get(key: tuple) -> list[dict[str, Any]] | None:
     if _SEARCH_CACHE_MAX <= 0 or _SEARCH_CACHE_TTL <= 0:
         return None
     with _SEARCH_CACHE_LOCK:
@@ -93,7 +94,7 @@ def _search_cache_get(key: tuple) -> Optional[List[Dict[str, Any]]]:
         return copy.deepcopy(payload)
 
 
-def _search_cache_set(key: tuple, results: List[Dict[str, Any]]) -> None:
+def _search_cache_set(key: tuple, results: list[dict[str, Any]]) -> None:
     if _SEARCH_CACHE_MAX <= 0 or _SEARCH_CACHE_TTL <= 0:
         return
     with _SEARCH_CACHE_LOCK:
@@ -171,9 +172,9 @@ def calculate_title_similarity(search_title: str, result_title: str) -> float:
     return similarity
 
 
-def _dedupe_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
-    deduped: List[Dict[str, Any]] = []
+    deduped: list[dict[str, Any]] = []
     for cand in candidates:
         url = cand.get("url")
         if not url or url in seen:
@@ -183,7 +184,7 @@ def _dedupe_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return deduped
 
 
-def _build_google_cover_candidates(volume_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _build_google_cover_candidates(volume_info: dict[str, Any]) -> list[dict[str, Any]]:
     image_links = volume_info.get("imageLinks") or {}
     if not isinstance(image_links, dict) or not image_links:
         return []
@@ -192,12 +193,12 @@ def _build_google_cover_candidates(volume_info: Dict[str, Any]) -> List[Dict[str
     except Exception:
 
         def upgrade_google_cover_url(
-            raw_url: Optional[str], *, allow_probe: bool = True
-        ) -> Optional[str]:  # type: ignore
+            raw_url: str | None, *, allow_probe: bool = True
+        ) -> str | None:  # type: ignore
             return raw_url
 
     order = ["extraLarge", "large", "medium", "small", "thumbnail", "smallThumbnail"]
-    candidates: List[Dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
     for label in order:
         raw = image_links.get(label)
         if not raw or not isinstance(raw, str):
@@ -209,7 +210,7 @@ def _build_google_cover_candidates(volume_info: Dict[str, Any]) -> List[Dict[str
     return _dedupe_candidates(candidates)
 
 
-def _build_openlibrary_cover_candidates(cover_i: Optional[int]) -> List[Dict[str, Any]]:
+def _build_openlibrary_cover_candidates(cover_i: int | None) -> list[dict[str, Any]]:
     if not cover_i:
         return []
     base = f"https://covers.openlibrary.org/b/id/{cover_i}"
@@ -231,8 +232,8 @@ def _build_openlibrary_cover_candidates(cover_i: Optional[int]) -> List[Dict[str
 
 
 def select_best_publication_date(
-    date1: str, date2: str, year1: Optional[int], year2: Optional[int]
-) -> tuple[str, Optional[int]]:
+    date1: str, date2: str, year1: int | None, year2: int | None
+) -> tuple[str, int | None]:
     """
     Select the best publication date from two sources.
     Prefers full dates over just years when they're from the same year.
@@ -281,8 +282,8 @@ def select_best_publication_date(
 
 
 def search_google_books(
-    title: str, max_results: int = 20, author: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    title: str, max_results: int = 20, author: str | None = None
+) -> list[dict[str, Any]]:
     """Search Google Books API for books by title (and optional author)."""
     print(
         f"📚 [GOOGLE_BOOKS_SEARCH] Searching for: '{title}'"
@@ -457,8 +458,8 @@ def search_google_books(
 
 
 def search_openlibrary(
-    title: str, max_results: int = 20, author: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    title: str, max_results: int = 20, author: str | None = None
+) -> list[dict[str, Any]]:
     """Search OpenLibrary API for books by title (and optional author)."""
     print(
         f"📖 [OPENLIBRARY_SEARCH] Searching for: '{title}'"
@@ -610,10 +611,10 @@ def search_openlibrary(
 
 def merge_and_rank_results(
     search_title: str,
-    google_results: List[Dict],
-    openlibrary_results: List[Dict],
+    google_results: list[dict],
+    openlibrary_results: list[dict],
     max_results: int = 10,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Merge results from both APIs, deduplicate by ISBN, and rank by similarity.
 
@@ -726,8 +727,8 @@ def merge_and_rank_results(
 
 
 def search_books_by_title(
-    title: str, max_results: int = 10, author: Optional[str] = None
-) -> List[Dict[str, Any]]:
+    title: str, max_results: int = 10, author: str | None = None
+) -> list[dict[str, Any]]:
     """
     Search for books by title across Google Books and OpenLibrary APIs.
 
@@ -762,13 +763,13 @@ def search_books_by_title(
         return cached
 
     start_time = time.perf_counter()
-    google_results: List[Dict[str, Any]] = []
+    google_results: list[dict[str, Any]] = []
     try:
         google_results = search_google_books(title, max_results * 2, author_arg)
     except Exception as exc:
         print(f"❌ [BOOK_SEARCH] Google search failed: {exc}")
 
-    openlibrary_results: List[Dict[str, Any]] = []
+    openlibrary_results: list[dict[str, Any]] = []
     elapsed = time.perf_counter() - start_time
     remaining_budget = max(0.0, _BOOK_SEARCH_GLOBAL_TIMEOUT - elapsed)
     if remaining_budget <= 0:
@@ -799,8 +800,8 @@ def search_books_with_display_fields(
     title: str,
     max_results: int = 10,
     isbn_required: bool = False,
-    author: Optional[str] = None,
-) -> Dict[str, Any]:
+    author: str | None = None,
+) -> dict[str, Any]:
     """
     Search for books and return results formatted for display.
 

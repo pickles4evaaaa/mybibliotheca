@@ -3,13 +3,14 @@ Web-based migration interface for SQLite to Redis migration.
 Provides a user-friendly wizard interface for migrating data.
 """
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
-from flask_login import login_required, current_user
 import json
+import logging
 import os
 import tempfile
-import logging
 from datetime import datetime
+
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
 
 from .migration_detector import MigrationDetector
 
@@ -177,7 +178,7 @@ def execute_migration():
         return redirect(url_for("migration.migration_wizard"))
 
     try:
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             config = json.load(f)
 
         # Create a unique migration ID for tracking
@@ -208,7 +209,7 @@ def run_migration(migration_id):
         if not config_file or not os.path.exists(config_file):
             return jsonify({"error": "Configuration file not found"}), 400
 
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             config = json.load(f)
 
         # Import the simplified migration script functionality

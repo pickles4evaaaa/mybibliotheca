@@ -3,58 +3,60 @@ Core book management routes for the Bibliotheca application.
 Handles book CRUD operations, library views, and book-specific actions.
 """
 
-from flask import (
-    Blueprint,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    current_app,
-    jsonify,
-    abort,
-    make_response,
-    send_file,
-)
-from flask_login import login_required, current_user
-from datetime import datetime, date, timezone
-import uuid
-import traceback
-import requests
-import re
 import csv
-from pathlib import Path
-from typing import Optional, Any, Dict, List
-from collections import OrderedDict
-
-from app.services import (
-    book_service,
-    reading_log_service,
-    custom_field_service,
-    user_service,
-)
-from app.simplified_book_service import (
-    SimplifiedBookService,
-    SimplifiedBook,
-    BookAlreadyExistsError,
-)
-from app.utils import (
-    fetch_book_data,
-    get_google_books_cover,
-    generate_month_review_image,
-)
-from app.utils.book_utils import get_best_cover_for_book
-from app.utils.image_processing import (
-    process_image_from_url,
-    process_image_from_filestorage,
-    get_covers_dir,
-)
-from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
-from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
-from app.utils.user_settings import get_default_book_format, get_library_view_defaults
 
 # Quiet mode for book routes; enable with VERBOSE=true or IMPORT_VERBOSE=true
 import os as _os_for_verbose
+import re
+import traceback
+import uuid
+from collections import OrderedDict
+from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Any
+
+import requests
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
+from flask_login import current_user, login_required
+
+from app.domain.models import Book as DomainBook
+from app.domain.models import MediaType, ReadingStatus
+from app.services import (
+    book_service,
+    custom_field_service,
+    reading_log_service,
+    user_service,
+)
+from app.simplified_book_service import (
+    BookAlreadyExistsError,
+    SimplifiedBook,
+    SimplifiedBookService,
+)
+from app.utils import (
+    fetch_book_data,
+    generate_month_review_image,
+    get_google_books_cover,
+)
+from app.utils.book_utils import get_best_cover_for_book
+from app.utils.image_processing import (
+    get_covers_dir,
+    process_image_from_filestorage,
+    process_image_from_url,
+)
+from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
+from app.utils.user_settings import get_default_book_format, get_library_view_defaults
 
 _IMPORT_VERBOSE = (_os_for_verbose.getenv("VERBOSE") or "false").lower() == "true" or (
     _os_for_verbose.getenv("IMPORT_VERBOSE") or "false"
@@ -78,9 +80,9 @@ def _normalize_personal_datetime(value):
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
     if isinstance(value, str):
         s = value.strip()
         if not s:
@@ -88,20 +90,20 @@ def _normalize_personal_datetime(value):
         candidate = s.replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(candidate)
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except ValueError:
             pass
         for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
             try:
                 parsed = datetime.strptime(s, fmt)
-                return parsed.replace(tzinfo=timezone.utc)
+                return parsed.replace(tzinfo=UTC)
             except ValueError:
                 continue
         try:
             epoch = float(s)
             if epoch > 10_000_000_000:
                 epoch /= 1000.0
-            return datetime.fromtimestamp(epoch, tz=timezone.utc)
+            return datetime.fromtimestamp(epoch, tz=UTC)
         except (ValueError, OSError):
             return None
     return None
@@ -484,9 +486,9 @@ def _is_json_request() -> bool:
     return False
 
 
-def _extract_bulk_book_ids(form) -> List[str]:
+def _extract_bulk_book_ids(form) -> list[str]:
     potential_keys = ["book_ids", "selected_books"]
-    collected: List[str] = []
+    collected: list[str] = []
 
     for key in potential_keys:
         collected.extend(form.getlist(key))
@@ -506,7 +508,7 @@ def _extract_bulk_book_ids(form) -> List[str]:
 
     # Filter and dedupe while preserving order
     seen = set()
-    sanitized: List[str] = []
+    sanitized: list[str] = []
     for uid in collected:
         if not uid:
             continue
@@ -523,11 +525,11 @@ def _extract_bulk_book_ids(form) -> List[str]:
 def _bulk_response(
     success: bool,
     message: str,
-    redirect_url: Optional[str],
+    redirect_url: str | None,
     *,
-    data: Optional[Dict[str, Any]] = None,
+    data: dict[str, Any] | None = None,
     status_code: int = 200,
-    flash_category: Optional[str] = None,
+    flash_category: str | None = None,
 ):
     target_url = (
         redirect_url
@@ -537,7 +539,7 @@ def _bulk_response(
     )
 
     if _is_json_request():
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "success": success,
             "message": message,
             "redirect_url": target_url,
@@ -566,7 +568,7 @@ def _humanize_status(status: str) -> str:
     return base
 
 
-def _normalize_reading_status(raw_status: str) -> Optional[str]:
+def _normalize_reading_status(raw_status: str) -> str | None:
     if not raw_status:
         return None
     normalized = raw_status.strip().lower().replace("-", "_").replace(" ", "_")
@@ -592,9 +594,9 @@ def _normalize_reading_status(raw_status: str) -> Optional[str]:
     return None
 
 
-def _dedupe_preserve_order(values: List[str]) -> List[str]:
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
     seen = set()
-    deduped: List[str] = []
+    deduped: list[str] = []
     for value in values:
         if not value:
             continue
@@ -609,7 +611,7 @@ def _dedupe_preserve_order(values: List[str]) -> List[str]:
     return deduped
 
 
-def _parse_additional_categories(raw_value: str) -> List[str]:
+def _parse_additional_categories(raw_value: str) -> list[str]:
     if not raw_value:
         return []
     tokens = [
@@ -618,7 +620,7 @@ def _parse_additional_categories(raw_value: str) -> List[str]:
     return tokens
 
 
-def _category_name_from_record(record: Any) -> Optional[str]:
+def _category_name_from_record(record: Any) -> str | None:
     if record is None:
         return None
     if isinstance(record, dict):
@@ -641,7 +643,7 @@ def _category_name_from_record(record: Any) -> Optional[str]:
     return cleaned or None
 
 
-def _extract_existing_categories_from_book(book: Any) -> List[str]:
+def _extract_existing_categories_from_book(book: Any) -> list[str]:
     ordered: OrderedDict[str, str] = OrderedDict()
 
     def _record(value: Any) -> None:
@@ -1714,6 +1716,7 @@ def search_book_details():
         gb_query = "+".join(gb_parts)
 
         import concurrent.futures
+
         import requests as _req
 
         def _fetch_openlibrary():
@@ -2796,7 +2799,8 @@ def library():
         if not val:
             return None
         try:
-            from datetime import date, datetime as _dt
+            from datetime import date
+            from datetime import datetime as _dt
 
             if isinstance(val, date) and not isinstance(val, _dt):
                 return val
@@ -3373,7 +3377,7 @@ def library():
         for status in ReadingStatus
     ]
 
-    location_options: List[Dict[str, Any]] = []
+    location_options: list[dict[str, Any]] = []
     try:
         from app.location_service import LocationService
 
@@ -3407,8 +3411,8 @@ def library():
         current_app.logger.warning(f"Failed to load locations for bulk actions: {exc}")
         location_options = []
 
-    category_options: List[Dict[str, str]] = []
-    category_lookup: Dict[str, Dict[str, str]] = {}
+    category_options: list[dict[str, str]] = []
+    category_lookup: dict[str, dict[str, str]] = {}
 
     try:
         all_categories = book_service.list_all_categories_sync()
@@ -3656,10 +3660,10 @@ def view_book_raw(uid: str):
         raw_query, {"book_id": uid, "user_id": user_id}
     )
 
-    raw_payload: Dict[str, Any] = {}
+    raw_payload: dict[str, Any] = {}
     if raw_result:
         try:
-            column_names: List[str] = []
+            column_names: list[str] = []
             get_column_names = getattr(raw_result, "get_column_names", None)
             if callable(get_column_names):
                 try:
@@ -3671,7 +3675,7 @@ def view_book_raw(uid: str):
                         else []
                     )
 
-            rows: List[Any] = []
+            rows: list[Any] = []
             has_next = getattr(raw_result, "has_next", None)
             get_next = getattr(raw_result, "get_next", None)
 
@@ -3894,7 +3898,7 @@ def edit_book(uid):
                 current_app.logger.info(
                     f"[CONTRIB_DEBUG] Processing contributor {contrib_index}: {contrib}"
                 )
-                from app.domain.models import Person, BookContribution, ContributionType
+                from app.domain.models import BookContribution, ContributionType, Person
 
                 person_name = contrib["name"]
 
@@ -4528,8 +4532,8 @@ def view_book_enhanced(uid):
             hasattr(user_book, "contributors") and not user_book.contributors
         ):
             # Fetch authors from database using the same pattern as categories
+            from app.domain.models import BookContribution, ContributionType, Person
             from app.utils.safe_kuzu_manager import safe_get_connection
-            from app.domain.models import BookContribution, Person, ContributionType
 
             with safe_get_connection(
                 user_id=str(current_user.id), operation="fetch_book_authors"
@@ -5633,7 +5637,7 @@ def bulk_delete_books():
         )
 
     deleted_count = 0
-    failed_ids: List[str] = []
+    failed_ids: list[str] = []
 
     for uid in selected_uids:
         try:
@@ -5661,7 +5665,7 @@ def bulk_delete_books():
         message_parts.append(f"Failed to delete {len(failed_ids)} book(s).")
 
     status_code = 200 if not failed_ids else (207 if deleted_count else 400)
-    payload: Dict[str, Any] = {"deleted_count": deleted_count}
+    payload: dict[str, Any] = {"deleted_count": deleted_count}
     if failed_ids:
         payload["failed_ids"] = failed_ids
 
@@ -5696,7 +5700,7 @@ def bulk_update_book_status():
         )
 
     updated_count = 0
-    failed_ids: List[str] = []
+    failed_ids: list[str] = []
 
     for uid in selected_uids:
         try:
@@ -5732,7 +5736,7 @@ def bulk_update_book_status():
         message_bits.append(f"Failed to update {len(failed_ids)} book(s).")
 
     status_code = 200 if not failed_ids else (207 if updated_count else 400)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "updated_count": updated_count,
         "new_status": target_status,
     }
@@ -5756,7 +5760,7 @@ def bulk_update_book_location():
     redirect_url = request.form.get("redirect_url")
 
     raw_location = (request.form.get("location_id") or "").strip()
-    location_id: Optional[str]
+    location_id: str | None
     if not raw_location or raw_location.lower() in {"clear", "none", "null"}:
         location_id = None
     else:
@@ -5787,7 +5791,7 @@ def bulk_update_book_location():
         )
 
     updated_count = 0
-    failed_ids: List[str] = []
+    failed_ids: list[str] = []
 
     for uid in selected_uids:
         try:
@@ -5824,7 +5828,7 @@ def bulk_update_book_location():
         message_bits.append(f"Failed to update {len(failed_ids)} book(s).")
 
     status_code = 200 if not failed_ids else (207 if updated_count else 400)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "updated_count": updated_count,
         "location_id": location_id,
     }
@@ -5867,7 +5871,7 @@ def bulk_update_book_categories():
     )
 
     updated_count = 0
-    failed_ids: List[str] = []
+    failed_ids: list[str] = []
 
     for uid in selected_uids:
         try:
@@ -5876,11 +5880,11 @@ def bulk_update_book_categories():
                 failed_ids.append(uid)
                 continue
 
-            final_categories: List[str]
+            final_categories: list[str]
             if clear_existing:
                 final_categories = requested_categories
             else:
-                existing_from_db: List[str] = []
+                existing_from_db: list[str] = []
                 try:
                     raw_categories = book_service.get_book_categories_sync(uid) or []
                     for category in raw_categories:
@@ -5935,7 +5939,7 @@ def bulk_update_book_categories():
         message_bits.append(f"Failed to update {len(failed_ids)} book(s).")
 
     status_code = 200 if not failed_ids else (207 if updated_count else 400)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "updated_count": updated_count,
         "clear_existing": clear_existing,
         "applied_categories": requested_categories,
@@ -6469,7 +6473,7 @@ def add_book_manual():
         check_digit = (10 - (total % 10)) % 10
         return base + str(check_digit)
 
-    def _isbn13_to_10(i13: str) -> Optional[str]:
+    def _isbn13_to_10(i13: str) -> str | None:
         if not i13.startswith("978"):
             return None
         base = i13[3:12]

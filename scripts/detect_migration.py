@@ -6,8 +6,8 @@ Simple Migration Detection Script
 Shows what SQLite databases are available for migration without attempting migration.
 """
 
-import sys
 import os
+import sys
 
 # Add the parent directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

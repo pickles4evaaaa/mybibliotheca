@@ -5,10 +5,11 @@ Provides secure authentication for API endpoints using API tokens
 while maintaining CSRF protection for web interface.
 """
 
-import secrets
 import hashlib
+import secrets
 from functools import wraps
-from flask import request, jsonify, current_app
+
+from flask import current_app, jsonify, request
 
 
 class APIToken:

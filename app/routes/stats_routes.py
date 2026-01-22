@@ -3,21 +3,20 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, date, timedelta
-from typing import Dict, Optional, Tuple
+from datetime import date, datetime, timedelta
 
 from flask import (
     Blueprint,
-    jsonify,
-    render_template,
     current_app,
-    request,
     flash,
-    redirect,
-    url_for,
+    jsonify,
     make_response,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
-from flask_login import login_required, current_user
+from flask_login import current_user, login_required
 
 from app.services import book_service, reading_log_service, user_service
 from app.utils.user_utils import calculate_reading_streak
@@ -67,10 +66,10 @@ NON_FINISHED_STATUSES = {
 
 
 def determine_finished_activity(
-    status: Optional[str],
-    finish_date: Optional[date],
-    fallback_log_date: Optional[date],
-) -> Tuple[bool, Optional[date]]:
+    status: str | None,
+    finish_date: date | None,
+    fallback_log_date: date | None,
+) -> tuple[bool, date | None]:
     """Determine if a book should count as finished and the date to use for stats."""
     if finish_date:
         if status and status in NON_FINISHED_STATUSES:
@@ -572,7 +571,7 @@ def index():
         )
         reading_logs_recent = []
 
-    last_log_by_book: Dict[str, date] = {}
+    last_log_by_book: dict[str, date] = {}
     for log in reading_logs_recent:
         log_date = _parse_date_like(log.get("date")) if isinstance(log, dict) else None
         if not log_date:
@@ -588,7 +587,7 @@ def index():
                 last_log_by_book[book_id_str] = log_date
 
     status_buckets = defaultdict(list)
-    finished_book_dates: Dict[str, Optional[date]] = {}
+    finished_book_dates: dict[str, date | None] = {}
 
     for idx, book in enumerate(user_books):
         book_id = _get_book_id(book)

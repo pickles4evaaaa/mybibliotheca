@@ -1,24 +1,23 @@
-from collections import OrderedDict
-import time as _time
 import os as _os_cover_debug
-from typing import Dict, List, Optional, Tuple
+import time as _time
+from collections import OrderedDict
 
-_PROVIDER_META_CACHE: Dict[str, Tuple[dict, float]] = {}
+_PROVIDER_META_CACHE: dict[str, tuple[dict, float]] = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes; cover metadata rarely changes
 
 _BEST_CACHE_TTL_SECONDS = int(
-    (_os_cover_debug.getenv("BEST_COVER_CACHE_TTL") or "21600")
+    _os_cover_debug.getenv("BEST_COVER_CACHE_TTL") or "21600"
 )
-_BEST_CACHE_MAX_ENTRIES = int((_os_cover_debug.getenv("BEST_COVER_CACHE_MAX") or "512"))
+_BEST_CACHE_MAX_ENTRIES = int(_os_cover_debug.getenv("BEST_COVER_CACHE_MAX") or "512")
 _CANDIDATE_CACHE_TTL_SECONDS = int(
-    (_os_cover_debug.getenv("COVER_CANDIDATE_CACHE_TTL") or "900")
+    _os_cover_debug.getenv("COVER_CANDIDATE_CACHE_TTL") or "900"
 )
 _CANDIDATE_CACHE_MAX_ENTRIES = int(
-    (_os_cover_debug.getenv("COVER_CANDIDATE_CACHE_MAX") or "256")
+    _os_cover_debug.getenv("COVER_CANDIDATE_CACHE_MAX") or "256"
 )
 
-_BEST_COVER_CACHE: OrderedDict[str, Tuple[float, dict]] = OrderedDict()
-_COVER_CANDIDATE_CACHE: OrderedDict[str, Tuple[float, List[dict]]] = OrderedDict()
+_BEST_COVER_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+_COVER_CANDIDATE_CACHE: OrderedDict[str, tuple[float, list[dict]]] = OrderedDict()
 
 # Verbose flag for cover & search debug (ENV: VERBOSE, IMPORT_VERBOSE, COVER_VERBOSE)
 _COVER_VERBOSE = (
@@ -64,7 +63,7 @@ def _purge_ordered_dict(store: OrderedDict, ttl: int, max_entries: int) -> None:
 
 
 def _normalized_cover_key(
-    isbn: Optional[str], title: Optional[str], author: Optional[str]
+    isbn: str | None, title: str | None, author: str | None
 ) -> str:
     return "|".join(
         [
@@ -75,7 +74,7 @@ def _normalized_cover_key(
     )
 
 
-def _best_cache_get(cache_key: str) -> Optional[dict]:
+def _best_cache_get(cache_key: str) -> dict | None:
     entry = _BEST_COVER_CACHE.get(cache_key)
     if not entry:
         return None
@@ -100,14 +99,14 @@ def _best_cache_set(cache_key: str, value: dict) -> None:
 
 
 def _candidate_cache_key(
-    isbn: Optional[str], title: Optional[str], author: Optional[str]
+    isbn: str | None, title: str | None, author: str | None
 ) -> str:
     return _normalized_cover_key(isbn, title, author)
 
 
 def _candidate_cache_get(
-    isbn: Optional[str], title: Optional[str], author: Optional[str]
-) -> Optional[List[dict]]:
+    isbn: str | None, title: str | None, author: str | None
+) -> list[dict] | None:
     if _CANDIDATE_CACHE_MAX_ENTRIES <= 0:
         return None
     key = _candidate_cache_key(isbn, title, author)
@@ -126,10 +125,10 @@ def _candidate_cache_get(
 
 
 def _candidate_cache_set(
-    isbn: Optional[str],
-    title: Optional[str],
-    author: Optional[str],
-    candidates: List[dict],
+    isbn: str | None,
+    title: str | None,
+    author: str | None,
+    candidates: list[dict],
 ) -> None:
     if _CANDIDATE_CACHE_MAX_ENTRIES <= 0:
         return
@@ -407,7 +406,7 @@ def get_cover_candidates(isbn=None, title=None, author=None):
     if cached_candidates is not None:
         return cached_candidates
 
-    candidates: List[dict] = []
+    candidates: list[dict] = []
 
     def _expand_google_variants(url: str):
         """Generate ordered google image variants (largest first) heuristically.
@@ -524,10 +523,11 @@ def get_cover_candidates(isbn=None, title=None, author=None):
 #   best_cover = get_best_cover_for_book(isbn=..., title=..., author=...)
 #   cover_url = best_cover['cover_url']
 import calendar
-from PIL import Image, ImageDraw, ImageFont
-from io import BytesIO
-import requests
 import os
+from io import BytesIO
+
+import requests
+from PIL import Image, ImageDraw, ImageFont
 
 # Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
 _IMPORT_VERBOSE = (os.getenv("VERBOSE") or "false").lower() == "true" or (
@@ -1242,7 +1242,7 @@ def generate_month_review_image(books, month, year):
         stat_font = ImageFont.truetype(
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24
         )
-    except (OSError, IOError):
+    except OSError:
         # Fallback to default font if custom fonts aren't available
         title_font = ImageFont.load_default()
         book_font = ImageFont.load_default()
@@ -1832,6 +1832,8 @@ def search_google_books_by_title_author(title, author=None, limit=10):
 
         from .book_utils import (
             select_highest_google_image,
+        )
+        from .book_utils import (
             upgrade_google_cover_url as _upgrade,
         )
 

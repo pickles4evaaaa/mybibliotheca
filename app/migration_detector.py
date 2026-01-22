@@ -7,11 +7,10 @@ This module detects SQLite databases at startup and offers migration options.
 It integrates with the application startup process to provide a seamless upgrade experience.
 """
 
+import logging
 import os
 import sqlite3
-import logging
 from pathlib import Path
-from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ class MigrationDetector:
                 seen_paths.add(resolved_path)
                 self.search_paths.append(path)
 
-    def find_sqlite_databases(self) -> List[Path]:
+    def find_sqlite_databases(self) -> list[Path]:
         """Find SQLite database files in common locations."""
         db_files = []
 
@@ -84,7 +83,7 @@ class MigrationDetector:
             logger.debug(f"   Error checking database {db_path}: {e}")
             return False
 
-    def analyze_database(self, db_path: Path) -> Dict:
+    def analyze_database(self, db_path: Path) -> dict:
         """Analyze a SQLite database structure and contents."""
         try:
             conn = sqlite3.connect(db_path)
@@ -132,7 +131,7 @@ class MigrationDetector:
             logger.error(f"Error analyzing database {db_path}: {e}")
             return {"error": str(e), "path": db_path, "total_books": 0}
 
-    def check_for_migration_needed(self) -> Optional[Dict]:
+    def check_for_migration_needed(self) -> dict | None:
         """
         Check if migration is needed at startup.
 
@@ -170,8 +169,8 @@ class MigrationDetector:
         }
 
     def create_migration_command(
-        self, db_info: Dict, user_id: Optional[str] = None
-    ) -> List[str]:
+        self, db_info: dict, user_id: str | None = None
+    ) -> list[str]:
         """Create the migration command for a specific database."""
         db_path = db_info["path"]
 
@@ -190,7 +189,7 @@ class MigrationDetector:
         return cmd
 
 
-def check_migration_at_startup() -> Optional[Dict]:
+def check_migration_at_startup() -> dict | None:
     """
     Check for migration needs at application startup.
     This function should be called early in the app initialization.
@@ -213,7 +212,7 @@ def check_migration_at_startup() -> Optional[Dict]:
     return migration_info
 
 
-def get_migration_message(migration_info: Dict) -> str:
+def get_migration_message(migration_info: dict) -> str:
     """Generate a user-friendly migration message."""
     total_books = migration_info["total_books"]
     total_dbs = migration_info["total_databases"]
@@ -246,7 +245,7 @@ Your SQLite data will be preserved as backups during migration.
 
 
 # For Docker/automatic environments
-def auto_migrate_if_safe(migration_info: Dict, default_user_id: str = "admin") -> bool:
+def auto_migrate_if_safe(migration_info: dict, default_user_id: str = "admin") -> bool:
     """
     Automatically migrate if it's safe to do so.
 

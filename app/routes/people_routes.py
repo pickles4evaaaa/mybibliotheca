@@ -3,23 +3,24 @@ People management routes for the Bibliotheca application.
 Handles all person/author-related operations including CRUD, merging, and metadata refresh.
 """
 
-from flask import (
-    Blueprint,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    current_app,
-    jsonify,
-    session,
-)
-from flask_login import login_required, current_user
-from datetime import datetime
-import uuid
-import traceback
 import inspect
 import re
+import traceback
+import uuid
+from datetime import datetime
+
+from flask import (
+    Blueprint,
+    current_app,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from flask_login import current_user, login_required
 
 from app.domain.models import Person
 from app.services import book_service, person_service
@@ -973,7 +974,7 @@ def parse_comprehensive_openlibrary_data(author_data):
 def refresh_person_metadata(person_id):
     """Refresh person metadata from OpenLibrary."""
     try:
-        from app.utils import search_author_by_name, fetch_author_data
+        from app.utils import fetch_author_data, search_author_by_name
 
         # Get the current person
         person = person_service.get_person_by_id_sync(person_id)

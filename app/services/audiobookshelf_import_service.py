@@ -7,29 +7,30 @@ Implements a test sync (N items) to validate mapping and cover caching.
 
 from __future__ import annotations
 
-from typing import Dict, Any, List, Optional
-import uuid
+import os
 import threading
 import traceback
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
+import requests  # type: ignore
+
+from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 from app.services.audiobookshelf_service import AudiobookShelfClient
-from app.simplified_book_service import (
-    SimplifiedBookService,
-    SimplifiedBook,
-    BookAlreadyExistsError,
-)
 from app.services.kuzu_book_service import KuzuBookService
-from app.utils.safe_import_manager import (
-    safe_create_import_job,
-    safe_update_import_job,
-    safe_get_import_job,
+from app.simplified_book_service import (
+    BookAlreadyExistsError,
+    SimplifiedBook,
+    SimplifiedBookService,
 )
 from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
-from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
-from pathlib import Path
-import os
-import requests  # type: ignore
+from app.utils.safe_import_manager import (
+    safe_create_import_job,
+    safe_get_import_job,
+    safe_update_import_job,
+)
 
 
 class AudiobookshelfImportService:
@@ -41,15 +42,15 @@ class AudiobookshelfImportService:
         self.simple_books = SimplifiedBookService()
         self.kuzu_book_service = KuzuBookService(user_id=user_id)
 
-    def _map_abs_item_to_simplified(self, item: Dict[str, Any]) -> SimplifiedBook:
+    def _map_abs_item_to_simplified(self, item: dict[str, Any]) -> SimplifiedBook:
         """Map ABS item JSON to SimplifiedBook structure (robust fields)."""
         media = item.get("media") or {}
         md = media.get("metadata") or {}
 
         # Authors and narrators can be arrays in md
         author = ""
-        addl: List[str] = []
-        narrators: List[str] = []
+        addl: list[str] = []
+        narrators: list[str] = []
         if isinstance(md.get("authors"), list) and md["authors"]:
             first = md["authors"][0]
             if isinstance(first, dict):
@@ -86,11 +87,11 @@ class AudiobookshelfImportService:
         language = md.get("language") or "en"
 
         # Series: Only pull from ABS series object; no subtitle or heuristic parsing
-        series: Optional[str] = None
-        series_order: Optional[int] = None
-        series_volume: Optional[str] = None
+        series: str | None = None
+        series_order: int | None = None
+        series_volume: str | None = None
 
-        def _to_int(val) -> Optional[int]:
+        def _to_int(val) -> int | None:
             try:
                 if isinstance(val, bool):
                     return None
@@ -214,7 +215,7 @@ class AudiobookshelfImportService:
             simplified.narrator = ", ".join(narrators)
         return simplified
 
-    def _needs_item_detail_for_persons(self, item: Dict[str, Any]) -> bool:
+    def _needs_item_detail_for_persons(self, item: dict[str, Any]) -> bool:
         """Heuristic to decide if we must fetch expanded item details.
 
         Some ABS list endpoints include media/metadata but omit contributors
@@ -246,10 +247,10 @@ class AudiobookshelfImportService:
         except Exception:
             return True
 
-    def _extract_categories(self, item: Dict[str, Any]) -> List[str]:
+    def _extract_categories(self, item: dict[str, Any]) -> list[str]:
         media = item.get("media") or {}
         md = media.get("metadata") or {}
-        out: List[str] = []
+        out: list[str] = []
         for key in ("genres", "tags", "categories"):
             val = md.get(key) or item.get(key)
             if isinstance(val, list):
@@ -270,7 +271,7 @@ class AudiobookshelfImportService:
                 uniq.append(c)
         return uniq
 
-    def _resolve_book_id(self, book_data: SimplifiedBook) -> Optional[str]:
+    def _resolve_book_id(self, book_data: SimplifiedBook) -> str | None:
         """Best-effort resolve of created book's id using ISBN or title/author."""
         # Prefer ISBNs
         isbn13 = getattr(book_data, "isbn13", None)
@@ -320,7 +321,7 @@ class AudiobookshelfImportService:
             return None
         return None
 
-    def _cache_cover_with_auth(self, item: Dict[str, Any]) -> Optional[str]:
+    def _cache_cover_with_auth(self, item: dict[str, Any]) -> str | None:
         """Download ABS cover with auth headers and store under /covers; return local URL.
 
         This avoids unauthorized errors when ABS requires Authorization for image fetches.
@@ -340,7 +341,7 @@ class AudiobookshelfImportService:
                 or None
             )
             item_id = item.get("id") or item.get("_id") or item.get("itemId")
-            candidate_urls: List[str] = []
+            candidate_urls: list[str] = []
             # 1) Direct coverPath if present
             if cover_path:
                 built = self.client.build_cover_url(cover_path)
@@ -437,7 +438,7 @@ class AudiobookshelfImportService:
         except Exception:
             return None
 
-    def _apply_audiobook_fields(self, book_id: str, abs_item: Dict[str, Any]):
+    def _apply_audiobook_fields(self, book_id: str, abs_item: dict[str, Any]):
         """Set media_type='audiobook', audio_duration_ms, and audiobookshelf_id."""
         media = abs_item.get("media") or {}
         md = media.get("metadata") or {}
@@ -450,7 +451,7 @@ class AudiobookshelfImportService:
             )
         # Extract ABS updated timestamp if available
         abs_updated_iso = self._extract_abs_updated_at(abs_item)
-        updates: Dict[str, Any] = {
+        updates: dict[str, Any] = {
             "media_type": "audiobook",
         }
         if duration_ms is not None:
@@ -461,8 +462,9 @@ class AudiobookshelfImportService:
         self.kuzu_book_service.update_book_sync(book_id, updates)
         # Set external id via direct query to avoid whitelist constraints
         try:
+            from datetime import datetime
+
             from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
-            from datetime import datetime, timezone
 
             # Always set external ABS id
             safe_execute_kuzu_query(
@@ -475,7 +477,7 @@ class AudiobookshelfImportService:
                 {
                     "book_id": book_id,
                     "abs_id": existing["audiobookshelf_id"] or "",
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                 },
             )
             # Also persist audio_duration_ms when available (not in standard update whitelist)
@@ -490,7 +492,7 @@ class AudiobookshelfImportService:
                     {
                         "book_id": book_id,
                         "dur_ms": int(duration_ms),
-                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ts": datetime.now(UTC).isoformat(),
                     },
                 )
             # Persist ABS updated timestamp if we have one (stored as STRING in schema)
@@ -509,14 +511,14 @@ class AudiobookshelfImportService:
                     {
                         "book_id": book_id,
                         "abs_updated": abs_updated_iso.strip(),
-                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "ts": datetime.now(UTC).isoformat(),
                     },
                 )
         except Exception:
             pass
 
     # -- Contributor helpers -------------------------------------------------
-    def _ensure_person_exists(self, name: str) -> Optional[str]:
+    def _ensure_person_exists(self, name: str) -> str | None:
         if not name or str(name).strip().lower() == "unknown":
             return None
         try:
@@ -559,7 +561,7 @@ class AudiobookshelfImportService:
                 CREATE (p:Person {id: $id, name: $name, normalized_name: toLower($name), created_at: CASE WHEN $ts IS NULL OR $ts = '' THEN NULL ELSE timestamp($ts) END})
                 RETURN p.id
                 """,
-                {"id": pid, "name": nm, "ts": datetime.now(timezone.utc).isoformat()},
+                {"id": pid, "name": nm, "ts": datetime.now(UTC).isoformat()},
             )
             return pid
         except Exception:
@@ -609,7 +611,7 @@ class AudiobookshelfImportService:
                     "bid": book_id,
                     "role": role,
                     "ord": int(order_index),
-                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "ts": datetime.now(UTC).isoformat(),
                 },
             )
         except Exception:
@@ -647,7 +649,7 @@ class AudiobookshelfImportService:
             pass
 
     # --- Delta sync helpers -------------------------------------------------
-    def _extract_abs_updated_at(self, item: Dict[str, Any]) -> Optional[str]:
+    def _extract_abs_updated_at(self, item: dict[str, Any]) -> str | None:
         """Return an ISO8601 string for the ABS item's last updated timestamp if present.
 
         Tries common keys and normalizes numeric epochs (s/ms) and string dates.
@@ -672,7 +674,7 @@ class AudiobookshelfImportService:
                 )
             if cand is None:
                 return None
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             # Numeric epoch
             if isinstance(cand, (int, float)):
@@ -682,7 +684,7 @@ class AudiobookshelfImportService:
                     if float(cand) > 1_000_000_000_000
                     else float(cand)
                 )
-                return datetime.fromtimestamp(epoch_sec, tz=timezone.utc).isoformat()
+                return datetime.fromtimestamp(epoch_sec, tz=UTC).isoformat()
             # ISO-like string
             s = str(cand)
             try:
@@ -691,13 +693,13 @@ class AudiobookshelfImportService:
                     return s
                 # Attempt parse/normalize
                 dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-                return dt.astimezone(timezone.utc).isoformat()
+                return dt.astimezone(UTC).isoformat()
             except Exception:
                 return s  # return raw string as best-effort
         except Exception:
             return None
 
-    def _get_local_abs_updated_at(self, abs_id: Optional[str]) -> Optional[str]:
+    def _get_local_abs_updated_at(self, abs_id: str | None) -> str | None:
         if not abs_id:
             return None
         try:
@@ -727,7 +729,7 @@ class AudiobookshelfImportService:
             return None
         return None
 
-    def _should_process_abs_item(self, item: Dict[str, Any]) -> bool:
+    def _should_process_abs_item(self, item: dict[str, Any]) -> bool:
         """Return True if item is new or updated compared to local store, else False."""
         try:
             abs_id = item.get("id") or item.get("_id") or item.get("itemId")
@@ -754,19 +756,19 @@ class AudiobookshelfImportService:
 
     # Public internal: run test sync using an existing task_id (no thread)
     def _run_test_sync_job(
-        self, task_id: str, library_ids: List[str], limit: int = 5
+        self, task_id: str, library_ids: list[str], limit: int = 5
     ) -> None:
         try:
             processed = 0
-            successes: List[str] = []
-            errors: List[str] = []
+            successes: list[str] = []
+            errors: list[str] = []
 
-            libs_to_try: List[str] = self._resolve_library_ids(library_ids)
+            libs_to_try: list[str] = self._resolve_library_ids(library_ids)
             if not libs_to_try:
                 raise ValueError("No ABS library_id configured or discovered")
 
-            items: List[Dict[str, Any]] = []
-            last_msg: Optional[str] = None
+            items: list[dict[str, Any]] = []
+            last_msg: str | None = None
             for lib_id in libs_to_try:
                 res = self.client.list_library_items(lib_id, page=1, size=limit)
                 last_msg = res.get("message")
@@ -808,7 +810,7 @@ class AudiobookshelfImportService:
 
             for item in items[:limit]:
                 current_title = "Unknown"
-                book_data: Optional[SimplifiedBook] = None
+                book_data: SimplifiedBook | None = None
                 try:
                     # Delta check: skip if not new/updated
                     if not self._should_process_abs_item(item):
@@ -891,10 +893,10 @@ class AudiobookshelfImportService:
                     )
                     if not created:
                         raise RuntimeError("Failed to create book")
-                    book_id: Optional[str] = self._resolve_book_id(book_data)
+                    book_id: str | None = self._resolve_book_id(book_data)
                     if book_id:
                         # Combine updates to minimize Kuzu roundtrips
-                        updates: Dict[str, Any] = {"media_type": "audiobook"}
+                        updates: dict[str, Any] = {"media_type": "audiobook"}
                         try:
                             local_cover = self._cache_cover_with_auth(item)
                             if local_cover:
@@ -968,7 +970,7 @@ class AudiobookshelfImportService:
                                             book_id
                                         )
                                     )
-                                    updates: Dict[str, Any] = {}
+                                    updates: dict[str, Any] = {}
                                     if existing and bd:
                                         if (not getattr(existing, "series", None)) and (
                                             bd.series
@@ -1094,20 +1096,20 @@ class AudiobookshelfImportService:
 
     # Public internal: run full sync using an existing task_id (no thread)
     def _run_full_sync_job(
-        self, task_id: str, library_ids: Optional[List[str]] = None, page_size: int = 50
+        self, task_id: str, library_ids: list[str] | None = None, page_size: int = 50
     ) -> None:
         try:
             libs_to_try = self._resolve_library_ids(library_ids or [])
             if not libs_to_try:
                 raise ValueError("No ABS libraries found to sync")
             processed = 0
-            errors: List[str] = []
-            success_titles: List[str] = []
+            errors: list[str] = []
+            success_titles: list[str] = []
             grand_total = 0
             # Read per-library cutoff timestamps (best-effort)
             settings = load_abs_settings()
             last_sync_map = settings.get("last_library_sync_map") or {}
-            latest_seen_map: Dict[str, str] = {}
+            latest_seen_map: dict[str, str] = {}
 
             for lib_id in libs_to_try:
                 meta = self.client.list_library_items(lib_id, page=1, size=page_size)
@@ -1157,7 +1159,7 @@ class AudiobookshelfImportService:
                     stop_due_to_cutoff = False
                     for item in items:
                         current_title = "Unknown"
-                        book_data: Optional[SimplifiedBook] = None
+                        book_data: SimplifiedBook | None = None
                         try:
                             # Track latest updatedAt for this page to aid cutoff persistence
                             try:
@@ -1236,9 +1238,9 @@ class AudiobookshelfImportService:
                             )
                             if not created:
                                 raise RuntimeError("Failed to create book")
-                            book_id: Optional[str] = self._resolve_book_id(book_data)
+                            book_id: str | None = self._resolve_book_id(book_data)
                             if book_id:
-                                updates2: Dict[str, Any] = {"media_type": "audiobook"}
+                                updates2: dict[str, Any] = {"media_type": "audiobook"}
                                 try:
                                     local_cover = self._cache_cover_with_auth(item)
                                     if local_cover:
@@ -1316,7 +1318,7 @@ class AudiobookshelfImportService:
                                             existing = self.kuzu_book_service.get_book_by_id_sync(
                                                 book_id
                                             )
-                                            updates: Dict[str, Any] = {}
+                                            updates: dict[str, Any] = {}
                                             if existing and bd:
                                                 if (
                                                     not getattr(
@@ -1404,7 +1406,7 @@ class AudiobookshelfImportService:
             # Persist latest seen per-library timestamps
             try:
                 if latest_seen_map:
-                    new_map = dict((settings.get("last_library_sync_map") or {}))
+                    new_map = dict(settings.get("last_library_sync_map") or {})
                     for k, v in latest_seen_map.items():
                         prev = new_map.get(k)
                         if (not prev) or (str(v) > str(prev)):
@@ -1475,7 +1477,7 @@ class AudiobookshelfImportService:
                 },
             )
 
-    def _resolve_library_ids(self, library_ids: List[str]) -> List[str]:
+    def _resolve_library_ids(self, library_ids: list[str]) -> list[str]:
         """Resolve provided identifiers (IDs or names) to actual library IDs.
 
         If no library_ids provided or none match, return all available IDs.
@@ -1499,7 +1501,7 @@ class AudiobookshelfImportService:
                 id_map[lid.lower()] = lid
             if lname:
                 name_map[lname.lower()] = lid
-        resolved: List[str] = []
+        resolved: list[str] = []
         for raw in library_ids or []:
             key = str(raw).strip().lower()
             if not key:
@@ -1517,14 +1519,14 @@ class AudiobookshelfImportService:
             )
         # de-dup while preserving order
         seen = set()
-        out: List[str] = []
+        out: list[str] = []
         for x in resolved:
             if x not in seen:
                 seen.add(x)
                 out.append(x)
         return out
 
-    def start_test_sync(self, library_ids: List[str], limit: int = 5) -> Dict[str, Any]:
+    def start_test_sync(self, library_ids: list[str], limit: int = 5) -> dict[str, Any]:
         """Kick off background test sync for up to N items from first library."""
         task_id = f"abs_test_{uuid.uuid4().hex[:8]}"
         total = limit
@@ -1535,7 +1537,7 @@ class AudiobookshelfImportService:
                 "task_id": task_id,
                 "type": "abs_test_sync",
                 "status": "started",
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "processed": 0,
                 "total": total,
                 "total_books": total,  # for progress UI tiles
@@ -1567,17 +1569,17 @@ class AudiobookshelfImportService:
                 _ctx_mgr.push()
             try:
                 processed = 0
-                successes: List[str] = []
-                errors: List[str] = []
+                successes: list[str] = []
+                errors: list[str] = []
 
                 # Resolve libraries to try
-                libs_to_try: List[str] = self._resolve_library_ids(library_ids)
+                libs_to_try: list[str] = self._resolve_library_ids(library_ids)
                 if not libs_to_try:
                     raise ValueError("No ABS library_id configured or discovered")
 
                 # Fetch first non-empty page of items from any library
-                items: List[Dict[str, Any]] = []
-                last_msg: Optional[str] = None
+                items: list[dict[str, Any]] = []
+                last_msg: str | None = None
                 for lib_id in libs_to_try:
                     res = self.client.list_library_items(lib_id, page=1, size=limit)
                     last_msg = res.get("message")
@@ -1618,7 +1620,7 @@ class AudiobookshelfImportService:
                     },
                 )
 
-                imported_item_ids: List[str] = []
+                imported_item_ids: list[str] = []
                 for item in items[:limit]:
                     # Cancellation check
                     try:
@@ -1636,7 +1638,7 @@ class AudiobookshelfImportService:
                     except Exception:
                         pass
                     current_title = "Unknown"
-                    book_data: Optional[SimplifiedBook] = None
+                    book_data: SimplifiedBook | None = None
                     try:
                         # Fetch expanded item for richer metadata if available
                         item_id = (
@@ -1676,7 +1678,7 @@ class AudiobookshelfImportService:
                         if not created:
                             raise RuntimeError("Failed to create book")
                         # Resolve created book id then apply audiobook-specific fields
-                        book_id: Optional[str] = self._resolve_book_id(book_data)
+                        book_id: str | None = self._resolve_book_id(book_data)
                         if book_id:
                             # Attempt to cache cover with ABS auth, then update cover_url if saved
                             try:
@@ -1750,7 +1752,7 @@ class AudiobookshelfImportService:
                                                 book_id
                                             )
                                         )
-                                        updates: Dict[str, Any] = {}
+                                        updates: dict[str, Any] = {}
                                         if existing and bd:
                                             if (
                                                 not getattr(existing, "series", None)
@@ -1892,8 +1894,8 @@ class AudiobookshelfImportService:
         return {"task_id": task_id, "total": total}
 
     def start_full_sync(
-        self, library_ids: Optional[List[str]] = None, page_size: int = 50
-    ) -> Dict[str, Any]:
+        self, library_ids: list[str] | None = None, page_size: int = 50
+    ) -> dict[str, Any]:
         """Kick off a full one-way sync from ABS to MyBibliotheca.
 
         Iterates all configured (or discovered) libraries and paginates through
@@ -1908,7 +1910,7 @@ class AudiobookshelfImportService:
                 "task_id": task_id,
                 "type": "abs_full_sync",
                 "status": "started",
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "processed": 0,
                 "total": 0,
                 "total_books": 0,
@@ -1943,8 +1945,8 @@ class AudiobookshelfImportService:
                 if not libs_to_try:
                     raise ValueError("No ABS libraries found to sync")
                 processed = 0
-                errors: List[str] = []
-                success_titles: List[str] = []
+                errors: list[str] = []
+                success_titles: list[str] = []
                 grand_total = 0
 
                 # First pass: compute totals (best-effort)
@@ -1974,7 +1976,7 @@ class AudiobookshelfImportService:
                         ).get(lib_id)
                     except Exception:
                         cutoff_iso = None
-                    latest_seen_for_lib: Optional[str] = None
+                    latest_seen_for_lib: str | None = None
                     while True:
                         res = self.client.list_library_items(
                             lib_id, page=page, size=page_size
@@ -1986,10 +1988,10 @@ class AudiobookshelfImportService:
                         # Phase A: parallel network-bound enrichment (item detail + cover)
                         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                        def _prepare(item_in: Dict[str, Any]) -> Dict[str, Any]:
+                        def _prepare(item_in: dict[str, Any]) -> dict[str, Any]:
                             loc_item = dict(item_in)
-                            bd: Optional[SimplifiedBook] = None
-                            local_cover: Optional[str] = None
+                            bd: SimplifiedBook | None = None
+                            local_cover: str | None = None
                             try:
                                 # Skip early in prepare if not updated; mark sentinel
                                 if not self._should_process_abs_item(loc_item):
@@ -2118,7 +2120,7 @@ class AudiobookshelfImportService:
                                         pass
                                 continue
                             obj_item = entry.get("item") or {}
-                            book_data: Optional[SimplifiedBook] = entry.get("book_data")
+                            book_data: SimplifiedBook | None = entry.get("book_data")
                             current_title = "Unknown"
                             try:
                                 # Update latest seen timestamp
@@ -2145,11 +2147,11 @@ class AudiobookshelfImportService:
                                 )
                                 if not created:
                                     raise RuntimeError("Failed to create book")
-                                book_id: Optional[str] = self._resolve_book_id(
+                                book_id: str | None = self._resolve_book_id(
                                     book_data
                                 )
                                 if book_id:
-                                    updates3: Dict[str, Any] = {
+                                    updates3: dict[str, Any] = {
                                         "media_type": "audiobook"
                                     }
                                     # We may already have a cached local cover; prefer that
@@ -2228,7 +2230,7 @@ class AudiobookshelfImportService:
                                             existing = self.kuzu_book_service.get_book_by_id_sync(
                                                 book_id
                                             )
-                                            updates: Dict[str, Any] = {}
+                                            updates: dict[str, Any] = {}
                                             if existing and bd_dup:
                                                 if (
                                                     not getattr(
@@ -2303,10 +2305,10 @@ class AudiobookshelfImportService:
                                 if latest_seen_for_lib:
                                     settings_update = load_abs_settings()
                                     m = dict(
-                                        (
+                                        
                                             settings_update.get("last_library_sync_map")
                                             or {}
-                                        )
+                                        
                                     )
                                     prev = m.get(lib_id)
                                     if (not prev) or (
@@ -2331,7 +2333,7 @@ class AudiobookshelfImportService:
                         if latest_seen_for_lib:
                             settings_update = load_abs_settings()
                             m = dict(
-                                (settings_update.get("last_library_sync_map") or {})
+                                settings_update.get("last_library_sync_map") or {}
                             )
                             prev = m.get(lib_id)
                             if (not prev) or (str(latest_seen_for_lib) > str(prev)):
