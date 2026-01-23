@@ -1,14 +1,14 @@
 """Helpers for reading and writing OPDS sync configuration."""
+
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any
 
 from flask import current_app
 
-
-DEFAULTS: Dict[str, Any] = {
+DEFAULTS: dict[str, Any] = {
     "base_url": "",
     "username": "",
     "password": "",
@@ -43,17 +43,19 @@ def _settings_path() -> str:
     return os.path.join(data_dir, "opds_settings.json")
 
 
-def _normalize_mapping(value: Any) -> Dict[str, str]:
+def _normalize_mapping(value: Any) -> dict[str, str]:
     if isinstance(value, dict):
-        return {str(k): str(v) for k, v in value.items() if k is not None and v is not None}
+        return {
+            str(k): str(v) for k, v in value.items() if k is not None and v is not None
+        }
     return {}
 
 
-def load_opds_settings() -> Dict[str, Any]:
+def load_opds_settings() -> dict[str, Any]:
     path = _settings_path()
     try:
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     merged = DEFAULTS.copy()
@@ -68,7 +70,14 @@ def load_opds_settings() -> Dict[str, Any]:
                         elif key in {"auto_sync_every_hours"}:
                             try:
                                 raw_value = data.get(key)
-                                merged[key] = max(1, int(raw_value if raw_value not in (None, "") else DEFAULTS[key]))
+                                merged[key] = max(
+                                    1,
+                                    int(
+                                        raw_value
+                                        if raw_value not in (None, "")
+                                        else DEFAULTS[key]
+                                    ),
+                                )
                             except Exception:
                                 merged[key] = DEFAULTS[key]
                         elif key in data:
@@ -86,7 +95,7 @@ def load_opds_settings() -> Dict[str, Any]:
     return merged
 
 
-def save_opds_settings(update: Dict[str, Any]) -> bool:
+def save_opds_settings(update: dict[str, Any]) -> bool:
     path = _settings_path()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -106,10 +115,19 @@ def save_opds_settings(update: Dict[str, Any]) -> bool:
                 payload[key] = bool(value)
             elif key == "auto_sync_every_hours":
                 try:
-                    payload[key] = max(1, int(value if value not in (None, "") else DEFAULTS[key]))
+                    payload[key] = max(
+                        1, int(value if value not in (None, "") else DEFAULTS[key])
+                    )
                 except Exception:
                     payload[key] = DEFAULTS[key]
-            elif key in {"last_sync_at", "last_sync_status", "auto_sync_user_id", "last_auto_sync", "last_auto_sync_status", "last_test_summary"}:
+            elif key in {
+                "last_sync_at",
+                "last_sync_status",
+                "auto_sync_user_id",
+                "last_auto_sync",
+                "last_auto_sync_status",
+                "last_test_summary",
+            }:
                 payload[key] = value
             elif key == "last_test_preview":
                 payload[key] = value if isinstance(value, list) else []

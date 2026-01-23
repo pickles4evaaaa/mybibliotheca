@@ -13,18 +13,18 @@ Sharing model:
  - Field definitions may declare is_shareable / is_global (leverages existing CustomField schema)
  - A helper method can promote a personal field value to global metadata when requested
 """
-from __future__ import annotations
 
 from __future__ import annotations
+
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
-from pathlib import Path
+import logging
+import os
 import shutil
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
-import os
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -33,21 +33,22 @@ logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
+import hashlib
 import threading
 from contextlib import contextmanager
-import hashlib
+
 
 def _lock_dir() -> Path:
-    base = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
-    d = base.parent / 'locks'
+    base = Path(os.getenv("KUZU_DB_PATH", "data/kuzu")).resolve()
+    d = base.parent / "locks"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-_pm_locks: Dict[tuple, threading.Lock] = {}
+_pm_locks: dict[tuple, threading.Lock] = {}
 
 
 @contextmanager
@@ -59,19 +60,21 @@ def _with_pm_lock(user_id: str, book_id: str):
         _pm_locks[key] = lock
     # Cross-process file lock (best-effort) to reduce write conflicts between workers
     # File name derived from hash of (user, book)
-    h = hashlib.sha1(f"{user_id}:{book_id}".encode('utf-8')).hexdigest()
+    h = hashlib.sha1(f"{user_id}:{book_id}".encode()).hexdigest()
     fpath = _lock_dir() / f"pm_{h}.lock"
     import time
+
     lock.acquire()
     fh = None
     try:
         # Try to acquire an exclusive lock with retries
         for _ in range(3):
             try:
-                fh = open(fpath, 'w')
+                fh = open(fpath, "w")
                 try:
                     # Use fcntl on Unix (macOS/Linux). On Windows this will fail silently and we fallback to in-proc lock only.
                     import fcntl  # type: ignore
+
                     fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
                 except Exception:
                     pass
@@ -84,6 +87,7 @@ def _with_pm_lock(user_id: str, book_id: str):
             if fh is not None:
                 try:
                     import fcntl  # type: ignore
+
                     try:
                         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
                     except Exception:
@@ -116,8 +120,8 @@ class PersonalMetadataService:
         exists' error which we swallow.
         """
         # If KUZU_DB_PATH changes between tests, we must re-check schema.
-        current_path = os.getenv('KUZU_DB_PATH', 'data/kuzu')
-        cached_path = getattr(self, '_rel_schema_path', None)
+        current_path = os.getenv("KUZU_DB_PATH", "data/kuzu")
+        cached_path = getattr(self, "_rel_schema_path", None)
         if cached_path != current_path:
             # Reset ensured flag for new database location
             self._rel_schema_ensured = False
@@ -134,11 +138,18 @@ class PersonalMetadataService:
             return
         except Exception as probe_err:  # Table probably missing
             err_l = str(probe_err).lower()
-            missing_tokens = ["does not exist", "cannot find", "unknown table", "binder exception"]
+            missing_tokens = [
+                "does not exist",
+                "cannot find",
+                "unknown table",
+                "binder exception",
+            ]
             if not any(tok in err_l for tok in missing_tokens):
                 # Some other error; log once but continue (maybe transient)
-                if not getattr(self, '_rel_schema_error_logged', False):
-                    logger.debug(f"Probe for {self.REL_NAME} existence failed (non-missing error): {probe_err}")
+                if not getattr(self, "_rel_schema_error_logged", False):
+                    logger.debug(
+                        f"Probe for {self.REL_NAME} existence failed (non-missing error): {probe_err}"
+                    )
                     self._rel_schema_error_logged = True
             # Proceed to creation attempt regardless (worst case it'll say already exists)
         create_rel_canonical = f"""
@@ -158,10 +169,10 @@ CREATE REL TABLE {self.REL_NAME}(
             logger.info(f"Created {self.REL_NAME} relationship table (lazy path)")
         except Exception as e:  # pragma: no cover - defensive
             msg = str(e).lower()
-            if 'already exists' in msg:
+            if "already exists" in msg:
                 self._rel_schema_ensured = True
             else:
-                if not getattr(self, '_rel_schema_error_logged', False):
+                if not getattr(self, "_rel_schema_error_logged", False):
                     logger.warning(f"Lazy creation of {self.REL_NAME} failed: {e}")
                     self._rel_schema_error_logged = True
 
@@ -176,22 +187,26 @@ CREATE REL TABLE {self.REL_NAME}(
             return
         self._migration_checked = True
         # Skip entirely if OWNS schema not enabled (avoids binder errors when rel table absent)
-        if os.getenv('ENABLE_OWNS_SCHEMA', 'false').lower() not in ('1', 'true', 'yes'):
+        if os.getenv("ENABLE_OWNS_SCHEMA", "false").lower() not in ("1", "true", "yes"):
             return
         if os.getenv("DISABLE_OWNS_MIGRATION", "0") in ("1", "true", "True"):
             logger.info("OWNS migration skipped due to DISABLE_OWNS_MIGRATION env var")
             return
-        
+
         # Check for completion flag to avoid re-running migration
-        kuzu_dir = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
-        migration_complete_flag = kuzu_dir / '.owns_migration_complete'
+        kuzu_dir = Path(os.getenv("KUZU_DB_PATH", "data/kuzu")).resolve()
+        migration_complete_flag = kuzu_dir / ".owns_migration_complete"
         if migration_complete_flag.exists():
-            logger.debug("OWNS migration already completed (flag file exists), skipping")
+            logger.debug(
+                "OWNS migration already completed (flag file exists), skipping"
+            )
             return
         try:
-            count_result = safe_execute_kuzu_query("MATCH ()-[r:OWNS]->() RETURN COUNT(r)")
+            count_result = safe_execute_kuzu_query(
+                "MATCH ()-[r:OWNS]->() RETURN COUNT(r)"
+            )
             count = 0
-            if hasattr(count_result, 'has_next') and hasattr(count_result, 'get_next'):
+            if hasattr(count_result, "has_next") and hasattr(count_result, "get_next"):
                 if count_result.has_next():  # type: ignore[attr-defined]
                     row = count_result.get_next()  # type: ignore[attr-defined]
                     if isinstance(row, (list, tuple)) and row:
@@ -200,7 +215,7 @@ CREATE REL TABLE {self.REL_NAME}(
                 first = count_result[0]
                 if isinstance(first, dict):
                     # common key patterns
-                    count = first.get('col_0') or first.get('count') or 0
+                    count = first.get("col_0") or first.get("count") or 0
                 elif isinstance(first, (list, tuple)):
                     count = first[0]
             count = int(count or 0)
@@ -208,7 +223,9 @@ CREATE REL TABLE {self.REL_NAME}(
                 return
             # Before performing any data copy/mutation, take a filesystem snapshot of the Kuzu DB
             self._ensure_pre_owns_migration_backup(count)
-            logger.info(f"Starting OWNS -> HAS_PERSONAL_METADATA migration for {count} relationships")
+            logger.info(
+                f"Starting OWNS -> HAS_PERSONAL_METADATA migration for {count} relationships"
+            )
             query = """
             MATCH (u:User)-[r:OWNS]->(b:Book)
             RETURN u.id, b.id, r.personal_notes, r.user_review, r.start_date, r.finish_date,
@@ -220,31 +237,33 @@ CREATE REL TABLE {self.REL_NAME}(
                 return
             if isinstance(result, list):
                 rows = result
-            elif hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            elif hasattr(result, "has_next") and hasattr(result, "get_next"):
                 while result.has_next():  # type: ignore[attr-defined]
                     rows.append(result.get_next())  # type: ignore[attr-defined]
             migrated = 0
             for row in rows:
                 # Support dict or list style
                 if isinstance(row, dict):
-                    row_dict: Dict[str, Any] = row  # local alias for type clarity
+                    row_dict: dict[str, Any] = row  # local alias for type clarity
+
                     def getv(i: int, key: str):
-                        col_key = f'col_{i}'
+                        col_key = f"col_{i}"
                         if col_key in row_dict:
                             return row_dict.get(col_key)
                         return row_dict.get(key)
-                    user_id = getv(0, 'u.id') or getv(0, 'user_id')
-                    book_id = getv(1, 'b.id') or getv(1, 'book_id')
+
+                    user_id = getv(0, "u.id") or getv(0, "user_id")
+                    book_id = getv(1, "b.id") or getv(1, "book_id")
                     if not user_id or not book_id:
                         continue
-                    personal_notes = getv(2, 'personal_notes')
-                    user_review = getv(3, 'user_review')
-                    start_date = getv(4, 'start_date')
-                    finish_date = getv(5, 'finish_date')
-                    reading_status = getv(6, 'reading_status')
-                    ownership_status = getv(7, 'ownership_status')
-                    user_rating = getv(8, 'user_rating')
-                    custom_metadata_raw = getv(9, 'custom_metadata')
+                    personal_notes = getv(2, "personal_notes")
+                    user_review = getv(3, "user_review")
+                    start_date = getv(4, "start_date")
+                    finish_date = getv(5, "finish_date")
+                    reading_status = getv(6, "reading_status")
+                    ownership_status = getv(7, "ownership_status")
+                    user_rating = getv(8, "user_rating")
+                    custom_metadata_raw = getv(9, "custom_metadata")
                 else:
                     user_id = row[0] if len(row) > 0 else None  # type: ignore[index]
                     book_id = row[1] if len(row) > 1 else None  # type: ignore[index]
@@ -258,13 +277,13 @@ CREATE REL TABLE {self.REL_NAME}(
                     custom_metadata_raw = row[9] if len(row) > 9 else None  # type: ignore[index]
                 if not user_id or not book_id:
                     continue
-                custom_updates: Dict[str, Any] = {}
+                custom_updates: dict[str, Any] = {}
                 for k, v in {
-                    'reading_status': reading_status,
-                    'ownership_status': ownership_status,
-                    'user_rating': user_rating,
+                    "reading_status": reading_status,
+                    "ownership_status": ownership_status,
+                    "user_rating": user_rating,
                 }.items():
-                    if v not in (None, ''):
+                    if v not in (None, ""):
                         custom_updates[k] = v
                 # merge custom_metadata JSON if present
                 if custom_metadata_raw:
@@ -315,20 +334,27 @@ CREATE REL TABLE {self.REL_NAME}(
                         )
                     migrated += 1
                 except Exception as e:
-                    logger.warning(f"Failed migrating OWNS record user={user_id} book={book_id}: {e}")
+                    logger.warning(
+                        f"Failed migrating OWNS record user={user_id} book={book_id}: {e}"
+                    )
             logger.info(f"Completed OWNS migration: migrated {migrated} / {count}")
-            
+
             # Set completion flag to avoid re-running migration
             try:
-                kuzu_dir = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
-                migration_complete_flag = kuzu_dir / '.owns_migration_complete'
+                kuzu_dir = Path(os.getenv("KUZU_DB_PATH", "data/kuzu")).resolve()
+                migration_complete_flag = kuzu_dir / ".owns_migration_complete"
                 migration_complete_flag.touch()
-                logger.info("OWNS migration completion flag set - future startups will skip migration")
+                logger.info(
+                    "OWNS migration completion flag set - future startups will skip migration"
+                )
             except Exception as flag_error:
-                logger.warning(f"Failed to set OWNS migration completion flag: {flag_error}")
-                
+                logger.warning(
+                    f"Failed to set OWNS migration completion flag: {flag_error}"
+                )
+
         except Exception as e:
             logger.warning(f"OWNS migration failed: {e}")
+
     def _ensure_pre_owns_migration_backup(self, owns_count: int):
         """Create a timestamped copy of the Kuzu database directory before OWNS migration.
 
@@ -341,32 +367,52 @@ CREATE REL TABLE {self.REL_NAME}(
             owns_count: Number of OWNS relationships detected (for logging only)
         """
         try:
-            if os.getenv('DISABLE_OWNS_MIGRATION_BACKUP', '0').lower() in ('1', 'true', 'yes'):
-                logger.info("OWNS migration backup skipped due to DISABLE_OWNS_MIGRATION_BACKUP env var")
+            if os.getenv("DISABLE_OWNS_MIGRATION_BACKUP", "0").lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                logger.info(
+                    "OWNS migration backup skipped due to DISABLE_OWNS_MIGRATION_BACKUP env var"
+                )
                 return
-            kuzu_dir = Path(os.getenv('KUZU_DB_PATH', 'data/kuzu')).resolve()
+            kuzu_dir = Path(os.getenv("KUZU_DB_PATH", "data/kuzu")).resolve()
             if not kuzu_dir.exists():
                 logger.warning(f"Kuzu directory not found for backup: {kuzu_dir}")
                 return
-            sentinel = kuzu_dir / '.owns_migration_backup_done'
-            if sentinel.exists() and os.getenv('FORCE_OWNS_MIGRATION_BACKUP', '0') not in ('1', 'true', 'yes'):
-                logger.info("OWNS migration backup already exists (sentinel present), skipping new backup")
+            sentinel = kuzu_dir / ".owns_migration_backup_done"
+            if sentinel.exists() and os.getenv(
+                "FORCE_OWNS_MIGRATION_BACKUP", "0"
+            ) not in ("1", "true", "yes"):
+                logger.info(
+                    "OWNS migration backup already exists (sentinel present), skipping new backup"
+                )
                 return
-            backup_root = kuzu_dir.parent / 'kuzu_backups'
+            backup_root = kuzu_dir.parent / "kuzu_backups"
             backup_root.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.utcnow().strftime('%Y%m%d-%H%M%S')
-            backup_dir = backup_root / f'pre_owns_migration_{timestamp}'
+            timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+            backup_dir = backup_root / f"pre_owns_migration_{timestamp}"
             if backup_dir.exists():  # extremely unlikely
-                logger.warning(f"Backup directory already exists, generating unique suffix: {backup_dir}")
-                backup_dir = backup_root / f'pre_owns_migration_{timestamp}_{os.getpid()}'
-            logger.info(f"Creating pre-OWNS-migration backup at {backup_dir} (relationships: {owns_count})")
+                logger.warning(
+                    f"Backup directory already exists, generating unique suffix: {backup_dir}"
+                )
+                backup_dir = (
+                    backup_root / f"pre_owns_migration_{timestamp}_{os.getpid()}"
+                )
+            logger.info(
+                f"Creating pre-OWNS-migration backup at {backup_dir} (relationships: {owns_count})"
+            )
             shutil.copytree(kuzu_dir, backup_dir)
             sentinel.write_text(str(backup_dir))
             logger.info(f"Pre-OWNS-migration backup completed: {backup_dir}")
         except Exception as e:
-            logger.error(f"Failed to create OWNS migration backup (continuing anyway): {e}")
+            logger.error(
+                f"Failed to create OWNS migration backup (continuing anyway): {e}"
+            )
 
-    def _fetch_relationship(self, user_id: str, book_id: str) -> Optional[Dict[str, Any]]:
+    def _fetch_relationship(
+        self, user_id: str, book_id: str
+    ) -> dict[str, Any] | None:
         query_new = f"""
         MATCH (u:User {{id: $user_id}})-[r:{self.REL_NAME}]->(b:Book {{id: $book_id}})
         RETURN r.personal_notes, r.start_date, r.finish_date, r.personal_custom_fields, r.created_at, r.updated_at
@@ -376,14 +422,16 @@ CREATE REL TABLE {self.REL_NAME}(
         RETURN r.personal_notes, r.personal_custom_fields, r.created_at, r.updated_at
         """
         try:
-            result = safe_execute_kuzu_query(query_new, {"user_id": user_id, "book_id": book_id})
+            result = safe_execute_kuzu_query(
+                query_new, {"user_id": user_id, "book_id": book_id}
+            )
             rows = []
             # Newer SafeKuzuManager may already return list-like rows
             if result is None:
                 return None
             if isinstance(result, list):
                 rows = result
-            elif hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            elif hasattr(result, "has_next") and hasattr(result, "get_next"):
                 while result.has_next():  # type: ignore[attr-defined]
                     rows.append(result.get_next())  # type: ignore[attr-defined]
             if not rows:
@@ -391,12 +439,12 @@ CREATE REL TABLE {self.REL_NAME}(
             row = rows[0]
             # Support dict style (col_0, col_1, etc.) or positional
             if isinstance(row, dict):
-                personal_notes = row.get('col_0') or row.get('personal_notes')
-                start_date = row.get('col_1') or row.get('start_date')
-                finish_date = row.get('col_2') or row.get('finish_date')
-                custom_fields = row.get('col_3') or row.get('personal_custom_fields')
-                created_at = row.get('col_4') or row.get('created_at')
-                updated_at = row.get('col_5') or row.get('updated_at')
+                personal_notes = row.get("col_0") or row.get("personal_notes")
+                start_date = row.get("col_1") or row.get("start_date")
+                finish_date = row.get("col_2") or row.get("finish_date")
+                custom_fields = row.get("col_3") or row.get("personal_custom_fields")
+                created_at = row.get("col_4") or row.get("created_at")
+                updated_at = row.get("col_5") or row.get("updated_at")
             else:
                 personal_notes = row[0] if len(row) > 0 else None  # type: ignore[index]
                 start_date = row[1] if len(row) > 1 else None  # type: ignore[index]
@@ -415,15 +463,21 @@ CREATE REL TABLE {self.REL_NAME}(
         except Exception as e:
             # Fallback for older DB without start/finish columns
             err = str(e).lower()
-            if "cannot find property" in err or "does not exist" in err or "unknown" in err:
+            if (
+                "cannot find property" in err
+                or "does not exist" in err
+                or "unknown" in err
+            ):
                 try:
-                    result = safe_execute_kuzu_query(query_legacy, {"user_id": user_id, "book_id": book_id})
+                    result = safe_execute_kuzu_query(
+                        query_legacy, {"user_id": user_id, "book_id": book_id}
+                    )
                     rows = []
                     if result is None:
                         return None
                     if isinstance(result, list):
                         rows = result
-                    elif hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+                    elif hasattr(result, "has_next") and hasattr(result, "get_next"):
                         while result.has_next():  # type: ignore[attr-defined]
                             rows.append(result.get_next())  # type: ignore[attr-defined]
                     if not rows:
@@ -431,11 +485,18 @@ CREATE REL TABLE {self.REL_NAME}(
                     row = rows[0]
                     # Safe path: treat result row as dict-like mapping (our SafeKuzuManager normalizes to dicts)
                     if not isinstance(row, dict):
-                        row = {"col_0": None, "col_1": None, "col_2": None, "col_3": None}
-                    personal_notes = row.get('col_0') or row.get('personal_notes')
-                    custom_fields = row.get('col_1') or row.get('personal_custom_fields')
-                    created_at = row.get('col_2') or row.get('created_at')
-                    updated_at = row.get('col_3') or row.get('updated_at')
+                        row = {
+                            "col_0": None,
+                            "col_1": None,
+                            "col_2": None,
+                            "col_3": None,
+                        }
+                    personal_notes = row.get("col_0") or row.get("personal_notes")
+                    custom_fields = row.get("col_1") or row.get(
+                        "personal_custom_fields"
+                    )
+                    created_at = row.get("col_2") or row.get("created_at")
+                    updated_at = row.get("col_3") or row.get("updated_at")
                     return {
                         "personal_notes": personal_notes,
                         "start_date": None,
@@ -448,7 +509,7 @@ CREATE REL TABLE {self.REL_NAME}(
                     return None
             return None
 
-    def get_personal_metadata(self, user_id: str, book_id: str) -> Dict[str, Any]:
+    def get_personal_metadata(self, user_id: str, book_id: str) -> dict[str, Any]:
         # Ensure migration attempted before reads
         self._ensure_relationship_schema()
         self._maybe_run_owns_migration()
@@ -477,13 +538,13 @@ CREATE REL TABLE {self.REL_NAME}(
         user_id: str,
         book_id: str,
         *,
-        personal_notes: Optional[str] = None,
-        user_review: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        finish_date: Optional[datetime] = None,
-        custom_updates: Optional[Dict[str, Any]] = None,
+        personal_notes: str | None = None,
+        user_review: str | None = None,
+        start_date: datetime | None = None,
+        finish_date: datetime | None = None,
+        custom_updates: dict[str, Any] | None = None,
         merge: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create or update the HAS_PERSONAL_METADATA relationship.
 
         Args:
@@ -515,8 +576,8 @@ CREATE REL TABLE {self.REL_NAME}(
         # Pull out ISO strings for dates (if explicitly cleared, value may be None)
         start_raw = json_blob.get("start_date")
         finish_raw = json_blob.get("finish_date")
-        
-        def _sanitize_ts_param(v: Any) -> Optional[str]:
+
+        def _sanitize_ts_param(v: Any) -> str | None:
             """Return ISO string or None. Treat '', whitespace, and invalid formats as None."""
             if v is None:
                 return None
@@ -527,7 +588,7 @@ CREATE REL TABLE {self.REL_NAME}(
                 if not s:
                     return None
                 # Normalize Z suffix
-                s2 = s.replace('Z', '+00:00')
+                s2 = s.replace("Z", "+00:00")
                 try:
                     return datetime.fromisoformat(s2).isoformat()
                 except Exception:
@@ -536,7 +597,7 @@ CREATE REL TABLE {self.REL_NAME}(
                         val = float(s2)
                         if val > 10_000_000_000:  # likely ms
                             val = val / 1000.0
-                        return datetime.fromtimestamp(val, tz=timezone.utc).isoformat()
+                        return datetime.fromtimestamp(val, tz=UTC).isoformat()
                     except Exception:
                         return None
             # Unsupported type
@@ -577,7 +638,7 @@ CREATE REL TABLE {self.REL_NAME}(
         try:
             # Retry loop to mitigate transient write-write conflicts
             attempts = 0
-            last_err: Optional[Exception] = None
+            last_err: Exception | None = None
             while attempts < 3:
                 try:
                     with _with_pm_lock(user_id, book_id):
@@ -590,7 +651,9 @@ CREATE REL TABLE {self.REL_NAME}(
                                 # Kuzu supports TIMESTAMP nulls; pass ISO if string, else None
                                 "start_date": start_iso,
                                 "finish_date": finish_iso,
-                                "json_blob": json.dumps(json_blob) if json_blob else None,
+                                "json_blob": json.dumps(json_blob)
+                                if json_blob
+                                else None,
                             },
                         )
                     last_err = None
@@ -598,10 +661,11 @@ CREATE REL TABLE {self.REL_NAME}(
                 except Exception as _e:
                     msg = str(_e).lower()
                     # Detect write-write conflict signatures
-                    if 'write-write conflict' in msg or 'deadlock' in msg:
+                    if "write-write conflict" in msg or "deadlock" in msg:
                         attempts += 1
                         last_err = _e
                         import time
+
                         time.sleep(0.05 * attempts)  # simple backoff 50ms, 100ms
                         continue
                     else:
@@ -611,10 +675,14 @@ CREATE REL TABLE {self.REL_NAME}(
                 raise last_err
         except Exception as e:
             msg = str(e).lower()
-            if "cannot find property" in msg or "does not exist" in msg or "unknown" in msg:
+            if (
+                "cannot find property" in msg
+                or "does not exist" in msg
+                or "unknown" in msg
+            ):
                 # Try legacy path with same retry shim just in case
                 attempts = 0
-                last_err2: Optional[Exception] = None
+                last_err2: Exception | None = None
                 while attempts < 2:
                     try:
                         with _with_pm_lock(user_id, book_id):
@@ -624,16 +692,19 @@ CREATE REL TABLE {self.REL_NAME}(
                                     "user_id": user_id,
                                     "book_id": book_id,
                                     "personal_notes": column_notes,
-                                    "json_blob": json.dumps(json_blob) if json_blob else None,
+                                    "json_blob": json.dumps(json_blob)
+                                    if json_blob
+                                    else None,
                                 },
                             )
                         last_err2 = None
                         break
                     except Exception as _e2:
-                        if 'write-write conflict' in str(_e2).lower():
+                        if "write-write conflict" in str(_e2).lower():
                             attempts += 1
                             last_err2 = _e2
                             import time
+
                             time.sleep(0.05 * attempts)
                             continue
                         else:
@@ -642,14 +713,16 @@ CREATE REL TABLE {self.REL_NAME}(
                     raise last_err2
             else:
                 raise
-    # If the above failed due to missing table (race condition), attempt one retry
-    # NOTE: SafeKuzuManager will have already logged the error; we just inspect logs via exception here
-    # (We cannot capture exception because safe_execute_kuzu_query re-raises; so we wrap in try above if needed.)
+        # If the above failed due to missing table (race condition), attempt one retry
+        # NOTE: SafeKuzuManager will have already logged the error; we just inspect logs via exception here
+        # (We cannot capture exception because safe_execute_kuzu_query re-raises; so we wrap in try above if needed.)
         # Reconstruct final metadata (include notes)
         existing["personal_notes"] = column_notes
         return existing
 
-    def ensure_start_date(self, user_id: str, book_id: str, start_date: datetime) -> None:
+    def ensure_start_date(
+        self, user_id: str, book_id: str, start_date: datetime
+    ) -> None:
         meta = self.get_personal_metadata(user_id, book_id)
         if not meta.get("start_date"):
             self.update_personal_metadata(user_id, book_id, start_date=start_date)

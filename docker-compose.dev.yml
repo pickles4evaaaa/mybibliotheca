@@ -13,16 +13,16 @@ services:
       - SECRET_KEY=dev-secret-key-change-in-production
       - SECURITY_PASSWORD_SALT=dev-salt-change-in-production
       - WTF_CSRF_ENABLED=true
-      
+
       # Database - KuzuDB as primary datastore
       - KUZU_DB_PATH=/app/data/kuzu
       - GRAPH_DATABASE_ENABLED=true
-      
+
       # Application settings
       - TIMEZONE=UTC
       - READING_STREAK_OFFSET=0
       - FLASK_DEBUG=true
-      
+
       # CRITICAL: Single worker for KuzuDB compatibility
       - WORKERS=1
     restart: unless-stopped

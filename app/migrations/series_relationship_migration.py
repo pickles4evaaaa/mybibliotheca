@@ -11,16 +11,15 @@ Rules per Series Upgrade spec:
  - No uniqueness enforcement on series_order.
  - Skip if any PART_OF_SERIES relationship already exists OR marker file present.
 """
+
 from __future__ import annotations
 
-import os
-import json
-import re
-import uuid
 import hashlib
-from datetime import datetime, timezone
+import json
+import os
+import re
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional, Tuple
 
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
@@ -29,15 +28,19 @@ MARKER_FILENAME = "schema_preflight_state.series_entity_migration.json"
 _VOLUME_RANGE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*$")
 _VOLUME_FLOAT_RE = re.compile(r"(\d+(?:\.\d+)?)")
 
+
 def _data_root() -> Path:
     kuzu_path = Path(os.getenv("KUZU_DB_PATH", "data/kuzu")).resolve()
     return kuzu_path.parent if kuzu_path.name == "kuzu" else kuzu_path
 
+
 def _marker_path() -> Path:
     return _data_root() / MARKER_FILENAME
 
+
 def marker_exists() -> bool:
     return _marker_path().exists()
+
 
 def write_marker(payload: dict) -> None:
     try:
@@ -46,7 +49,8 @@ def write_marker(payload: dict) -> None:
     except Exception:
         pass
 
-def parse_volume(raw: Optional[str]) -> Optional[float]:
+
+def parse_volume(raw: str | None) -> float | None:
     if not raw:
         return None
     txt = raw.strip()
@@ -68,10 +72,12 @@ def parse_volume(raw: Optional[str]) -> Optional[float]:
             return None
     return None
 
+
 def deterministic_series_id(name: str) -> str:
     norm = name.strip().lower()
     h = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:20]
     return f"series_{h}"
+
 
 def run_series_migration(verbose: bool = False) -> dict:
     mgr = get_safe_kuzu_manager()
@@ -90,22 +96,36 @@ def run_series_migration(verbose: bool = False) -> dict:
     with mgr.get_connection(operation="series_migration") as conn:
         # If any PART_OF_SERIES exists, assume migration previously done
         try:
-            rel_check_raw = conn.execute("MATCH ()-[r:PART_OF_SERIES]->() RETURN COUNT(r) as c LIMIT 1")
+            rel_check_raw = conn.execute(
+                "MATCH ()-[r:PART_OF_SERIES]->() RETURN COUNT(r) as c LIMIT 1"
+            )
             # Normalize possible list return
-            rel_check = rel_check_raw[0] if isinstance(rel_check_raw, list) and rel_check_raw else rel_check_raw
+            rel_check = (
+                rel_check_raw[0]
+                if isinstance(rel_check_raw, list) and rel_check_raw
+                else rel_check_raw
+            )
             existing_rels = 0
             if rel_check:
                 try:
                     # Attempt iteration protocol
-                    while getattr(rel_check, 'has_next', lambda: False)():
+                    while getattr(rel_check, "has_next", lambda: False)():
                         row = rel_check.get_next()  # type: ignore[attr-defined]
-                        existing_rels = int(row[0] if isinstance(row, (list, tuple)) else list(row)[0])
+                        existing_rels = int(
+                            row[0] if isinstance(row, (list, tuple)) else list(row)[0]
+                        )
                         break
                 except Exception:
                     existing_rels = 0
             if existing_rels > 0 and not os.getenv("FORCE_SERIES_MIGRATION"):
                 result_summary["skipped"] = True
-                write_marker({"skipped": True, "reason": "relationships_exist", "ts": datetime.now(timezone.utc).isoformat()})
+                write_marker(
+                    {
+                        "skipped": True,
+                        "reason": "relationships_exist",
+                        "ts": datetime.now(UTC).isoformat(),
+                    }
+                )
                 return result_summary
         except Exception:
             pass
@@ -125,7 +145,7 @@ def run_series_migration(verbose: bool = False) -> dict:
         rows = []
         if rs_main:
             try:
-                while getattr(rs_main, 'has_next', lambda: False)():
+                while getattr(rs_main, "has_next", lambda: False)():
                     try:
                         row = rs_main.get_next()  # type: ignore[attr-defined]
                     except Exception:
@@ -134,7 +154,13 @@ def run_series_migration(verbose: bool = False) -> dict:
             except Exception:
                 pass
         if not rows:
-            write_marker({"skipped": True, "reason": "no_legacy_data", "ts": datetime.now(timezone.utc).isoformat()})
+            write_marker(
+                {
+                    "skipped": True,
+                    "reason": "no_legacy_data",
+                    "ts": datetime.now(UTC).isoformat(),
+                }
+            )
             result_summary["skipped"] = True
             return result_summary
         result_summary["books_processed"] = len(rows)
@@ -155,12 +181,18 @@ def run_series_migration(verbose: bool = False) -> dict:
             if norm not in created_series_norms:
                 sid = deterministic_series_id(series_name)
                 # Check if exists
-                exists_rs_raw = conn.execute("MATCH (s:Series {id:$id}) RETURN s.id LIMIT 1", {"id": sid})
-                exists_rs = exists_rs_raw[0] if isinstance(exists_rs_raw, list) and exists_rs_raw else exists_rs_raw
+                exists_rs_raw = conn.execute(
+                    "MATCH (s:Series {id:$id}) RETURN s.id LIMIT 1", {"id": sid}
+                )
+                exists_rs = (
+                    exists_rs_raw[0]
+                    if isinstance(exists_rs_raw, list) and exists_rs_raw
+                    else exists_rs_raw
+                )
                 exists = False
                 if exists_rs:
                     try:
-                        while getattr(exists_rs, 'has_next', lambda: False)():
+                        while getattr(exists_rs, "has_next", lambda: False)():
                             _ = exists_rs.get_next()  # type: ignore[attr-defined]
                             exists = True
                             break
@@ -170,7 +202,12 @@ def run_series_migration(verbose: bool = False) -> dict:
                     # Create with original casing
                     conn.execute(
                         "CREATE (s:Series {id:$id, name:$name, normalized_name:$norm, description:NULL, cover_url:NULL, custom_cover:false, generated_placeholder:false, created_at:$ts})",
-                        {"id": sid, "name": series_name, "norm": norm, "ts": datetime.now(timezone.utc)}
+                        {
+                            "id": sid,
+                            "name": series_name,
+                            "norm": norm,
+                            "ts": datetime.now(UTC),
+                        },
                     )
                     result_summary["series_created"] += 1
                 created_series_norms[norm] = sid
@@ -184,7 +221,7 @@ def run_series_migration(verbose: bool = False) -> dict:
                 "vol": int(vol_num) if (vol_num is not None) else None,
                 "vol_d": vol_num,
                 "ord": series_order if isinstance(series_order, (int, float)) else None,
-                "ts": datetime.now(timezone.utc)
+                "ts": datetime.now(UTC),
             }
             # Create rel only if not exists (defensive)
             conn.execute(
@@ -197,10 +234,17 @@ def run_series_migration(verbose: bool = False) -> dict:
                               r.created_at = $ts
                 ON MATCH SET r.volume_number_double = COALESCE(r.volume_number_double, $vol_d)
                 """,
-                params
+                params,
             )
             result_summary["relationships_created"] += 1
-        write_marker({"skipped": False, **result_summary, "ts": datetime.now(timezone.utc).isoformat()})
+        write_marker(
+            {
+                "skipped": False,
+                **result_summary,
+                "ts": datetime.now(UTC).isoformat(),
+            }
+        )
     return result_summary
+
 
 __all__ = ["run_series_migration", "parse_volume"]

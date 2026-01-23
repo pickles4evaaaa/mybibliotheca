@@ -1,9 +1,11 @@
 # Use slim Python base image for smaller footprint
-FROM python:3.13-slim
+ARG PYTHON_VERSION=3.13
 
-# Avoid writing .pyc files and enable unbuffered logging (good for Docker)
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim AS builder
+
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV UV_PYTHON_DOWNLOADS=0
 
 # Configure OpenSSL for compatibility with modern Python and enable legacy support
 ENV OPENSSL_CONF=/etc/ssl/openssl.cnf
@@ -59,11 +61,10 @@ RUN echo "openssl_conf = openssl_init" >> /etc/ssl/openssl.cnf && \
     echo "activate = 1" >> /etc/ssl/openssl.cnf
 
 # Install Python dependencies
-COPY requirements.txt .
-# Upgrade pip and install cryptographic dependencies first
-RUN pip install --upgrade pip setuptools wheel
-RUN pip install cryptography
-RUN pip install -r requirements.txt
+COPY ./pyproject.toml .
+COPY ./uv.lock .
+
+RUN uv sync
 
 # Copy all source code
 COPY . .
@@ -71,6 +72,9 @@ COPY . .
 # Create directory for KuzuDB and application data with proper permissions
 RUN mkdir -p /app/data /app/data/kuzu /app/data/covers /app/data/uploads /app/static/covers && \
     chmod 755 /app/data /app/data/kuzu /app/data/covers /app/data/uploads /app/static/covers
+
+# Add uv installed virtual environment to execution PATH
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Set environment variables for KuzuDB-based multi-user authentication
 ENV WTF_CSRF_ENABLED=True

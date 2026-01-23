@@ -1,4 +1,5 @@
 """Service responsible for probing an OPDS feed and collecting samples."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +8,7 @@ import re
 import textwrap
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 
@@ -25,20 +26,20 @@ DCTERMS_NS = "{http://purl.org/dc/terms/}"
 @dataclass
 class ProbeConfig:
     max_depth: int
-    max_samples: Optional[int]
+    max_samples: int | None
     timeout: float
 
 
-def _normalize_title(value: Optional[str]) -> Optional[str]:
+def _normalize_title(value: str | None) -> str | None:
     if not value:
         return None
     return value.strip().lower()
 
 
-def _extract_element_text(elem: Optional[ET.Element]) -> Optional[str]:
+def _extract_element_text(elem: ET.Element | None) -> str | None:
     if elem is None:
         return None
-    pieces: List[str] = []
+    pieces: list[str] = []
     try:
         for text in elem.itertext():
             if not text:
@@ -58,7 +59,7 @@ def _extract_element_text(elem: Optional[ET.Element]) -> Optional[str]:
     return "\n\n".join(pieces)
 
 
-def _decode_rating_value(text: str) -> Optional[float]:
+def _decode_rating_value(text: str) -> float | None:
     cleaned = (text or "").strip()
     if not cleaned:
         return None
@@ -80,14 +81,14 @@ def _decode_rating_value(text: str) -> Optional[float]:
     return max(0.0, min(5.0, value))
 
 
-def _parse_tags_value(text: str) -> List[str]:
+def _parse_tags_value(text: str) -> list[str]:
     if not text:
         return []
     parts = re.split(r"[;,|]", text)
     return [part.strip() for part in parts if part and part.strip()]
 
 
-def _normalize_description_text(text: Optional[str]) -> Optional[str]:
+def _normalize_description_text(text: str | None) -> str | None:
     if not text:
         return None
 
@@ -95,7 +96,7 @@ def _normalize_description_text(text: Optional[str]) -> Optional[str]:
     dedented = textwrap.dedent(expanded)
 
     lines = dedented.splitlines()
-    normalized_lines: List[str] = []
+    normalized_lines: list[str] = []
     first_content_seen = False
 
     for line in lines:
@@ -112,7 +113,9 @@ def _normalize_description_text(text: Optional[str]) -> Optional[str]:
     return normalized or None
 
 
-def extract_summary_metadata(summary: Optional[str]) -> Tuple[Optional[str], Optional[float], List[str]]:
+def extract_summary_metadata(
+    summary: str | None,
+) -> tuple[str | None, float | None, list[str]]:
     """Split Calibre-style metadata lines from the top of a summary.
 
     Returns the cleaned summary, a rating value (0-5 scale), and any tags extracted.
@@ -120,9 +123,9 @@ def extract_summary_metadata(summary: Optional[str]) -> Tuple[Optional[str], Opt
     if not summary:
         return None, None, []
 
-    rating_value: Optional[float] = None
-    tags_value: List[str] = []
-    cleaned_lines: List[str] = []
+    rating_value: float | None = None
+    tags_value: list[str] = []
+    cleaned_lines: list[str] = []
     metadata_section = True
 
     for line in summary.splitlines():
@@ -147,7 +150,7 @@ def extract_summary_metadata(summary: Optional[str]) -> Tuple[Optional[str], Opt
     return cleaned_summary, rating_value, tags_value
 
 
-def _record_entry_field(field_inventory: Dict[str, List[str]], field_name: str) -> None:
+def _record_entry_field(field_inventory: dict[str, list[str]], field_name: str) -> None:
     if not field_name:
         return
     entry_fields = field_inventory.setdefault("entry", [])
@@ -169,13 +172,13 @@ class OPDSProbeService:
         self,
         base_url: str,
         *,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        max_depth: Optional[int] = None,
-        max_samples: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        normalized_max_samples: Optional[int]
+        username: str | None = None,
+        password: str | None = None,
+        user_agent: str | None = None,
+        max_depth: int | None = None,
+        max_samples: int | None = None,
+    ) -> dict[str, Any]:
+        normalized_max_samples: int | None
         if max_samples is None:
             normalized_max_samples = self._default_config.max_samples
         else:
@@ -189,7 +192,9 @@ class OPDSProbeService:
                 normalized_max_samples = candidate
 
         config = ProbeConfig(
-            max_depth=max_depth if max_depth is not None else self._default_config.max_depth,
+            max_depth=max_depth
+            if max_depth is not None
+            else self._default_config.max_depth,
             max_samples=normalized_max_samples,
             timeout=self._default_config.timeout,
         )
@@ -206,12 +211,12 @@ class OPDSProbeService:
         self,
         base_url: str,
         *,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        max_depth: Optional[int] = None,
-        max_samples: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        username: str | None = None,
+        password: str | None = None,
+        user_agent: str | None = None,
+        max_depth: int | None = None,
+        max_samples: int | None = None,
+    ) -> dict[str, Any]:
         return run_async(
             self.probe(
                 base_url,
@@ -252,11 +257,11 @@ class OPDSProbeService:
     def _probe_in_thread(
         self,
         base_url: str,
-        username: Optional[str],
-        password: Optional[str],
-        user_agent: Optional[str],
+        username: str | None,
+        password: str | None,
+        user_agent: str | None,
         config: ProbeConfig,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         base_url = (base_url or "").strip()
         if not base_url:
             raise ValueError("Base URL is required for OPDS probing")
@@ -270,20 +275,22 @@ class OPDSProbeService:
         if username and password:
             session.auth = HTTPBasicAuth(username, password)
 
-        attempts: List[Dict[str, Any]] = []
+        attempts: list[dict[str, Any]] = []
         visited: set[str] = set()
-        queue: List[Tuple[str, int]] = [(base_url, 0)]
-        content_samples: List[Dict[str, Any]] = []
-        navigation_samples: List[Dict[str, Any]] = []
+        queue: list[tuple[str, int]] = [(base_url, 0)]
+        content_samples: list[dict[str, Any]] = []
+        navigation_samples: list[dict[str, Any]] = []
         seen_identifiers: set[str] = set()
-        field_inventory: Dict[str, List[str]] = {
+        field_inventory: dict[str, list[str]] = {
             "entry": [],
             "link_rels": [],
             "link_types": [],
         }
 
         try:
-            while queue and (config.max_samples is None or len(content_samples) < config.max_samples):
+            while queue and (
+                config.max_samples is None or len(content_samples) < config.max_samples
+            ):
                 url, depth = queue.pop(0)
                 if url in visited or depth > config.max_depth:
                     continue
@@ -291,21 +298,26 @@ class OPDSProbeService:
                 try:
                     response = session.get(url, timeout=config.timeout)
                 except Exception as err:
-                    attempts.append({
-                        "url": url,
-                        "depth": depth,
-                        "status": "error",
-                        "error": str(err),
-                    })
+                    attempts.append(
+                        {
+                            "url": url,
+                            "depth": depth,
+                            "status": "error",
+                            "error": str(err),
+                        }
+                    )
                     continue
 
-                attempt_record: Dict[str, Any] = {
+                attempt_record: dict[str, Any] = {
                     "url": url,
                     "depth": depth,
                     "status_code": response.status_code,
                 }
 
-                if response.status_code == 401 and "digest" in response.headers.get("WWW-Authenticate", "").lower():
+                if (
+                    response.status_code == 401
+                    and "digest" in response.headers.get("WWW-Authenticate", "").lower()
+                ):
                     # Retry once with digest auth if credentials provided.
                     if username and password:
                         session.auth = HTTPDigestAuth(username, password)
@@ -329,7 +341,9 @@ class OPDSProbeService:
                     continue
 
                 try:
-                    parsed = self._parse_feed(response, field_inventory, response.url or url)
+                    parsed = self._parse_feed(
+                        response, field_inventory, response.url or url
+                    )
                 except Exception as parse_err:
                     attempt_record["status"] = "parse_error"
                     attempt_record["error"] = str(parse_err)
@@ -343,12 +357,20 @@ class OPDSProbeService:
                         continue
                     seen_identifiers.add(identifier)
                     if self._entry_has_acquisition(entry):
-                        if config.max_samples is None or len(content_samples) < config.max_samples:
+                        if (
+                            config.max_samples is None
+                            or len(content_samples) < config.max_samples
+                        ):
                             content_samples.append(entry)
                     else:
-                        if config.max_samples is not None and len(navigation_samples) < (config.max_samples * 2):
+                        if config.max_samples is not None and len(
+                            navigation_samples
+                        ) < (config.max_samples * 2):
                             navigation_samples.append(entry)
-                    if config.max_samples is not None and len(content_samples) >= config.max_samples:
+                    if (
+                        config.max_samples is not None
+                        and len(content_samples) >= config.max_samples
+                    ):
                         break
 
                 if depth < config.max_depth:
@@ -364,7 +386,7 @@ class OPDSProbeService:
             session.close()
 
         if config.max_samples is None:
-            combined_navigation: List[Dict[str, Any]] = []
+            combined_navigation: list[dict[str, Any]] = []
         else:
             remaining_capacity = max(0, config.max_samples - len(content_samples))
             combined_navigation = navigation_samples[:remaining_capacity]
@@ -386,11 +408,16 @@ class OPDSProbeService:
 
     @dataclass
     class ParsedFeed:
-        entries: List[Dict[str, Any]]
-        acquisition_links: List[str]
-        catalog_links: List[str]
+        entries: list[dict[str, Any]]
+        acquisition_links: list[str]
+        catalog_links: list[str]
 
-    def _parse_feed(self, response: Response, field_inventory: Dict[str, List[str]], response_url: Optional[str]) -> "OPDSProbeService.ParsedFeed":
+    def _parse_feed(
+        self,
+        response: Response,
+        field_inventory: dict[str, list[str]],
+        response_url: str | None,
+    ) -> OPDSProbeService.ParsedFeed:
         content = response.content
         if not content:
             return self.ParsedFeed(entries=[], acquisition_links=[], catalog_links=[])
@@ -398,7 +425,7 @@ class OPDSProbeService:
         tree = ET.fromstring(content)
         acquisition_links: set[str] = set()
         catalog_links: set[str] = set()
-        entries: List[Dict[str, Any]] = []
+        entries: list[dict[str, Any]] = []
         base_url = response_url or response.url or ""
 
         for entry_elem in tree.findall(f"{ATOM_NS}entry"):
@@ -436,7 +463,9 @@ class OPDSProbeService:
             catalog_links=list(catalog_links),
         )
 
-    def _is_acquisition_link(self, rel: Optional[str], link_type: Optional[str]) -> bool:
+    def _is_acquisition_link(
+        self, rel: str | None, link_type: str | None
+    ) -> bool:
         rel_lower = (rel or "").lower()
         type_lower = (link_type or "").lower()
         if rel_lower.startswith("http://opds-spec.org/acquisition"):
@@ -447,7 +476,7 @@ class OPDSProbeService:
             return True
         return False
 
-    def _is_feed_link(self, rel: Optional[str], link_type: Optional[str]) -> bool:
+    def _is_feed_link(self, rel: str | None, link_type: str | None) -> bool:
         rel_lower = (rel or "").lower()
         type_lower = (link_type or "").lower()
 
@@ -469,14 +498,16 @@ class OPDSProbeService:
             return True
         return False
 
-    def _entry_has_acquisition(self, entry: Dict[str, Any]) -> bool:
+    def _entry_has_acquisition(self, entry: dict[str, Any]) -> bool:
         for link in entry.get("raw_links", []) or []:
             if self._is_acquisition_link(link.get("rel"), link.get("type")):
                 return True
         return False
 
-    def _parse_entry(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> Dict[str, Any]:
-        entry: Dict[str, Any] = {}
+    def _parse_entry(
+        self, elem: ET.Element, field_inventory: dict[str, list[str]]
+    ) -> dict[str, Any]:
+        entry: dict[str, Any] = {}
         entry_id = elem.findtext(f"{ATOM_NS}id")
         title = elem.findtext(f"{ATOM_NS}title")
         summary_elem = elem.find(f"{ATOM_NS}summary")
@@ -485,7 +516,9 @@ class OPDSProbeService:
         content_elem = elem.find(f"{ATOM_NS}content")
         content_value = _extract_element_text(content_elem)
         if content_value:
-            cleaned_content, content_rating, content_tags = extract_summary_metadata(content_value)
+            cleaned_content, content_rating, content_tags = extract_summary_metadata(
+                content_value
+            )
             content_value = cleaned_content
             if rating_value is None and content_rating is not None:
                 rating_value = content_rating
@@ -514,15 +547,19 @@ class OPDSProbeService:
                 "categories": self._extract_categories(elem, field_inventory),
                 "identifiers": self._extract_identifiers(elem, field_inventory),
                 "raw_links": self._extract_links(elem, field_inventory),
-                "published": self._first_nonempty([
-                    elem.findtext(f"{ATOM_NS}published"),
-                    elem.findtext(f"{DC_NS}date"),
-                    elem.findtext(f"{DCTERMS_NS}issued"),
-                ]),
-                "updated": self._first_nonempty([
-                    elem.findtext(f"{ATOM_NS}updated"),
-                    elem.findtext(f"{DCTERMS_NS}modified"),
-                ]),
+                "published": self._first_nonempty(
+                    [
+                        elem.findtext(f"{ATOM_NS}published"),
+                        elem.findtext(f"{DC_NS}date"),
+                        elem.findtext(f"{DCTERMS_NS}issued"),
+                    ]
+                ),
+                "updated": self._first_nonempty(
+                    [
+                        elem.findtext(f"{ATOM_NS}updated"),
+                        elem.findtext(f"{DCTERMS_NS}modified"),
+                    ]
+                ),
             }
         )
 
@@ -533,7 +570,9 @@ class OPDSProbeService:
             entry["tags"] = tags_value
             _record_entry_field(field_inventory, "tags")
 
-        dc_publisher = elem.findtext(f"{DC_NS}publisher") or elem.findtext(f"{DCTERMS_NS}publisher")
+        dc_publisher = elem.findtext(f"{DC_NS}publisher") or elem.findtext(
+            f"{DCTERMS_NS}publisher"
+        )
         if dc_publisher:
             entry["dc:publisher"] = dc_publisher
             _record_entry_field(field_inventory, "dc:publisher")
@@ -554,8 +593,10 @@ class OPDSProbeService:
 
         return entry
 
-    def _extract_authors(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[str]:
-        authors: List[str] = []
+    def _extract_authors(
+        self, elem: ET.Element, field_inventory: dict[str, list[str]]
+    ) -> list[str]:
+        authors: list[str] = []
         for author in elem.findall(f"{ATOM_NS}author"):
             name = author.findtext(f"{ATOM_NS}name")
             if name:
@@ -564,8 +605,10 @@ class OPDSProbeService:
             _record_entry_field(field_inventory, "authors")
         return authors
 
-    def _extract_categories(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[str]:
-        categories: List[str] = []
+    def _extract_categories(
+        self, elem: ET.Element, field_inventory: dict[str, list[str]]
+    ) -> list[str]:
+        categories: list[str] = []
         for cat in elem.findall(f"{ATOM_NS}category"):
             term = cat.get("term") or cat.text
             if term:
@@ -574,8 +617,10 @@ class OPDSProbeService:
             _record_entry_field(field_inventory, "categories")
         return categories
 
-    def _extract_identifiers(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[str]:
-        identifiers: List[str] = []
+    def _extract_identifiers(
+        self, elem: ET.Element, field_inventory: dict[str, list[str]]
+    ) -> list[str]:
+        identifiers: list[str] = []
         for tag in (f"{DC_NS}identifier", f"{DCTERMS_NS}identifier"):
             for ident in elem.findall(tag):
                 if ident.text:
@@ -584,8 +629,10 @@ class OPDSProbeService:
             _record_entry_field(field_inventory, "identifier")
         return identifiers
 
-    def _extract_links(self, elem: ET.Element, field_inventory: Dict[str, List[str]]) -> List[Dict[str, Any]]:
-        links: List[Dict[str, Any]] = []
+    def _extract_links(
+        self, elem: ET.Element, field_inventory: dict[str, list[str]]
+    ) -> list[dict[str, Any]]:
+        links: list[dict[str, Any]] = []
         rels = set(field_inventory.get("link_rels", []))
         types = set(field_inventory.get("link_types", []))
         for link in elem.findall(f"{ATOM_NS}link"):
@@ -606,17 +653,17 @@ class OPDSProbeService:
         field_inventory["link_types"] = sorted(types)
         return links
 
-    def _first_nonempty(self, values: List[Optional[str]]) -> Optional[str]:
+    def _first_nonempty(self, values: list[str | None]) -> str | None:
         for value in values:
             if value:
                 return value
         return None
 
-    def _suggest_mapping(self, inventory: Dict[str, List[str]]) -> Dict[str, str]:
+    def _suggest_mapping(self, inventory: dict[str, list[str]]) -> dict[str, str]:
         entry_fields = set(inventory.get("entry", []))
         link_rels = set(inventory.get("link_rels", []))
 
-        suggestions: Dict[str, str] = {}
+        suggestions: dict[str, str] = {}
         if "title" in entry_fields or "dc:title" in entry_fields:
             suggestions.setdefault("title", "entry.title")
         if "summary" in entry_fields:
@@ -633,19 +680,29 @@ class OPDSProbeService:
             suggestions.setdefault("categories", "entry.categories")
         elif "tags" in entry_fields:
             suggestions.setdefault("categories", "entry.tags")
-        if "dc:publisher" in entry_fields or "dcterms:publisher" in entry_fields or "publisher" in entry_fields:
+        if (
+            "dc:publisher" in entry_fields
+            or "dcterms:publisher" in entry_fields
+            or "publisher" in entry_fields
+        ):
             suggestions.setdefault("publisher", "entry.dc:publisher")
         if "dcterms:issued" in entry_fields or "published" in entry_fields:
             suggestions.setdefault("published_date", "entry.dcterms:issued")
         if "http://opds-spec.org/image" in link_rels:
-            suggestions.setdefault("cover_url", "link[rel=http://opds-spec.org/image].href")
+            suggestions.setdefault(
+                "cover_url", "link[rel=http://opds-spec.org/image].href"
+            )
         if "http://opds-spec.org/image/thumbnail" in link_rels:
-            suggestions.setdefault("cover_thumbnail", "link[rel=http://opds-spec.org/image/thumbnail].href")
+            suggestions.setdefault(
+                "cover_thumbnail", "link[rel=http://opds-spec.org/image/thumbnail].href"
+            )
         if "rating" in entry_fields:
             suggestions.setdefault("average_rating", "entry.rating")
         return suggestions
 
-    def probe_async(self, *args: Any, **kwargs: Any) -> "asyncio.Future[Dict[str, Any]]":
+    def probe_async(
+        self, *args: Any, **kwargs: Any
+    ) -> asyncio.Future[dict[str, Any]]:
         raise NotImplementedError("Use probe() coroutine instead")
 
 

@@ -9,9 +9,6 @@ See MIGRATION.md for details.
 This script adds the new security and privacy fields to the user table.
 """
 
-import sqlite3
-import os
-import sys
 
 def main():
     print("⚠️  WARNING: This migration script is deprecated.")
@@ -26,6 +23,7 @@ def main():
     print()
     print("No manual migration is needed!")
     return True
+
 
 if __name__ == "__main__":
     main()

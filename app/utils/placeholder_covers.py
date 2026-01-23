@@ -6,10 +6,11 @@ series initials when no cover is available. Stored in the standard covers dir.
 
 from __future__ import annotations
 
-from pathlib import Path
 import uuid
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from pathlib import Path
+
 from flask import current_app
+from PIL import Image, ImageDraw, ImageFont
 
 from .image_processing import get_covers_dir
 
@@ -40,7 +41,7 @@ def create_series_placeholder(series_name: str, series_id: str | None = None) ->
     img = Image.new("RGB", (width, height), (110, 114, 118))
     draw = ImageDraw.Draw(img)
     # Draw border
-    draw.rectangle([0,0,width-1,height-1], outline=(140,144,148))
+    draw.rectangle([0, 0, width - 1, height - 1], outline=(140, 144, 148))
     # Choose font size adaptively
     base_font_size = 64
     font = _load_font(base_font_size)
@@ -51,7 +52,7 @@ def create_series_placeholder(series_name: str, series_id: str | None = None) ->
     current = []
     for w in words:
         test = " ".join(current + [w])
-        tw, th = draw.textbbox((0,0), test, font=font)[2:4]
+        tw, th = draw.textbbox((0, 0), test, font=font)[2:4]
         if tw > max_width and current:
             lines.append(" ".join(current))
             current = [w]
@@ -63,22 +64,28 @@ def create_series_placeholder(series_name: str, series_id: str | None = None) ->
     while len(lines) > 6 and base_font_size > 32:
         base_font_size -= 8
         font = _load_font(base_font_size)
-        lines=[]; current=[]
+        lines = []
+        current = []
         for w in words:
             test = " ".join(current + [w])
-            tw, th = draw.textbbox((0,0), test, font=font)[2:4]
+            tw, th = draw.textbbox((0, 0), test, font=font)[2:4]
             if tw > max_width and current:
-                lines.append(" ".join(current)); current=[w]
+                lines.append(" ".join(current))
+                current = [w]
             else:
                 current.append(w)
-        if current: lines.append(" ".join(current))
-    total_text_height = sum(draw.textbbox((0,0), ln, font=font)[3] for ln in lines) + (len(lines)-1)*8
-    start_y = (height - total_text_height)/2
+        if current:
+            lines.append(" ".join(current))
+    total_text_height = (
+        sum(draw.textbbox((0, 0), ln, font=font)[3] for ln in lines)
+        + (len(lines) - 1) * 8
+    )
+    start_y = (height - total_text_height) / 2
     for ln in lines:
-        bbox = draw.textbbox((0,0), ln, font=font)
-        tw = bbox[2]-bbox[0]
-        tx = (width - tw)/2
-        draw.text((tx, start_y), ln, font=font, fill=(255,255,255))
+        bbox = draw.textbbox((0, 0), ln, font=font)
+        tw = bbox[2] - bbox[0]
+        tx = (width - tw) / 2
+        draw.text((tx, start_y), ln, font=font, fill=(255, 255, 255))
         start_y += bbox[3] + 8
 
     covers_dir = get_covers_dir()
@@ -87,8 +94,12 @@ def create_series_placeholder(series_name: str, series_id: str | None = None) ->
     try:
         img.save(out_path, format="JPEG", quality=88, optimize=True, progressive=True)
     except Exception as e:
-        current_app.logger.error(f"[SERIES][PLACEHOLDER] Failed to save placeholder: {e}")
+        current_app.logger.error(
+            f"[SERIES][PLACEHOLDER] Failed to save placeholder: {e}"
+        )
         raise
     rel = f"/covers/{filename}"
-    current_app.logger.info(f"[SERIES][PLACEHOLDER] Generated {rel} for '{series_name}'")
+    current_app.logger.info(
+        f"[SERIES][PLACEHOLDER] Generated {rel} for '{series_name}'"
+    )
     return rel

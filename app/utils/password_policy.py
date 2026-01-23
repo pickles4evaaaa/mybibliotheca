@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 
 DEFAULT_MIN_PASSWORD_LENGTH: int = 8
 MIN_ALLOWED_PASSWORD_LENGTH: int = 6
@@ -14,7 +13,7 @@ ENV_PASSWORD_MIN_LENGTH_KEY: str = "PASSWORD_MIN_LENGTH"
 _PASSWORD_LENGTH_SOURCES = ("env", "config", "default")
 
 
-def _parse_length(value: Union[str, int, float, None]) -> Optional[int]:
+def _parse_length(value: str | int | float | None) -> int | None:
     """Convert raw input into a sanitized password length."""
     if value is None:
         return None
@@ -52,7 +51,7 @@ def _resolve_data_dir() -> Path:
         return Path.cwd() / "data"
 
 
-def _load_system_config() -> Dict[str, object]:
+def _load_system_config() -> dict[str, object]:
     """Load the persisted system configuration if present."""
     config_path = _resolve_data_dir() / "system_config.json"
     if not config_path.exists():
@@ -65,17 +64,17 @@ def _load_system_config() -> Dict[str, object]:
         return {}
 
 
-def coerce_min_password_length(value: Union[str, int, float, None]) -> Optional[int]:
+def coerce_min_password_length(value: str | int | float | None) -> int | None:
     """Normalize input into a valid minimum password length."""
     return _parse_length(value)
 
 
-def get_env_password_min_length() -> Optional[int]:
+def get_env_password_min_length() -> int | None:
     """Return the password length defined via environment variable, if any."""
     return _parse_length(os.getenv(ENV_PASSWORD_MIN_LENGTH_KEY))
 
 
-def get_persisted_password_min_length() -> Optional[int]:
+def get_persisted_password_min_length() -> int | None:
     """Return the password length saved in system configuration (if present)."""
     config = _load_system_config()
     security_settings = config.get("security_settings")
@@ -84,7 +83,9 @@ def get_persisted_password_min_length() -> Optional[int]:
     return None
 
 
-def resolve_min_password_length(include_source: bool = False) -> Union[int, Tuple[int, str]]:
+def resolve_min_password_length(
+    include_source: bool = False,
+) -> int | tuple[int, str]:
     """Resolve the active minimum password length with precedence: env > config > default."""
     env_value = get_env_password_min_length()
     if env_value is not None:
@@ -92,17 +93,25 @@ def resolve_min_password_length(include_source: bool = False) -> Union[int, Tupl
 
     persisted_value = get_persisted_password_min_length()
     if persisted_value is not None:
-        return (persisted_value, _PASSWORD_LENGTH_SOURCES[1]) if include_source else persisted_value
+        return (
+            (persisted_value, _PASSWORD_LENGTH_SOURCES[1])
+            if include_source
+            else persisted_value
+        )
 
-    return (DEFAULT_MIN_PASSWORD_LENGTH, _PASSWORD_LENGTH_SOURCES[2]) if include_source else DEFAULT_MIN_PASSWORD_LENGTH
+    return (
+        (DEFAULT_MIN_PASSWORD_LENGTH, _PASSWORD_LENGTH_SOURCES[2])
+        if include_source
+        else DEFAULT_MIN_PASSWORD_LENGTH
+    )
 
 
-def get_password_requirements() -> List[str]:
+def get_password_requirements() -> list[str]:
     """Return a human-readable list of password requirements."""
     min_length = resolve_min_password_length()
     return [
         f"At least {min_length} characters long",
         "Contains at least one letter (A-Z or a-z)",
         "Contains at least one number (0-9) OR one special character (!@#$%^&*()_+-=[]{};':\"\\|,.<>/?)",
-        "Not a commonly used password"
+        "Not a commonly used password",
     ]

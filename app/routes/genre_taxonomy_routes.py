@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, redirect, url_for
 from flask_login import current_user
+
 from app.admin import admin_required
 from app.services.genre_taxonomy_service import GenreTaxonomyService, TaxonomyProgress
 
@@ -36,14 +37,18 @@ def index():
     def _handler():
         _ = genre_taxonomy_service.get_system_status()
         return "Genre Taxonomy Admin", 200
+
     return _apply_admin(admin_required, _handler)
 
 
 @genre_taxonomy_bp.route("/start-analysis", methods=["POST"])
 def start_analysis():
     def _handler():
-        task_id = genre_taxonomy_service.start_analysis(user_id=getattr(current_user, "id", None))
+        task_id = genre_taxonomy_service.start_analysis(
+            user_id=getattr(current_user, "id", None)
+        )
         return redirect(url_for("genre_taxonomy.progress", task_id=task_id))
+
     return _apply_admin(admin_required, _handler)
 
 
@@ -52,6 +57,7 @@ def progress(task_id: str):
     def _handler():
         _ = genre_taxonomy_service.get_analysis_progress(task_id)
         return f"Progress for {task_id}", 200
+
     return _apply_admin(admin_required, _handler)
 
 
@@ -73,4 +79,5 @@ def api_progress(task_id: str):
         else:
             data = getattr(prog, "to_dict", lambda: prog)()
         return jsonify(data)
+
     return _apply_admin(admin_required, _handler)

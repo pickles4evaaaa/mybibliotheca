@@ -1,7 +1,7 @@
 [project]
 name = "bibliotheca"
-version = "0.1.0"
-description = "Add your description here"
+version = "2.1.0"
+description = " Track your reading habits, log books, and visualize your library—all in your own space. "
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -18,6 +18,7 @@ dependencies = [
     "pytz>=2025.2",
     "email-validator>=2.3.0",
     "flask-compress>=1.23",
+    # OCR and Barcode Detection Dependencies
     "opencv-python>=4.10.0.84",
     "pyzbar>=0.1.9",
     "pytesseract>=0.3.13",
@@ -26,11 +27,74 @@ dependencies = [
     "psutil>=7.1.3",
     "scrypt>=0.9.4",
     "cryptography>=46.0.3",
+    # Optional Redis for production sessions
     "redis>=7.0.1",
+    # Graph Database Dependencies
     "kuzu>=0.11.3",
     "psycopg[binary]>=3.2.12",
+    # AI Service Dependencies
+    "pystache>=0.6.8",
+    # Markdown support for personal notes
+    "mistune==3.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.13",
+]
+test = [
     "pytest>=9.0.1",
     "pytest-flask>=1.3.0",
     "pytest-cov>=7.0.0",
-    "pystache>=0.6.8",
+]
+
+[tool.pytest]
+minversion = "9.0"
+
+# Test discovery (include both package tests directory and root-level test_*.py files)
+# Removed explicit testpaths previously limiting discovery; pytest will search current dir.
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Output options
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--color=yes",
+]
+
+filterwarnings = [
+    "ignore:ast.Str is deprecated and will be removed in Python 3.14:DeprecationWarning",
+    "ignore:Attribute s is deprecated and will be removed in Python 3.14:DeprecationWarning",
+    "ignore:Constant.__init__ got an unexpected keyword argument 's':DeprecationWarning",
+    "ignore:Constant.__init__ missing 1 required positional argument:DeprecationWarning",
+    "ignore:'before_first_request' is deprecated:DeprecationWarning",
+]
+
+markers = [
+    "unit: Unit tests for individual components",
+    "integration: Integration tests between components",
+    "facade: Tests specific to the KuzuServiceFacade",
+    "compatibility: Backward compatibility tests",
+    "performance: Performance-related tests",
+    "error_handling: Error handling and edge case tests",
+    "asyncio: Async tests using event loop",
+]
+
+# Coverage settings (if pytest-cov is available)
+# addopts = [
+#     "--cov=app.services",
+#     "--cov-report=term-missing",
+#     "--cov-report=html"
+# ]
+
+[tool.ruff.lint]
+extend-select = [
+    # Enable entire ruff rule section
+    "I", # Missing required import (auto-fixable)
+    "UP", # Pyupgrade
+    "ISC",  # Checks for implicit literal string concatenation (auto-fixable)
+    "TC", # Rules around TYPE_CHECKING blocks
 ]

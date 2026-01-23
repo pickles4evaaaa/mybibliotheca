@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-from io import BytesIO
 import ipaddress
 import socket
 import time
-from urllib.parse import urlparse
-from pathlib import Path
 import uuid
-from typing import Any, Dict, Optional
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
 
 import requests
-from PIL import Image, ImageOps
 from flask import current_app
-
+from PIL import Image, ImageOps
 
 MAX_REMOTE_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB safety ceiling
-
 
 
 def _get_base_dir() -> Path:
@@ -31,13 +29,13 @@ def get_covers_dir() -> Path:
     - {DATA_DIR}/covers if app.config.DATA_DIR is set
     - {repo_root}/data/covers as a last resort
     """
-    covers_dir = Path('/app/data/covers')
+    covers_dir = Path("/app/data/covers")
     if not covers_dir.exists():
-        data_dir = getattr(current_app.config, 'DATA_DIR', None)
+        data_dir = getattr(current_app.config, "DATA_DIR", None)
         if data_dir:
-            covers_dir = Path(data_dir) / 'covers'
+            covers_dir = Path(data_dir) / "covers"
         else:
-            covers_dir = _get_base_dir() / 'data' / 'covers'
+            covers_dir = _get_base_dir() / "data" / "covers"
 
     covers_dir.mkdir(parents=True, exist_ok=True)
     return covers_dir
@@ -49,17 +47,19 @@ def _choose_format(original_mode: str, original_format: str | None) -> tuple[str
     - Prefer JPEG for photographic covers.
     - If source has alpha (RGBA/LA/P with transparency), keep PNG to preserve edges.
     """
-    mode = (original_mode or '').upper()
-    fmt = (original_format or '').upper() if original_format else ''
+    mode = (original_mode or "").upper()
+    fmt = (original_format or "").upper() if original_format else ""
 
-    has_alpha = 'A' in mode or mode in ('P',)
+    has_alpha = "A" in mode or mode in ("P",)
     if has_alpha:
-        return 'PNG', '.png'
+        return "PNG", ".png"
     # Some rare images might be line art; but default to JPEG for size/compat
-    return 'JPEG', '.jpg'
+    return "JPEG", ".jpg"
 
 
-def _resize_high_quality(img: Image.Image, max_w: int = 1200, max_h: int = 1800) -> Image.Image:
+def _resize_high_quality(
+    img: Image.Image, max_w: int = 1200, max_h: int = 1800
+) -> Image.Image:
     """High-quality downscale using LANCZOS within a bounding box, preserving aspect ratio."""
     # Use ImageOps.contain to preserve aspect ratio and fit in bounds
     return ImageOps.contain(img, (max_w, max_h), Image.Resampling.LANCZOS)
@@ -67,15 +67,17 @@ def _resize_high_quality(img: Image.Image, max_w: int = 1200, max_h: int = 1800)
 
 def _prepare_image(img: Image.Image, out_fmt: str) -> Image.Image:
     """Ensure the image is in a correct mode for saving in out_fmt (handle alpha on JPEG)."""
-    if out_fmt.upper() == 'JPEG':
+    if out_fmt.upper() == "JPEG":
         # Drop alpha by compositing over white background
-        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-            bg = Image.new('RGB', img.size, (255, 255, 255))
-            bg.paste(img.convert('RGBA'), mask=img.convert('RGBA').split()[-1])
+        if img.mode in ("RGBA", "LA") or (
+            img.mode == "P" and "transparency" in img.info
+        ):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
             return bg
         # Ensure RGB for JPEG
-        if img.mode not in ('RGB',):
-            return img.convert('RGB')
+        if img.mode not in ("RGB",):
+            return img.convert("RGB")
     return img
 
 
@@ -87,7 +89,7 @@ def ensure_safe_remote_image_url(url: str) -> str:
     Raises ValueError if the URL is unsafe.
     """
     parsed = urlparse(url)
-    if parsed.scheme not in ('http', 'https'):
+    if parsed.scheme not in ("http", "https"):
         raise ValueError("Cover URL must use http or https scheme")
     if not parsed.hostname:
         raise ValueError("Cover URL must include a hostname")
@@ -100,13 +102,21 @@ def ensure_safe_remote_image_url(url: str) -> str:
     for info in addr_info:
         ip_str = info[4][0]
         ip_obj = ipaddress.ip_address(ip_str)
-        if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast or ip_obj.is_reserved:
+        if (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+        ):
             raise ValueError("Cover URL resolves to a disallowed network range")
 
     return url
 
 
-def process_image_bytes_and_store(image_bytes: bytes, filename_hint: str | None = None) -> str:
+def process_image_bytes_and_store(
+    image_bytes: bytes, filename_hint: str | None = None
+) -> str:
     """Process image bytes with LANCZOS resampling and store into covers dir.
 
     Returns the relative URL like "/covers/<uuid>.jpg|.png".
@@ -121,9 +131,11 @@ def process_image_bytes_and_store(image_bytes: bytes, filename_hint: str | None 
         out_path = covers_dir / filename
 
         save_kwargs = {}
-        if out_fmt == 'JPEG':
-            save_kwargs.update(dict(quality=92, optimize=True, progressive=True, subsampling=0))
-        elif out_fmt == 'PNG':
+        if out_fmt == "JPEG":
+            save_kwargs.update(
+                dict(quality=92, optimize=True, progressive=True, subsampling=0)
+            )
+        elif out_fmt == "PNG":
             save_kwargs.update(dict(optimize=True))
 
         img_prepared.save(out_path, format=out_fmt, **save_kwargs)
@@ -134,8 +146,8 @@ def process_image_bytes_and_store(image_bytes: bytes, filename_hint: str | None 
 def process_image_from_url(
     url: str,
     *,
-    auth: Optional[Any] = None,
-    headers: Optional[Dict[str, str]] = None,
+    auth: Any | None = None,
+    headers: dict[str, str] | None = None,
 ) -> str:
     """Download image from URL, process and store, return relative URL.
 
@@ -147,19 +159,25 @@ def process_image_from_url(
         raise ValueError("Empty URL for cover processing")
 
     # Already a processed local cover path
-    if url.startswith('/covers/'):
+    if url.startswith("/covers/"):
         current_app.logger.info(f"[COVER][SKIP] Already local cover path: {url}")
         return url
 
     parsed = urlparse(url)
     # Handle loopback self-call that would deadlock (single worker). Convert to direct file access.
-    if parsed.scheme in ('http', 'https') and parsed.hostname in ('127.0.0.1', 'localhost', '0.0.0.0') and '/covers/' in parsed.path:
+    if (
+        parsed.scheme in ("http", "https")
+        and parsed.hostname in ("127.0.0.1", "localhost", "0.0.0.0")
+        and "/covers/" in parsed.path
+    ):
         # Derive filename and confirm exists
         covers_dir = get_covers_dir()
-        fname = parsed.path.split('/covers/')[-1]
+        fname = parsed.path.split("/covers/")[-1]
         local_path = covers_dir / fname
         if local_path.exists():
-            current_app.logger.info(f"[COVER][SKIP] Loopback cover fetch avoided, using existing file: {local_path}")
+            current_app.logger.info(
+                f"[COVER][SKIP] Loopback cover fetch avoided, using existing file: {local_path}"
+            )
             return f"/covers/{fname}"
         # Fall through to download if not present
 
@@ -169,14 +187,14 @@ def process_image_from_url(
     current_app.logger.info(f"[COVER][DL] Start url={url}")
     dl_start = time.perf_counter()
     # Shorter timeout to avoid long hangs; retries could be added later
-    request_kwargs: Dict[str, Any] = {"timeout": 6, "stream": True}
+    request_kwargs: dict[str, Any] = {"timeout": 6, "stream": True}
     if auth is not None:
         request_kwargs["auth"] = auth
     if headers:
         request_kwargs["headers"] = headers
     resp = requests.get(url, **request_kwargs)
     resp.raise_for_status()
-    content_length = resp.headers.get('Content-Length')
+    content_length = resp.headers.get("Content-Length")
     if content_length:
         try:
             if int(content_length) > MAX_REMOTE_IMAGE_BYTES:
