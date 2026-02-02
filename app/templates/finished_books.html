@@ -1,0 +1,345 @@
+{% extends "base.html" %} 
+
+{% block content %}
+<div class="container-fluid">
+    
+    <div class="row mb-4 mt-3 no-print">
+        <div class="col-12 d-flex justify-content-between align-items-center">
+            <div>
+                <h2 id="page-title"><i class="bi bi-collection-fill me-2"></i>My Finished Books</h2>
+                <p class="text-muted mb-0">History and statistics of your finished books and audiobooks.</p>
+            </div>
+            <button class="btn btn-sm btn-primary w-10" onclick="window.print()">
+                <i class="bi bi-file-earmark-pdf"></i> Save as PDF
+            </button>
+            <div>
+                <a href="{{ url_for('stats.index') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Back to Stats
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <div class="card shadow-sm mb-4 no-print">
+        <div class="card-body py-3">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-auto">
+                    <label class="form-label small text-muted mb-1 fw-bold">Time Period:</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text">From</span>
+                        <input type="date" id="filter-date-from" class="form-control">
+                        <span class="input-group-text">To</span>
+                        <input type="date" id="filter-date-to" class="form-control">
+                    </div>
+                </div>
+                <div class="col-md-auto">
+                    <button class="btn btn-sm btn-primary w-100" onclick="loadBooksFromAPI()">
+                        <i class="bi bi-funnel"></i> Filter
+                    </button>
+                </div>
+                <div class="col-md-auto ms-md-3">
+                    <label class="form-label small text-muted mb-1 fw-bold">Sort By:</label>
+                    <select class="form-select form-select-sm" id="sort-select" onchange="renderBooks()">
+                        <option value="date_asc">📅 Date (Oldest First)</option>
+                        <option value="date_desc">📅 Date (Newest First)</option>
+                        <option value="rating_desc">⭐ Rating (Best First)</option>
+                    </select>
+                </div>
+                <div class="col"></div>
+                <div class="col-md-auto text-end">
+                    <label class="form-label small text-muted mb-1 fw-bold d-block text-start text-md-end">Format:</label>
+                    <div class="btn-group btn-group-sm w-100" role="group">
+                        <button type="button" class="btn btn-primary active" id="btn-all" onclick="filterList('all', this)">All</button>
+                        <button type="button" class="btn btn-outline-primary" id="btn-audio" onclick="filterList('audio', this)">🎧 Audio</button>
+                        <button type="button" class="btn btn-outline-primary" id="btn-book" onclick="filterList('book', this)">📖 Book</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-2">
+        <div class="col-12 text-end">
+            <span class="badge bg-secondary" id="total-books-count">0 entries</span>
+        </div>
+    </div>
+
+    <div class="print-only mb-4">
+        <h1>Finished Books</h1>
+        <p>Exported on: <span id="print-date"></span></p>
+    </div>
+
+    <div class="row" id="book-list-container">
+        <div class="col-12 text-center py-5">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Loading data...</p>
+        </div>
+    </div>
+</div>
+
+<style>
+/* --- WEB ANSICHT (Unverändert) --- */
+.hover-effect { transition: transform 0.2s; }
+.hover-effect:hover { transform: translateY(-5px); }
+.print-only { display: none; }
+
+.cover-container {
+    height: 280px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background-color: rgba(0,0,0,0.03);
+    overflow: hidden;
+    position: relative;
+}
+
+.book-cover { 
+    max-height: 100%;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.book-cover-placeholder { 
+    height: 100%;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c757d;
+}
+
+.date-badge { z-index: 10; opacity: 0.9; }
+.type-badge { z-index: 10; opacity: 0.9; }
+
+/* Sterne immer sichtbar machen */
+.text-warning { color: #ffc107 !important; }
+
+/* --- DRUCK ANSICHT (Zusammengeführt & Korrigiert) --- */
+@media print {
+    /* Browser-Metadaten und Ränder unterdrücken */
+    @page { margin: 0.1cm; }
+    
+    * { 
+        -webkit-print-color-adjust: exact !important; 
+        print-color-adjust: exact !important; 
+    }
+
+    .no-print, header, footer, nav, .navbar { display: none !important; }
+    .print-only { display: block !important; margin-bottom: 20px; border-bottom: 2px solid #333; }
+    
+    html, body {
+        margin: 0;
+        padding: 0;
+        background: white !important;
+    }
+
+    /* 3er Grid: 32% lässt genug Platz für Margins auf A4 */
+    .print-item { 
+        width: 32% !important; 
+        flex: 0 0 32% !important; 
+        max-width: 32% !important;
+        margin: 0.5% !important;
+        page-break-inside: avoid !important;
+        display: inline-block !important;
+        vertical-align: top;
+    }
+
+    .cover-container {
+        height: 230px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        background: none !important;
+    }
+
+    .book-cover, .book-cover-placeholder {
+        height: 160px !important;
+        width: auto !important;
+        max-width: 100% !important;
+        object-fit: contain !important;
+        margin-bottom: 10px !important;
+        display: block !important;
+    }
+
+    .book-cover-placeholder {
+        border: 1px solid #ccc !important;
+        background-color: #f5f5f5 !important;
+        width: 120px !important; 
+    }
+
+    /* Sterne-Bewertung im Druck (Dunkelgrau/Schwarz für Kontrast) */
+    .stars-container { 
+        display: block !important; 
+        margin: 5px 0 !important; 
+    }
+    .bi-star-fill, .bi-star-half {
+        color: #ffc107 !important;
+    }
+     .bi-star {
+        color: #555 !important; /* Leere Sterne dunkelgrau */
+    }
+
+    /* Badges unter das Bild zwingen & Symbole auf Weiß setzen */
+    .date-badge, .type-badge {
+        position: static !important;
+        display: block !important;
+        width: fit-content !important; /* Passt sich dem Text an */
+        min-width: 50% !important;
+        text-align: center !important;
+        margin: 4px auto !important;
+        padding: 2px 8px !important;
+        background-color: #333 !important; /* Dunkler Hintergrund für weißen Text/Icon */
+        color: white !important; 
+        font-size: 9pt !important;
+        border-radius: 4px !important;
+    }
+
+    /* Erzwingt weißes Icon für beide Typen */
+    .type-badge i {
+        color: white !important;
+    }
+}
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allLoadedBooks = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    const now = new Date();
+    document.getElementById('filter-date-from').value = `${now.getFullYear()}-01-01`;
+    document.getElementById('filter-date-to').value = `${now.getFullYear()}-12-31`;
+    document.getElementById('print-date').innerText = now.toLocaleDateString();
+    
+    loadBooksFromAPI();
+});
+
+async function loadBooksFromAPI() {
+    try {
+        const dateFrom = document.getElementById('filter-date-from').value;
+        const dateTo = document.getElementById('filter-date-to').value;
+        
+        const params = new URLSearchParams();
+        if (dateFrom) params.append('start_date', dateFrom);
+        if (dateTo) params.append('end_date', dateTo);
+
+        let url = '/api/widget/finished-books?' + params.toString();
+        let response = await fetch(url);
+        
+        if (response.status === 404) {
+            url = '/widget/finished-books?' + params.toString();
+            response = await fetch(url);
+        }
+
+        if (!response.ok) throw new Error('API Error');
+        
+        allLoadedBooks = await response.json();
+        renderBooks();
+
+    } catch (error) {
+        console.error(error);
+        document.getElementById('book-list-container').innerHTML = `<div class="alert alert-danger">Error:${error.message}</div>`;
+    }
+}
+
+function renderBooks() {
+    const activeBtn = document.querySelector('.btn-group .btn.active');
+    let filterType = 'all';
+    if(activeBtn && activeBtn.id === 'btn-audio') filterType = 'audio';
+    if(activeBtn && activeBtn.id === 'btn-book') filterType = 'book';
+
+    let filtered = allLoadedBooks.filter(b => filterType === 'all' || b.type === filterType);
+
+    const sortMode = document.getElementById('sort-select').value;
+    
+    filtered.sort((a, b) => {
+        const dateA = new Date(a.date || 0);
+        const dateB = new Date(b.date || 0);
+        const rateA = a.rating || 0;
+        const rateB = b.rating || 0;
+
+        if (sortMode === 'date_asc') return dateA - dateB;
+        if (sortMode === 'date_desc') return dateB - dateA;
+        if (sortMode === 'rating_desc') {
+            if (rateB !== rateA) return rateB - rateA;
+            return dateB - dateA;
+        }
+        return 0;
+    });
+    
+    document.getElementById('total-books-count').textContent = filtered.length + ' entries';
+    const container = document.getElementById('book-list-container');
+    container.innerHTML = '';
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="col-12 text-center text-muted py-5">No books found.</div>';
+        return;
+    }
+
+    filtered.forEach(book => {
+        let dateStr = "";
+        if(book.date) {
+            // Using browser locale or fallback to German if preferred
+            dateStr = new Date(book.date).toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric'});
+        }
+
+        const icon = book.type === 'audio' ? '<i class="bi bi-headphones"></i>' : '<i class="bi bi-book"></i>';
+        const badgeClass = book.type === 'audio' ? 'bg-info text-dark' : 'bg-success';
+
+        let ratingVal = parseFloat(book.rating) || 0;
+
+        let starsHTML = '';
+        for (let i = 1; i <= 5; i++) {
+            if (ratingVal >= i) {
+                // Voller Stern
+                starsHTML += '<i class="bi bi-star-fill text-warning"></i>';
+            } else if (ratingVal >= i - 0.5) {
+                // Halber Stern
+                starsHTML += '<i class="bi bi-star-half text-warning"></i>';
+            } else {
+                // Leerer Stern (wichtig für Layout-Stabilität)
+                starsHTML += '<i class="bi bi-star text-muted opacity-25" style="color: #ccc;"></i>';
+            }
+        }
+        let imgHTML = `<div class="bg-light d-flex align-items-center justify-content-center book-cover-placeholder"><i class="bi bi-book text-secondary fs-1"></i></div>`;
+        if (book.cover_url) {
+            imgHTML = `<img src="${book.cover_url}" class="card-img-top book-cover" onerror="this.style.display='none'">`;
+        }
+
+        const html = `
+        <div class="col-6 col-md-4 col-lg-2 mb-4 print-item">
+            <div class="card h-100 border-0 shadow-sm hover-effect print-card">
+                <div class="position-relative cover-container">
+                    ${imgHTML}
+                    <span class="position-absolute top-0 start-0 badge bg-light text-dark m-2 shadow-sm border date-badge">${dateStr}</span>
+                    <span class="position-absolute top-0 end-0 badge ${badgeClass} m-2 shadow-sm type-badge">${icon}</span>
+                </div>
+                <div class="card-body p-2 text-center">
+                    <h6 class="card-title text-truncate fw-bold mb-1" title="${book.title}">${book.title}</h6>
+                    <small class="text-muted text-truncate d-block mb-1">${book.authors}</small>
+                    <div class="stars-container mt-1">${starsHTML}</div>
+                </div>
+                <a href="/books/book/${book.id}/enhanced" class="stretched-link"></a>
+            </div>
+        </div>
+        `;
+        container.insertAdjacentHTML('beforeend', html);
+    });
+}
+
+window.filterList = function(type, btn) {
+    btn.parentElement.querySelectorAll('.btn').forEach(b => {
+        b.classList.remove('active', 'bg-primary', 'text-white');
+        b.classList.add('btn-outline-primary');
+    });
+    btn.classList.remove('btn-outline-primary');
+    btn.classList.add('active', 'bg-primary', 'text-white');
+    renderBooks();
+};
+</script>
+{% endblock %}

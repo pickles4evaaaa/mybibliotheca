@@ -252,3 +252,104 @@ def reading_patterns():
     except Exception as e:
         logger.error(f"Error generating reading patterns: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+# ---------------------------------------------------------------------------
+# FINAL VERSION: Robust gegen String/Date Fehler
+# ---------------------------------------------------------------------------
+@api_bp.route('/widget/finished-books', methods=['GET'])
+@login_required
+def finished_books_widget():
+    # Lokale Imports (sicher ist sicher)
+    from flask import request
+    import datetime as dt_mod 
+
+    # 1. Parameter aus URL lesen
+    start_str = request.args.get('start_date')
+    end_str = request.args.get('end_date')
+
+    # Filter-Datum parsen
+    filter_start = None
+    filter_end = None
+
+    try:
+        if start_str and start_str.strip():
+            filter_start = dt_mod.datetime.strptime(start_str, '%Y-%m-%d').date()
+        if end_str and end_str.strip():
+            filter_end = dt_mod.datetime.strptime(end_str, '%Y-%m-%d').date()
+    except:
+        pass # Bei Fehlern im Filter einfach alles anzeigen
+
+    # 2. Buecher laden
+    user_books = book_service.get_all_books_with_user_overlay_sync(str(current_user.id))
+    finished_books = []
+    
+    for book in user_books:
+        if _get_value(book, 'reading_status', '') != 'read':
+            continue
+
+        # Datum holen
+        raw_date = _extract_date(book, 'finish_date')
+        if not raw_date:
+            raw_date = _extract_date(book, 'date_added')
+        
+        if not raw_date:
+            continue
+
+        # --- REPARATUR: Datum normalisieren ---
+        # Wir stellen sicher, dass f_date IMMER ein echtes Date-Objekt ist
+        f_date = None
+        
+        # Fall A: Es ist schon ein Datum (datetime.date)
+        if isinstance(raw_date, dt_mod.date):
+            f_date = raw_date
+        # Fall B: Es ist ein Datum mit Zeit (datetime.datetime)
+        elif isinstance(raw_date, dt_mod.datetime):
+            f_date = raw_date.date()
+        # Fall C: Es ist ein Text/String (DER FEHLERVERURSACHER!)
+        elif isinstance(raw_date, str):
+            try:
+                # Wir nehmen die ersten 10 Zeichen (YYYY-MM-DD) und parsen sie
+                # Das hilft auch, falls da "2025-01-01 14:00:00" steht
+                clean_str = str(raw_date)[:10]
+                f_date = dt_mod.datetime.strptime(clean_str, '%Y-%m-%d').date()
+            except:
+                continue # Wenn der Text Müll ist, überspringen
+        
+        if not f_date:
+            continue
+
+        # --- JETZT IST DER VERGLEICH SICHER ---
+        if filter_start and f_date < filter_start:
+            continue
+        if filter_end and f_date > filter_end:
+            continue
+
+        # --- AUDIO ERKENNUNG ---
+        is_audio = False
+        m_type = str(_get_value(book, 'media_type', '')).lower()
+        
+        if 'audio' in m_type or 'hörbuch' in m_type:
+            is_audio = True
+        else:
+            cats = _extract_categories(book)
+            cat_str = " ".join(cats).lower()
+            if 'audio' in cat_str or 'hörbuch' in cat_str:
+                is_audio = True
+
+        book_data = {
+            'id': _get_value(book, 'id', ''),
+            'title': _get_value(book, 'title', 'Unknown'),
+            'authors': _extract_authors(book),
+            'cover_url': _get_value(book, 'cover_url', ''),
+            'date': f_date, # Hier senden wir das saubere Objekt
+            # NEU: Das Rating hinzufügen (Default auf 0, falls leer)
+            'rating': _get_value(book, 'user_rating', 0),
+            'type': 'audio' if is_audio else 'book'
+        }
+        
+        finished_books.append(book_data)
+
+    # 3. Sortierung (Aufsteigend / Älteste zuerst)
+    finished_books.sort(key=lambda x: x['date'])
+    
+    return jsonify(finished_books)

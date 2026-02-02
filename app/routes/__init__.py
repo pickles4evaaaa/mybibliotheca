@@ -20,6 +20,8 @@ from .reading_log_routes import reading_logs
 from .genre_taxonomy_routes import genre_taxonomy_bp
 from .api_routes import api_bp
 from .series_routes import series_bp
+# NEW: Import new Blueprint
+from .finished_books_route import bp as finished_books_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -362,6 +364,7 @@ def register_blueprints(app):
 
     # Register stats blueprint at '/stats'
     app.register_blueprint(stats_bp, url_prefix='/stats')
+    app.register_blueprint(finished_books_bp)
     
     # Register API blueprint at '/api'
     app.register_blueprint(api_bp)

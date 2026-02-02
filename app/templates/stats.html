@@ -176,25 +176,38 @@
 
 <div class="container mt-4">
     <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        <h1 class="h2 mb-0">
-            <i class="bi bi-graph-up me-2"></i>Reading Statistics
-        </h1>
-        <div class="btn-group flex-wrap">
-            <a href="{{ url_for('stats.network_explorer') }}" class="btn btn-success">
-                <i class="bi bi-diagram-3 me-1"></i>Network Explorer
-            </a>
-            <a href="{{ url_for('stats.library_journey') }}" class="btn btn-primary">
-                <i class="bi bi-diagram-3 me-1"></i>Library Journey Timeline
-            </a>
-            <a href="{{ url_for('stats.reading_journey') }}" class="btn btn-info">
-                <i class="bi bi-calendar3 me-1"></i>Reading Journey Calendar
-            </a>
-            <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
-                <i class="bi bi-arrow-left me-1"></i>Back to Library
-            </a>
-        </div>
-    </div>
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+    <h1 class="h2 mb-0">
+        <i class="bi bi-graph-up me-2"></i>Reading Statistics
+    </h1>
+
+    <nav class="nav nav-pills flex-column flex-sm-row gap-1">
+        
+        <a href="{{ url_for('stats.network_explorer') }}" 
+           class="nav-link {{ 'active' if request.endpoint == 'stats.network_explorer' else 'link-body-emphasis bg-light' }}">
+            <i class="bi bi-diagram-3 me-1"></i>Network Explorer
+        </a>
+
+        <a href="{{ url_for('stats.library_journey') }}" 
+           class="nav-link {{ 'active' if request.endpoint == 'stats.library_journey' else 'link-body-emphasis bg-light' }}">
+            <i class="bi bi-bezier2 me-1"></i>Library Journey
+        </a>
+
+        <a href="{{ url_for('stats.reading_journey') }}" 
+           class="nav-link {{ 'active' if request.endpoint == 'stats.reading_journey' else 'link-body-emphasis bg-light' }}">
+            <i class="bi bi-calendar3 me-1"></i>Reading Journey
+        </a>
+
+        <a href="{{ url_for('finished_books.finished_books_page') }}" 
+           class="nav-link {{ 'active' if request.endpoint == 'finished_books.finished_books_page' else 'link-body-emphasis bg-light' }}">
+            <i class="bi bi-journal-check me-1"></i>Finished Books
+        </a>
+
+        <a href="{{ url_for('main.library') }}" class="nav-link text-secondary ms-2">
+            <i class="bi bi-arrow-left me-1"></i>Back to Library
+        </a>
+    </nav>
+</div>
 
     <div class="row">
         <div class="col-lg-10 mx-auto">
