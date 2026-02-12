@@ -17,7 +17,10 @@
                 </ol>
             </nav>
         </div>
-        <div class="col-auto">
+        <div class="col-auto d-flex gap-2">
+            <a href="{{ url_for('reading_logs.my_reading_logs', book_id=book.id if book.id else book.uid) }}" class="btn btn-outline-primary">
+                <i class="bi bi-journal-text me-1"></i>View Reading Log
+            </a>
             <a href="{{ url_for('main.library') }}" class="btn btn-outline-secondary">
                 <i class="bi bi-arrow-left me-1"></i>Back to Library
             </a>

@@ -505,6 +505,10 @@
   <a href="{{ url_for('main.edit_book', uid=book.uid) }}" class="btn-primary-custom" style="text-decoration: none;">
     ✏️ Edit Book
   </a>
+
+  <a href="{{ url_for('reading_logs.my_reading_logs', book_id=book.id if book.id else book.uid) }}" class="btn-primary-custom" style="text-decoration: none;">
+    📊 View Reading Log
+  </a>
   
   <form method="post" action="{{ url_for('main.delete_book', uid=book.uid) }}" 
         onsubmit="return confirm('Are you sure you want to delete this book? This action cannot be undone.')" 

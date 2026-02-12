@@ -154,11 +154,35 @@ def create_reading_log_entry():
 def my_reading_logs():
     """View current user's reading logs."""
     try:
+        book_id = (request.args.get('book_id') or '').strip() or None
+
         # Get user's reading logs
         logs = reading_log_service.get_user_reading_logs_sync(current_user.id, days_back=30)
+
+        selected_book = None
+        if book_id:
+            filtered_logs = []
+            for log in logs:
+                if not isinstance(log, dict):
+                    continue
+
+                log_book_id = log.get('book_id')
+                log_book = log.get('book')
+                if isinstance(log_book, dict):
+                    log_book_id = log_book.get('id') or log_book.get('uid') or log_book_id
+
+                if log_book_id and str(log_book_id) == book_id:
+                    filtered_logs.append(log)
+
+            logs = filtered_logs
+
+            # Keep heading context without changing data scope rules.
+            selected_book = book_service.get_book_by_id_for_user_sync(book_id, current_user.id)
         
         return render_template('reading_logs/my_logs.html', 
                              logs=logs,
+                             filtered_book_id=book_id,
+                             filtered_book=selected_book,
                              title='My Reading Logs')
                              
     except Exception as e:
