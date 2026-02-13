@@ -484,6 +484,14 @@ def edit_reading_log(log_id):
             return render_template('reading_logs/edit_log.html', log=existing_log)
         
         # Create updated reading log object
+        # Handle created_at - may already be a datetime object
+        created_at_value = existing_log.get("created_at")
+        if isinstance(created_at_value, datetime):
+            created_at = created_at_value
+        elif isinstance(created_at_value, str):
+            created_at = datetime.fromisoformat(created_at_value)
+        else:
+            created_at = datetime.now(timezone.utc)
         updated_log = ReadingLog(
             user_id=current_user.id,
             book_id=final_book_id,
@@ -491,7 +499,7 @@ def edit_reading_log(log_id):
             pages_read=pages_read,
             minutes_read=minutes_read,
             notes=notes or None,
-            created_at=datetime.fromisoformat(existing_log['created_at']) if existing_log.get('created_at') else datetime.now(timezone.utc),
+            created_at=created_at,
             updated_at=datetime.now(timezone.utc)
         )
         
