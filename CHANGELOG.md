@@ -5,6 +5,31 @@ All notable changes to MyBibliotheca will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2025-11-29
+
+### Fixed
+
+- Fix: Action buttons obscured by book cover on detail page by @Copilot in [#115](https://github.com/pickles4evaaaa/mybibliotheca/pull/115)
+- Fix series autocomplete on add book form and volume/order field independence by @Copilot in [#114](https://github.com/pickles4evaaaa/mybibliotheca/pull/114)
+- Fix logger context errors in threaded import operations by @Copilot in [#121](https://github.com/pickles4evaaaa/mybibliotheca/pull/121)
+- Fix password change persistence by implementing KuzuUserRepository.update() by @Copilot in [#123](https://github.com/pickles4evaaaa/mybibliotheca/pull/123)
+- Fix reading status badge display and add genre dropdown for >3 genres by @Copilot in [#125](https://github.com/pickles4evaaaa/mybibliotheca/pull/125)
+- Fix settings import workflow, relocate search bar, and stabilize date-based sorting by @Copilot in [#129](https://github.com/pickles4evaaaa/mybibliotheca/pull/129)
+- Fix cache invalidation for book status updates by @Copilot in [#132](https://github.com/pickles4evaaaa/mybibliotheca/pull/132)
+- Fix category creation from Genre menu failing with KuzuDB type errors by @Copilot in [#139](https://github.com/pickles4evaaaa/mybibliotheca/pull/139)
+- General bug fixes
+
+### Improved
+
+- Change default library sort from title A-Z to newest added first by @Copilot in [#127](https://github.com/pickles4evaaaa/mybibliotheca/pull/127)
+- General UI quality-of-life improvements.
+
+### Added
+
+- Add CHANGELOG.md documenting changes from v2.0.0 to v2.0.1 by @Copilot in [#111](https://github.com/pickles4evaaaa/mybibliotheca/pull/111)
+- Allow genre deletion with associated books by @Copilot in [#119](https://github.com/pickles4evaaaa/mybibliotheca/pull/119)
+
+
 ## [2.0.1] - 2025-11-13
 
 ### Fixed
