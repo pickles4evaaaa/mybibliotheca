@@ -445,6 +445,44 @@ class KuzuSeriesService:
     def create_series(self, name: str) -> Optional[Series]:
         return run_async(self.create_series_async(name))
 
+    async def ensure_book_series_async(
+        self,
+        book_id: str,
+        series_name: Optional[str],
+        volume: Optional[str] = None,
+        order_number: Optional[int] = None,
+    ) -> bool:
+        """Ensure legacy series metadata has the graph representation used by the UI."""
+        name = str(series_name or '').strip()
+        if not name or not book_id:
+            return False
+
+        try:
+            parsed_order = int(order_number) if order_number is not None else None
+        except (TypeError, ValueError):
+            parsed_order = None
+
+        series = await self.create_series_async(name)
+        series_id = getattr(series, 'id', None) if series else None
+        if not series_id:
+            return False
+
+        return await self.attach_book_async(
+            book_id,
+            series_id,
+            volume=volume,
+            order_number=parsed_order,
+        )
+
+    def ensure_book_series(
+        self,
+        book_id: str,
+        series_name: Optional[str],
+        volume: Optional[str] = None,
+        order_number: Optional[int] = None,
+    ) -> bool:
+        return run_async(self.ensure_book_series_async(book_id, series_name, volume, order_number))
+
     async def attach_book_async(self, book_id: str, series_id: str, volume: Optional[str] = None, order_number: Optional[int] = None, volume_number_double: Optional[float] = None) -> bool:
         """Attach a book to a series (idempotent)."""
         try:

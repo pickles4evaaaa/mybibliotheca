@@ -2757,6 +2757,25 @@ async def process_simple_import(import_config):
                                 if updates and duplicate_existing_id:
                                     await kbs.update_book(duplicate_existing_id, updates)
                                     merged_applied = True
+
+                                # Repair duplicate books that were imported
+                                # before Series relationships were created, or
+                                # whose API enrichment discovered a series on
+                                # a later import. The operation is idempotent.
+                                if duplicate_existing_id and getattr(simplified_book, 'series', None):
+                                    try:
+                                        from app.services.kuzu_series_service import get_series_service
+
+                                        series_linked = await get_series_service().ensure_book_series_async(
+                                            book_id=duplicate_existing_id,
+                                            series_name=simplified_book.series,
+                                            volume=getattr(simplified_book, 'series_volume', None),
+                                            order_number=getattr(simplified_book, 'series_order', None),
+                                        )
+                                        if series_linked:
+                                            merged_applied = True
+                                    except Exception as series_ex:
+                                        print(f"⚠️ [MERGE] Series relationship repair failed: {series_ex}")
                                 try:
                                     cfs = KuzuCustomFieldService()
                                     gmeta = simplified_book.global_custom_metadata or {}
@@ -2991,6 +3010,18 @@ def merge_api_data_into_simplified_book(simplified_book, book_metadata, extra_me
         return simplified_book
     
     print(f"🔀 [MERGE_API] API data keys: {list(api_data.keys())}")
+
+    # Unified metadata providers can detect a series, but this value was
+    # previously omitted from the import merge. Keep an explicitly supplied
+    # CSV value authoritative and use API data only to fill a missing series.
+    api_series = api_data.get('series')
+    if isinstance(api_series, (list, tuple)):
+        api_series = api_series[0] if api_series else None
+    elif isinstance(api_series, dict):
+        api_series = api_series.get('name') or api_series.get('title')
+    if api_series and not getattr(simplified_book, 'series', None):
+        simplified_book.series = str(api_series).strip() or None
+        print(f"🔀 [MERGE_API] Set series: {simplified_book.series}")
     
     # Centralized cover selection & caching (only if we don't already have a processed local cover)
     try:

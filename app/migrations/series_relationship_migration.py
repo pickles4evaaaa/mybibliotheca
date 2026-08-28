@@ -9,7 +9,9 @@ Rules per Series Upgrade spec:
  - Volume parsing supports integers, floats, textual prefixes, and ranges (lower bound);
    stored as DOUBLE in relationship property volume_number_double (adds if missing).
  - No uniqueness enforcement on series_order.
- - Skip if any PART_OF_SERIES relationship already exists OR marker file present.
+ - Run incrementally: existing relationships are preserved and only unlinked
+   legacy books are processed on each run. The marker is informational and
+   does not prevent later imports from being repaired.
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import json
 import re
 import uuid
 import hashlib
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -25,6 +28,7 @@ from typing import Optional, Tuple
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 
 MARKER_FILENAME = "schema_preflight_state.series_entity_migration.json"
+logger = logging.getLogger(__name__)
 
 _VOLUME_RANGE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*[-–]\s*(\d+(?:\.\d+)?)\s*$")
 _VOLUME_FLOAT_RE = re.compile(r"(\d+(?:\.\d+)?)")
@@ -73,6 +77,35 @@ def deterministic_series_id(name: str) -> str:
     h = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:20]
     return f"series_{h}"
 
+
+def _ensure_series_columns(conn) -> None:
+    """Add optional Series properties required by the current Series UI.
+
+    Some beta databases were created from an older SafeKuzu schema that only
+    had ``total_books`` on Series.  The relationship migration is already a
+    guaranteed startup path, so it is a safe place to make this additive
+    upgrade before any Series queries run.
+    """
+    columns = (
+        ("user_cover", "STRING"),
+        ("cover_url", "STRING"),
+        ("custom_cover", "BOOLEAN"),
+        ("generated_placeholder", "BOOLEAN"),
+    )
+    for column, column_type in columns:
+        try:
+            conn.execute(f"MATCH (s:Series) RETURN s.{column} LIMIT 1")
+        except Exception as probe_error:
+            message = str(probe_error)
+            if "Cannot find property" not in message or column not in message:
+                continue
+            try:
+                conn.execute(f"ALTER TABLE Series ADD {column} {column_type}")
+                logger.info("Added missing Series.%s column", column)
+            except Exception as alter_error:
+                if "already exists" not in str(alter_error).lower():
+                    logger.warning("Could not add Series.%s: %s", column, alter_error)
+
 def run_series_migration(verbose: bool = False) -> dict:
     mgr = get_safe_kuzu_manager()
     result_summary = {
@@ -83,33 +116,11 @@ def run_series_migration(verbose: bool = False) -> dict:
     }
     # NOTE: UI button interactions for series editing/cover upload are separate concerns
     # and not part of this backend migration.
-    # Fast skip if marker exists
-    if marker_exists() and not os.getenv("FORCE_SERIES_MIGRATION"):
-        result_summary["skipped"] = True
-        return result_summary
     with mgr.get_connection(operation="series_migration") as conn:
-        # If any PART_OF_SERIES exists, assume migration previously done
-        try:
-            rel_check_raw = conn.execute("MATCH ()-[r:PART_OF_SERIES]->() RETURN COUNT(r) as c LIMIT 1")
-            # Normalize possible list return
-            rel_check = rel_check_raw[0] if isinstance(rel_check_raw, list) and rel_check_raw else rel_check_raw
-            existing_rels = 0
-            if rel_check:
-                try:
-                    # Attempt iteration protocol
-                    while getattr(rel_check, 'has_next', lambda: False)():
-                        row = rel_check.get_next()  # type: ignore[attr-defined]
-                        existing_rels = int(row[0] if isinstance(row, (list, tuple)) else list(row)[0])
-                        break
-                except Exception:
-                    existing_rels = 0
-            if existing_rels > 0 and not os.getenv("FORCE_SERIES_MIGRATION"):
-                result_summary["skipped"] = True
-                write_marker({"skipped": True, "reason": "relationships_exist", "ts": datetime.now(timezone.utc).isoformat()})
-                return result_summary
-        except Exception:
-            pass
-        # Pull candidate books
+        _ensure_series_columns(conn)
+        # Pull only unlinked legacy books. This query is intentionally
+        # idempotent, so the migration can safely run at every startup and
+        # repair books imported after an earlier marker was written.
         query = """
         MATCH (b:Book)
         WHERE b.series IS NOT NULL AND b.series <> ''

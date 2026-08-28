@@ -337,6 +337,26 @@ class SimplifiedBookService:
             )
             if not book_result:
                 return None
+
+            # Series pages are backed by Series nodes and PART_OF_SERIES
+            # relationships. Keep the legacy scalar fields above, but also
+            # create the graph representation for newly imported books.
+            # Linking is non-fatal so a transient series error cannot discard
+            # an otherwise valid book; migration can repair it later.
+            if book_data.series and str(book_data.series).strip():
+                try:
+                    from .services.kuzu_series_service import get_series_service
+
+                    linked = await get_series_service().ensure_book_series_async(
+                        book_id=book_id,
+                        series_name=book_data.series,
+                        volume=book_data.series_volume,
+                        order_number=book_data.series_order,
+                    )
+                    if not linked:
+                        print(f"⚠️ [SERIES] Book created without series link: {book_id}")
+                except Exception as series_error:
+                    print(f"⚠️ [SERIES] Failed to link '{book_data.series}': {series_error}")
             
             # 1.5. Download and cache cover image if cover_url is provided
             final_cover_url = book_data.cover_url or ''
