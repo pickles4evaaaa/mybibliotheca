@@ -1,127 +1,128 @@
-Please note: This Project is Currently NOT Maintained.
-
 # 📚 MyBibliotheca
 
-# 2.0.1+
-**⚠️ Warning**: MyBibliotheca is under heavy development. Always back up your data before upgrading. The developers do not guarantee data persistence or error-free operation. Please submit issues to the repository, and we will address them as soon as possible.
+MyBibliotheca is a self-hosted personal library manager and reading tracker. Organize your collection, track reading progress, record daily reading activity, and keep control of your data.
 
-**MyBibliotheca** is a self-hosted personal library and reading-tracker—your open-source alternative to Goodreads, StoryGraph, and Fable! It lets you log, organize, and visualize your reading journey. Add books by ISBN, track reading progress, log daily reading, and generate monthly wrap-up images of your finished titles.
+## Current release
 
-🆕 **Multi-User Features**: Multi-user authentication, user data isolation, admin management, and secure password handling.
+**2.2.0 is the latest stable release.**
 
-[![Documentation](https://img.shields.io/badge/Documentation-MyBibliotheca-4a90e2?style=for-the-badge&logo=read-the-docs&logoColor=white)](https://mybibliotheca.org)
+Version 2.2.0 uses **KuzuDB** for graph-based library data and relationships. Back up your data before upgrading.
 
-[![Discord](https://img.shields.io/badge/Discord-7289DA?logo=discord&logoColor=white&labelColor=7289DA&style=for-the-badge)](https://discord.gg/Hc8C5eRm7Q)
+### What's new in 2.2.0
 
----
+- Search for books by title as well as ISBN
+- Select and add search results that do not have an ISBN
+- Improved author links and book-detail navigation
+- Refined mobile layouts, pagination, and book-card sizing
+- Updated dependencies and lockfile
 
-## 📸 Screenshots
+## Features
 
-### Library Homepage
-Browse your personal book collection with beautiful cover displays, reading status indicators, and quick access to all your books.
+- 📖 Add books by ISBN or title with automatic metadata and cover fetching
+- 📥 Import books from Goodreads and other CSV files
+- ✅ Track reading status, progress, ratings, and reviews
+- 📅 Log reading sessions and maintain reading streaks
+- 📊 View reading statistics and analytics
+- 🔐 Multi-user authentication with isolated user libraries
+- 👤 Admin tools for user and system management
+- 🔒 Privacy controls for shared reading activity and library content
+- 🗄️ KuzuDB graph database for books, people, series, and relationships
+- 📱 Responsive interface for desktop and mobile devices
+- 💾 Backup, restore, and data export tools
 
-![Library Homepage](https://i.imgur.com/cDN06Lo.png)
+## Docker quick start
 
-### Reading Log
-Track your reading sessions with detailed logging including pages read, time spent, and personal notes for every book.
+### Use the published image
 
-![Reading Log](https://i.imgur.com/1WqQQAW.png)
+The stable release is published with both of these tags:
 
-### Book Details
-View comprehensive book information including genres, authors, reading status, publication dates, and manage your personal collection.
+- `pickles4evaaaa/mybibliotheca:latest`
+- `pickles4evaaaa/mybibliotheca:2.2.0`
 
-![Book Details](https://i.imgur.com/A4jI2nS.png)
-
----
-
-
----
-
-## ✨ Features
-
-- 📖 **Add Books**: Add books quickly by ISBN with automatic cover and metadata fetching. Now featuring bulk-import from Goodreads and other CSV files!
-- ✅ **Track Progress**: Mark books as *Currently Reading*, *Plan to Read*, *Finished*, or *Library Only*.
-- 📅 **Reading Logs**: Log daily reading activity and maintain streaks.
--  **Search**: Find and import books using the Google Books API.
-- 📱 **Responsive UI**: Clean, mobile-friendly interface built with Bootstrap.
-- 🔐 **Multi-User Support**: Secure authentication with user data isolation
-- 👤 **Admin Management**: Administrative tools and user management
-- � **Graph Database**: Powered by KuzuDB for advanced relationship modeling and queries
-
-#### 🚀 Docker Quick Start: [View Documentation](https://mybibliotheca.org/)
-
-
-## 🗂️ Project Structure
-
-```
-mybibliotheca/
-├── app/
-│   ├── __init__.py              # Application factory
-│   ├── auth.py                  # Authentication routes
-│   ├── domain/                  # Domain models and business logic
-│   ├── infrastructure/          # KuzuDB connection and repositories
-│   ├── routes/                  # Application routes
-│   ├── services/                # Business logic services
-│   ├── schema/                  # Database schema definitions
-│   ├── templates/               # Jinja2 templates
-│   ├── static/                  # Static assets (CSS, JS, images)
-│   └── utils/                   # Utility functions
-├── data/                        # Data directory (mounted volume)
-│   ├── kuzu/                    # KuzuDB database files
-│   ├── covers/                  # Book cover images
-│   └── uploads/                 # User uploaded files
-├── scripts/                     # Admin and utility scripts
-├── docs/                        # Documentation
-├── docker-compose.yml           # Docker Compose configuration
-├── Dockerfile                   # Docker image definition
-├── requirements.txt             # Python dependencies
-├── run.py                       # Application entry point
-└── README.md                    # This file
-```
-
----
-
-## 📄 License
-
-Licensed under the [MIT License](LICENSE).
-
----
-
-## ❤️ Contribute
-
-**MyBibliotheca** is open source and contributions are welcome!
-
-- 🐛 **Report Bugs**: Open an issue on GitHub
-- 💡 **Feature Requests**: Submit ideas for new features
-- 🔧 **Pull Requests**: Contribute code improvements
-- 📖 **Documentation**: Help improve our docs
-- 💬 **Community**: Join our [Discord](https://discord.gg/Hc8C5eRm7Q)
-
-### Development Setup
+Use the pinned `2.2.0` tag for reproducible deployments.
 
 ```bash
-# Fork and clone the repository
+# Create a data directory and an environment file
+mkdir -p data
+cp .env.example .env
+
+# Edit .env and set unique SECRET_KEY and SECURITY_PASSWORD_SALT values
+nano .env
+
+# Start MyBibliotheca using the stable release image
+docker run -d \
+  --name mybibliotheca \
+  --restart unless-stopped \
+  --env-file .env \
+  -p 5054:5054 \
+  -v "$(pwd)/data:/app/data" \
+  pickles4evaaaa/mybibliotheca:2.2.0
+```
+
+Open <http://localhost:5054> and complete the first-time setup to create your administrator account.
+
+### Build from source with Docker Compose
+
+```bash
 git clone https://github.com/pickles4evaaaa/mybibliotheca.git
 cd mybibliotheca
+cp .env.example .env
 
-# Create a branch for your changes
-git checkout -b feature/my-new-feature
-
-# Make your changes and test
-docker compose -f docker-compose.dev.yml up -d
-
-# Submit a pull request
+# Edit .env and set unique SECRET_KEY and SECURITY_PASSWORD_SALT values
+docker compose up -d --build
 ```
----
 
-### 📞 Getting Help
+The Compose configuration stores application data in `./data` and configures KuzuDB at `/app/data/kuzu`.
 
-If you encounter issues:
+> **Important:** KuzuDB requires a single application worker. Keep `WORKERS=1` in production deployments.
 
-1. **Check the logs**: `docker compose logs -f`
-2. **Enable debug mode**: Add `MYBIBLIOTHECA_DEBUG=true` to `.env` and restart
-3. **Search existing issues**: [GitHub Issues](https://github.com/pickles4evaaaa/mybibliotheca/issues)
-4. **Ask for help**: [Discord Community](https://discord.gg/Hc8C5eRm7Q)
-5. **Create an issue**: Include logs, environment details, and steps to reproduce
+## Documentation
 
----
+Full installation, configuration, administration, backup, and troubleshooting guides are available at [mybibliotheca.org](https://mybibliotheca.org).
+
+## Project structure
+
+```text
+mybibliotheca/
+├── app/
+│   ├── domain/                  # Domain models and business logic
+│   ├── infrastructure/          # KuzuDB connections and repositories
+│   ├── routes/                  # Application routes
+│   ├── services/                # Application services
+│   ├── schema/                  # Database schema definitions
+│   ├── templates/               # Jinja2 templates
+│   └── static/                  # Static assets
+├── data/                        # Persistent application data
+├── docs/                        # Project documentation
+├── scripts/                     # Administration and utility scripts
+├── docker-compose.yml           # Docker Compose configuration
+├── Dockerfile                   # Application image definition
+└── run.py                       # Application entry point
+```
+
+## Development
+
+```bash
+git clone https://github.com/pickles4evaaaa/mybibliotheca.git
+cd mybibliotheca
+docker compose -f docker-compose.dev.yml up -d
+```
+
+Run the test suite with:
+
+```bash
+pytest
+```
+
+Bug reports, documentation improvements, and pull requests are welcome on [GitHub](https://github.com/pickles4evaaaa/mybibliotheca).
+
+## Getting help
+
+- Check the [documentation](https://mybibliotheca.org)
+- Review container logs with `docker compose logs -f`
+- Open an issue on [GitHub](https://github.com/pickles4evaaaa/mybibliotheca/issues)
+- Join the [Discord community](https://discord.gg/Hc8C5eRm7Q)
+
+## License
+
+MyBibliotheca is licensed under the [MIT License](LICENSE).
