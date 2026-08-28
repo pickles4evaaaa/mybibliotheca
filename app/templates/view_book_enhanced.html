@@ -115,8 +115,8 @@
                     
                     <div class="row">
                         <!-- Cover Image -->
-                        <div class="col-md-4 text-center mb-3 mb-md-0">
-                            <div class="position-relative d-inline-block">
+                        <div class="col-md-4 text-center mb-3 mb-md-0 book-detail-cover-column">
+                            <div class="book-detail-cover-frame position-relative">
                                 {% from 'macros/cover_input.html' import render_cover_display %}
                                 {{ render_cover_display(book, css_classes="img-fluid rounded shadow-sm", style="max-height: 490px; max-width: 350px; width: auto; height: auto; object-fit: contain;", img_id="book-cover") }}
                                 {% if book.media_type and book.media_type|lower == 'audiobook' %}
@@ -5158,7 +5158,41 @@ document.addEventListener('DOMContentLoaded', function() {
     align-items: center;
 }
 
+/* Keep the detail-page cover inside its column at every viewport width. */
+.book-detail-cover-column {
+    min-width: 0;
+}
+
+.book-detail-cover-frame {
+    width: 100%;
+    max-width: 350px;
+    margin-inline: auto;
+    overflow: hidden;
+}
+
+.book-detail-cover-frame #book-cover {
+    display: block;
+    max-width: 100% !important;
+    height: auto;
+    margin-inline: auto;
+    object-fit: contain;
+}
+
+.book-detail-cover-frame #book-cover.bg-light {
+    width: 100% !important;
+    max-width: 100% !important;
+    aspect-ratio: 2 / 3;
+}
+
 @media (max-width: 767.98px) {
+    .book-detail-cover-frame {
+        max-width: min(100%, 280px);
+    }
+
+    .book-detail-cover-frame #book-cover {
+        max-height: 62vh;
+    }
+
     .book-card .book-action-bar {
         position: static !important;
         margin: 0 0 0.75rem 0 !important;

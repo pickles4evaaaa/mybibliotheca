@@ -469,12 +469,94 @@
       margin-top: 1rem;
     }
   }
+
+  @media (max-width: 576px) {
+    .library-page-header {
+      align-items: stretch !important;
+    }
+
+    .library-page-header .library-search-box {
+      flex-basis: 100%;
+      order: 3;
+      margin-top: 0;
+    }
+
+    .library-page-header .library-header-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      width: 100%;
+    }
+
+    .library-page-header .library-header-actions .btn {
+      white-space: normal;
+    }
+
+    .library-pagination {
+      align-items: stretch !important;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    .library-pagination .btn-group {
+      width: 100%;
+    }
+
+    .library-pagination .btn {
+      flex: 1 1 50%;
+    }
+
+    #selection-toolbar .card-body > .d-flex {
+      align-items: stretch !important;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    #selection-toolbar .card-body > .d-flex > .d-flex {
+      width: 100%;
+    }
+
+    #selection-toolbar .card-body .btn,
+    #selection-toolbar .card-body .btn-group {
+      white-space: normal;
+    }
+
+    #selection-toolbar .card-body > .d-flex > .d-flex > * {
+      flex: 1 1 auto;
+    }
+
+    #books-container {
+      --bs-gutter-x: 0.65rem;
+      --bs-gutter-y: 0.9rem;
+    }
+
+    #books-container .book-cover-wrapper {
+      height: auto;
+      aspect-ratio: 2 / 3;
+    }
+
+    #books-container .book-cover-wrapper::before {
+      padding-top: 0;
+    }
+
+    #books-container .book-card .card-body {
+      padding: 0.65rem !important;
+    }
+
+    #books-container .book-title {
+      font-size: 0.82rem;
+      line-height: 1.25;
+    }
+
+    #books-container .badge {
+      white-space: normal;
+    }
+  }
 </style>
 
 <div class="container-fluid px-4 py-4">
     <!-- Page Header with Search -->
     <div class="mb-4">
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 library-page-header">
             <h1 class="h2 mb-0">
                 <i class="bi bi-book me-2"></i>My Library
             </h1>
@@ -496,7 +578,7 @@
                     </button>
                 </div>
             </form>
-            <div class="btn-group">
+            <div class="btn-group library-header-actions">
                 <a href="{{ url_for('stats.library_journey') }}" class="btn btn-outline-primary">
                     <i class="bi bi-diagram-3 me-1"></i>Journey Timeline
                 </a>
@@ -745,7 +827,7 @@
         <div class="col-12">
             {% if books %}
                 <!-- Pagination controls -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3 library-pagination">
                     <div class="text-muted small">
             Page {{ page or 1 }} of {{ total_pages or 1 }} • Rows {{ rows or 1 }} • Per page {{ per_page or books|length }} • Total {{ (total_books or stats.total_books) if stats else total_books }}
                     </div>
@@ -903,7 +985,7 @@
                 </div>
 
                 <!-- Pagination controls (bottom) -->
-                <div class="d-flex justify-content-between align-items-center mt-4 mb-3">
+                <div class="d-flex justify-content-between align-items-center mt-4 mb-3 library-pagination">
                     <div class="text-muted small">
                         Page {{ page or 1 }} of {{ total_pages or 1 }} • Rows {{ rows or 1 }} • Per page {{ per_page or books|length }} • Total {{ (total_books or stats.total_books) if stats else total_books }}
                     </div>

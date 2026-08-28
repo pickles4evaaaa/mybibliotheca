@@ -3,11 +3,11 @@
 {% block content %}
 <div class="container mt-4">
     <!-- Page Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 add-book-header">
         <h1 class="h2 mb-0">
             <i class="bi bi-plus-circle me-2"></i>Add Book
         </h1>
-        <div>
+        <div class="add-book-header-actions">
             <a href="{{ url_for('book.add_book_fast') }}" class="btn btn-warning me-2" title="Rapid ISBN entry with auto-save">
                 <i class="bi bi-lightning-charge me-1"></i>Fast Add
             </a>
@@ -20,7 +20,7 @@
     <!-- Help Text -->
     <div class="alert alert-info" role="alert">
         <i class="bi bi-lightbulb me-2"></i>
-        <strong>Quick Start:</strong> Enter an ISBN and click "Fetch Book" to automatically populate book details, or manually fill in the information in the sections below. All fields except the title are optional.
+        <strong>Quick Start:</strong> Enter an ISBN and click "Fetch Book" for a direct edition lookup, or enter a title and click the search icon to choose from matching books. You can also fill in the information manually. All fields except the title are optional.
         <br><small class="mt-1 d-block"><i class="bi bi-lightning-charge me-1"></i>Need to add many books quickly? Try <a href="{{ url_for('book.add_book_fast') }}">Fast Add Mode</a> for rapid ISBN scanning with auto-save!</small>
     </div>
 
@@ -58,14 +58,15 @@
                                                        value="{{ book_data.title if book_data else request.form.title or '' }}" 
                                                        required placeholder="Enter book title..." 
                                                        onkeydown="if(event.key==='Enter'){event.preventDefault();searchByTitle();}">
-                                                <button type="button" class="btn btn-outline-primary" id="title-search-btn" 
+                                                <button type="button" class="btn btn-outline-primary" id="title-search-btn"
+                                                        aria-label="Search for books by title" title="Search for books by title"
                                                         onclick="searchByTitle()">
                                                     <i class="bi bi-search" id="title-search-icon"></i>
                                                 </button>
                                             </div>
                                             <small class="text-muted">
                                                 <i class="bi bi-lightbulb me-1"></i>
-                                                Click the search icon or press Enter to find books by title
+                                                Click the search icon or press Enter to find matching books, then choose the edition to use
                                             </small>
                                         </div>
                                         
@@ -730,6 +731,38 @@
         margin: 1.75rem auto;
     }
 }
+
+@media (max-width: 576px) {
+    .add-book-header {
+        align-items: stretch !important;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .add-book-header-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+
+    .add-book-header-actions a {
+        margin-right: 0 !important;
+        white-space: nowrap;
+    }
+
+    #quickAddAccordion .card-body {
+        padding: 0.85rem;
+    }
+
+    #quickAddAccordion .text-center small {
+        display: block;
+        line-height: 1.35;
+    }
+
+    .modal-dialog {
+        margin: 0.5rem;
+    }
+}
 </style>
 
 <script>
@@ -861,6 +894,7 @@ function handleTitleKeyDown(event) {
 }
 
 function escapeHtml(text) {
+    text = String(text ?? '');
     const map = {
         '&': '&amp;',
         '<': '&lt;',
@@ -973,6 +1007,41 @@ function getSelectedAuthorsForSearch() {
     }
 }
 
+// The page container uses backdrop-filter, which creates a stacking context.
+// Keep Bootstrap modals at the document root so their content stays above the
+// backdrop instead of becoming visible-but-unclickable beneath it.
+function moveAddBookModalsToBody() {
+    if (!document.body) return;
+    ['titleSearchModal', 'duplicateBookModal'].forEach(id => {
+        const modal = document.getElementById(id);
+        if (modal && modal.parentElement !== document.body) {
+            document.body.appendChild(modal);
+        }
+    });
+}
+
+function cleanupAddBookModalBackdrop() {
+    if (document.querySelector('.modal.show')) return;
+    document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+    document.body.style.removeProperty('overflow');
+}
+
+function initializeAddBookModals() {
+    moveAddBookModalsToBody();
+    ['titleSearchModal', 'duplicateBookModal'].forEach(id => {
+        const modal = document.getElementById(id);
+        if (modal) modal.addEventListener('hidden.bs.modal', cleanupAddBookModalBackdrop);
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeAddBookModals);
+} else {
+    initializeAddBookModals();
+}
+
 function searchByTitle() {
     console.log('🔍 searchByTitle function called!');
     try {
@@ -984,6 +1053,7 @@ function searchByTitle() {
         }
         
         // Show modal and loading state
+        moveAddBookModalsToBody();
         const modalElement = document.getElementById('titleSearchModal');
         if (!modalElement) {
             console.error('❌ Modal element not found!');
@@ -1003,12 +1073,14 @@ function searchByTitle() {
         
         // Update modal title with search term
         document.getElementById('titleSearchModalLabel').innerHTML = `
-            <i class="bi bi-search me-2"></i>Search Results for "${title}"
+            <i class="bi bi-search me-2"></i>Search Results for "${escapeHtml(title)}"
         `;
         
     // Build query params with optional author to improve match quality
     const author = getSelectedAuthorsForSearch();
-    const params = new URLSearchParams({ title, limit: '10', isbn_required: 'true' });
+    // Title search is useful even when a provider has no ISBN for an edition.
+    // ISBN lookup remains available above for an exact edition lookup.
+    const params = new URLSearchParams({ title, limit: '10' });
     if (author) params.set('author', author);
 
     // Call the external search API
@@ -1050,7 +1122,7 @@ function displayTitleSearchResults(results) {
     results.forEach((book, index) => {
     const fullData = book.full_data || book; // Fallback to book if full_data is missing
     const coverUrl = fullData.cover_url || FALLBACK_COVER_URL;
-    const isbn = fullData.isbn_13 || fullData.isbn13 || fullData.isbn_10 || fullData.isbn10 || 'N/A';
+    const isbn = fullData.isbn_13 || fullData.isbn13 || fullData.isbn_10 || fullData.isbn10 || '';
         
         const resultCard = document.createElement('div');
         resultCard.className = 'col-12 col-lg-6';
@@ -1089,7 +1161,7 @@ function displayTitleSearchResults(results) {
                                         <strong>Pages:</strong> ${book.page_count || 'Unknown'}
                                     </small>
                                     <small class="text-muted d-block">
-                                        <strong>ISBN:</strong> ${isbn}
+                                    <strong>ISBN:</strong> ${escapeHtml(isbn || 'Not available')}
                                     </small>
                                 </div>
                             </div>
@@ -1106,15 +1178,10 @@ function displayTitleSearchResults(results) {
                                     <i class="bi bi-info-circle me-1"></i>
                                     Source: ${fullData.source || 'Unknown'}
                                 </small>
-                                ${isbn !== 'N/A' ? 
-                                    `<button type="button" class="btn btn-primary btn-sm" 
-                                            onclick="selectBookFromSearch(${index})">
-                                        <i class="bi bi-check-lg me-1"></i>Use This Book
-                                    </button>` :
-                                    `<small class="text-warning">
-                                        <i class="bi bi-exclamation-triangle me-1"></i>No ISBN Available
-                                    </small>`
-                                }
+                                <button type="button" class="btn btn-primary btn-sm"
+                                        onclick="selectBookFromSearch(${index})">
+                                    <i class="bi bi-check-lg me-1"></i>Use This Book
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1191,7 +1258,7 @@ function selectBookFromSearch(bookIndex) {
             });
     } else {
         // No ISBN available, use the search data directly
-        populateFormWithBookData(fullData);
+        populateFormWithBookData(fullData, { preserveTypedIsbn: false });
         showMessage(`Selected "${fullData.title}" - Form populated with available details!`, 'success');
     }
 }
@@ -1288,8 +1355,9 @@ function mergeBookData(searchData, isbnData) {
     return merged;
 }
 
-function populateFormWithBookData(bookData) {
+function populateFormWithBookData(bookData, options = {}) {
     console.log('📝 Populating form with book data:', bookData);
+    const preserveTypedIsbn = options.preserveTypedIsbn !== false;
     
     // Basic information
     document.getElementById('title').value = bookData.title || '';
@@ -1297,7 +1365,7 @@ function populateFormWithBookData(bookData) {
     // Prefer returned ISBNs; otherwise keep whatever user typed
     const typedIsbnRaw = (document.getElementById('isbn').value || '').replace(/[^0-9Xx]/g, '');
     const returnedIsbn = bookData.isbn_13 || bookData.isbn_10 || '';
-    document.getElementById('isbn').value = returnedIsbn || typedIsbnRaw || '';
+    document.getElementById('isbn').value = returnedIsbn || (preserveTypedIsbn ? typedIsbnRaw : '') || '';
     document.getElementById('description').value = htmlDescriptionToText(bookData.description || '');
     document.getElementById('cover_url').value = bookData.cover_url || bookData.cover || '';
     document.getElementById('publisher').value = bookData.publisher || '';
@@ -1309,7 +1377,7 @@ function populateFormWithBookData(bookData) {
     // Additional Details fields
     let isbn13Val = bookData.isbn_13 || bookData.isbn13 || '';
     let isbn10Val = bookData.isbn_10 || bookData.isbn10 || '';
-    if (!isbn13Val && !isbn10Val && typedIsbnRaw) {
+    if (!isbn13Val && !isbn10Val && preserveTypedIsbn && typedIsbnRaw) {
         if (typedIsbnRaw.length === 13) isbn13Val = typedIsbnRaw;
         else if (typedIsbnRaw.length === 10) isbn10Val = typedIsbnRaw;
     }
@@ -2440,7 +2508,7 @@ if(document.readyState === 'loading'){
                 
                 <div id="title-search-empty" class="text-center p-4" style="display: none;">
                     <i class="bi bi-search fs-1 text-muted"></i>
-                    <p class="mt-2 mb-0 text-muted">No books found with ISBNs for this title.</p>
+                    <p class="mt-2 mb-0 text-muted">No books found for this title.</p>
                     <small class="text-muted">Try a different search term or add the book manually.</small>
                 </div>
             </div>
@@ -2528,6 +2596,7 @@ const resolveDuplicateUrl = "{{ url_for('book.resolve_duplicate') }}";
 
 function showDuplicateModal(duplicateResponse) {
     currentDuplicateData = duplicateResponse;
+    moveAddBookModalsToBody();
     
     // Populate book info
     const bookInfo = document.getElementById('duplicateBookInfo');

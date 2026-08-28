@@ -199,7 +199,9 @@
                                 <div class="person-selection">
                                     <input type="checkbox" class="person-checkbox" value="{{ person.id }}" data-book-count="{{ person.book_count }}">
                                 </div>
-                                <div class="card-body" onclick="openPerson('{{ person.id }}')">
+                                <div class="card-body"
+                                     data-person-url="{{ url_for('people.person_details', person_id=person.id) }}"
+                                     onclick="openPerson(this)">
                                     <div class="d-flex align-items-center mb-3">
                                         {% if person.image_url %}
                                             <img src="{{ person.image_url }}" alt="{{ person.name }}" 
@@ -792,8 +794,11 @@ function submitDeletion(selectedBoxes, forceDelete = false) {
     form.submit();
 }
 
-function openPerson(personId) {
-    window.location.href = `/person/${personId}`;
+function openPerson(card) {
+    const personUrl = card.dataset.personUrl;
+    if (personUrl) {
+        window.location.href = personUrl;
+    }
 }
 
 function updateSelection() {

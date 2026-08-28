@@ -264,7 +264,9 @@ class KuzuUserRepository:
     async def get_by_username(self, username: str) -> Optional[Any]:
         """Get a user by username."""
         try:
-            query = "MATCH (u:User {username: $username}) RETURN u"
+            # Usernames are identifiers, not passwords: preserve their display
+            # casing but make authentication and uniqueness checks case-insensitive.
+            query = "MATCH (u:User) WHERE toLower(u.username) = toLower($username) RETURN u LIMIT 1"
             result = self.safe_manager.execute_query(query, {"username": username})
             result_data = _convert_query_result_to_list(result)
             

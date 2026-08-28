@@ -5,6 +5,24 @@ All notable changes to MyBibliotheca will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-08-28
+
+### Added
+- Added title-based external book search alongside ISBN lookup when adding books.
+- Added support for selecting search results that do not include an ISBN.
+
+### Fixed
+- Fixed author card links using an incorrect route on the People page.
+- Fixed add-book modal backdrops blocking modal interaction.
+- Fixed case-sensitive username login and profile validation.
+- Fixed mobile layouts across the library, add-book, and book-detail pages.
+- Fixed book-detail covers overflowing their column on mobile devices.
+
+### Improved
+- Refreshed project dependencies and lockfile.
+- Improved mobile navigation, page controls, pagination, and book-card sizing.
+- Removed the decorative bubble from the application header.
+
 ## [2.0.1] - 2025-11-13
 
 ### Fixed
