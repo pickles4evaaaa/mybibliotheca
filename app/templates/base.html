@@ -1156,7 +1156,10 @@
     border-radius: var(--radius-lg);
     padding: clamp(24px, 4vw, 48px);
     box-shadow: var(--shadow-soft);
-    backdrop-filter: var(--glass-blur);
+    /* Avoid repainting the entire page on every scroll frame. The translucent
+       surface keeps the same appearance without the expensive live blur. */
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -1187,7 +1190,8 @@
     border: 1px solid var(--border-soft);
     background: linear-gradient(125deg, var(--surface-elevated), var(--surface-secondary));
     box-shadow: var(--shadow-soft);
-    backdrop-filter: var(--glass-blur);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     position: sticky;
     top: clamp(8px, 2vw, 20px);
     z-index: 20;
@@ -1208,18 +1212,6 @@
     font-weight: 600;
     letter-spacing: -0.02em;
     color: var(--heading-color) !important;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .navbar-brand::before {
-    content: "";
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--accent-warm));
-    box-shadow: 0 0 12px rgba(14,165,233,0.45);
   }
 
   .navbar-nav .nav-link {
@@ -1475,6 +1467,16 @@
     color: var(--text-color);
   }
 
+  .card > .card-header:first-child {
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+  }
+
+  .card > .card-footer:last-child {
+    border-bottom-left-radius: inherit;
+    border-bottom-right-radius: inherit;
+  }
+
   [data-theme="dark"] .card,
   [data-theme="dark"] .list-group-item,
   [data-theme="dark"] .modal-content {
@@ -1614,11 +1616,68 @@
 
   @media (max-width: 576px) {
     body {
-      padding: 12px;
+      padding: 8px;
+      overflow-x: hidden;
+    }
+
+    .overlay {
+      gap: 12px;
+    }
+
+    .container,
+    .navbar,
+    .app-footer {
+      width: 100%;
     }
 
     .container {
-      padding: 1.25rem;
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+
+    .container > .container-fluid {
+      padding-left: 0 !important;
+      padding-right: 0 !important;
+    }
+
+    .navbar {
+      padding: 0.5rem 0.75rem;
+    }
+
+    .navbar > .container-fluid {
+      padding-left: 0;
+      padding-right: 0;
+    }
+
+    .navbar-brand {
+      max-width: calc(100% - 56px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .navbar-collapse {
+      width: 100%;
+    }
+
+    .navbar-nav {
+      width: 100%;
+    }
+
+    .navbar-nav .nav-link,
+    .navbar-nav .nav-pill,
+    .navbar-nav .nav-item,
+    .navbar-nav .dropdown-menu {
+      width: 100%;
+    }
+
+    .navbar-nav .nav-link,
+    .navbar-nav .nav-pill {
+      text-align: center;
+    }
+
+    .navbar-text {
+      margin-right: 0 !important;
     }
 
     .navbar-text {
@@ -1743,7 +1802,7 @@
           </a>
         </div>
       </div>
-      <p class="footer-version-text">{{ site_name }} vbeta-latest · Remember to back up your database regularly.</p>
+      <p class="footer-version-text">{{ site_name }} v2.2.0 · Remember to back up your database regularly.</p>
     </footer>
   </div>
   <!-- Bootstrap JS (local file) -->
@@ -1901,6 +1960,20 @@
             
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <input type="hidden" id="selected_book_id" name="book_id" value="">
+
+            <div class="mb-3">
+              <label for="reading_log_date" class="form-label">
+                <i class="bi bi-calendar-event"></i> Date
+              </label>
+              <input type="date" 
+                     class="form-control" 
+                     id="reading_log_date" 
+                     name="date" 
+                     value="{{ datetime.now().strftime('%Y-%m-%d') }}" 
+                     max="{{ datetime.now().strftime('%Y-%m-%d') }}"
+                     required>
+              <small class="form-text text-muted">Select the date of your reading session (defaults to today)</small>
+            </div>
             
             <div class="mb-3">
               <label for="book_search" class="form-label">Book *</label>

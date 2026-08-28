@@ -15,7 +15,7 @@ if defined VIRTUAL_ENV (
 
 rem Install Python packages
 echo 📦 Installing Python packages...
-pip install opencv-python==4.8.1.78 pyzbar==0.1.9 pytesseract==0.3.10 numpy>=1.21.0
+pip install opencv-python==5.0.0.93 pyzbar==0.1.9 pytesseract==0.3.13 numpy==2.5.2
 
 rem Check for Tesseract OCR
 echo 🔍 Checking for Tesseract OCR...

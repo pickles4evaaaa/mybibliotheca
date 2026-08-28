@@ -110,3 +110,95 @@ def test_unified_fetch_prefers_matching_metadata(monkeypatch):
     assert merged["title"] == "Fruits Basket, Vol. 2"
     assert merged.get("_isbn_mismatch") is False
     assert errors.get("google") == "empty"
+
+
+def test_people_card_uses_blueprint_generated_person_url():
+    """Ensure card-body navigation keeps the mounted people blueprint prefix."""
+    template_path = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "templates"
+        / "people.html"
+    )
+    template = template_path.read_text(encoding="utf-8")
+
+    assert (
+        'data-person-url="{{ url_for(\'people.person_details\', '
+        'person_id=person.id) }}"'
+    ) in template
+    assert 'onclick="openPerson(this)"' in template
+    assert "window.location.href = `/person/${personId}`" not in template
+
+
+def test_add_book_supports_isbn_lookup_and_title_result_selection():
+    """The add-book page must offer both lookup modes and allow title matches without ISBNs."""
+    template_path = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "templates"
+        / "add_book.html"
+    )
+    template = template_path.read_text(encoding="utf-8")
+
+    assert "function fetchBookData()" in template
+    assert "/api/v1/books/unified-metadata?isbn=" in template
+    assert "function searchByTitle()" in template
+    assert "new URLSearchParams({ title, limit: '10' })" in template
+    assert "isbn_required: 'true'" not in template
+    assert "onclick=\"selectBookFromSearch(${index})\"" in template
+    assert "No books found for this title." in template
+    assert "function moveAddBookModalsToBody()" in template
+    assert "document.body.appendChild(modal)" in template
+    assert "hidden.bs.modal" in template
+
+
+def test_mobile_layout_has_compact_page_controls():
+    """Keep primary library and add-book controls usable at phone widths."""
+    base_path = Path(__file__).resolve().parent.parent / "app" / "templates" / "base.html"
+    library_path = Path(__file__).resolve().parent.parent / "app" / "templates" / "library_enhanced.html"
+    add_book_path = Path(__file__).resolve().parent.parent / "app" / "templates" / "add_book.html"
+
+    base = base_path.read_text(encoding="utf-8")
+    library = library_path.read_text(encoding="utf-8")
+    add_book = add_book_path.read_text(encoding="utf-8")
+
+    assert "overflow-x: hidden" in base
+    assert ".navbar-brand" in base and "text-overflow: ellipsis" in base
+    assert ".navbar-brand::before" not in base
+    assert "library-page-header" in library
+    assert ".library-pagination" in library
+    assert "aspect-ratio: 2 / 3" in library
+    assert "add-book-header" in add_book
+
+
+def test_username_lookup_is_case_insensitive():
+    """Login lookups and profile validation must treat username casing consistently."""
+    repository_path = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "infrastructure"
+        / "kuzu_repositories.py"
+    )
+    forms_path = Path(__file__).resolve().parent.parent / "app" / "forms.py"
+
+    repository = repository_path.read_text(encoding="utf-8")
+    forms = forms_path.read_text(encoding="utf-8")
+
+    assert "toLower(u.username) = toLower($username)" in repository
+    assert "username.data.casefold() != self.original_username.casefold()" in forms
+
+
+def test_book_detail_cover_is_contained_on_mobile():
+    """Keep detail-page covers within the available phone-width column."""
+    template_path = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "templates"
+        / "view_book_enhanced.html"
+    )
+    template = template_path.read_text(encoding="utf-8")
+
+    assert "book-detail-cover-frame" in template
+    assert "max-width: 100% !important" in template
+    assert "max-width: min(100%, 280px)" in template
+    assert "max-height: 62vh" in template

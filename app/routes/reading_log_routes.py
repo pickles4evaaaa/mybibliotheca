@@ -33,6 +33,18 @@ def create_reading_log_entry():
         pages_read = request.form.get('pages_read')
         minutes_read = request.form.get('minutes_read')
         notes = request.form.get('notes', '').strip()
+        log_date_str = request.form.get('date')
+        
+        # Parse date from form or use today
+        if log_date_str:
+            try:
+                log_entry_date = datetime.strptime(log_date_str, '%Y-%m-%d').date()
+                if log_entry_date > date.today():
+                    log_entry_date = date.today()
+            except ValueError:
+                log_entry_date = date.today()
+        else:
+            log_entry_date = date.today()
         
         # Validate required fields
         if not book_id:
@@ -85,8 +97,7 @@ def create_reading_log_entry():
                 'message': 'Book not found'
             }), 404
         
-        # Create reading log entry
-        log_entry_date = date.today()
+        # Create reading log entry with the provided or default date
         reading_log = ReadingLog(
             user_id=current_user.id,
             book_id=book_id,

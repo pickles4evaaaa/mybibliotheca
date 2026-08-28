@@ -335,6 +335,21 @@
                 Supported formats: CSV files from Goodreads, StoryGraph, or custom book lists
             </div>
         </div>
+
+        <div class="mt-3">
+            <div class="form-check">
+                <input type="checkbox" class="form-check-input" id="quick_start" name="quick_start"
+                       {% if data_options and data_options.quick_start %}checked{% endif %}>
+                <label class="form-check-label" for="quick_start">
+                    <strong>Quick Start</strong> (faster) — import the file “as-is”
+                </label>
+            </div>
+            <div class="form-text" style="margin-left: 1.75rem;">
+                When enabled, MyBibliotheca will <strong>skip metadata lookup</strong> during onboarding.
+                Your library will be created using only the metadata present in your export (e.g., title/author/ISBN).
+                Missing covers/descriptions may be added later.
+            </div>
+        </div>
         
         <div class="alert alert-info">
             <i class="bi bi-lightbulb"></i>

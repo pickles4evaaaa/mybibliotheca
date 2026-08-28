@@ -42,37 +42,59 @@ def _convert_query_result_to_list(result) -> List[Dict[str, Any]]:
     """
     Convert KuzuDB QueryResult to list of dictionaries (matching old graph_storage.query format).
     """
-    rows = []
+    rows: List[Dict[str, Any]] = []
     try:
-        # Check if result has the iterator interface
+        # If it's already a list/dict, treat it as legacy-style rows.
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict):
+            return [result]
+
+        # Check if result has the iterator interface (Kuzu QueryResult)
         if hasattr(result, 'has_next') and hasattr(result, 'get_next'):
+            col_names: Optional[List[str]] = None
+            if hasattr(result, 'get_column_names'):
+                try:
+                    col_names = list(result.get_column_names())  # type: ignore[attr-defined]
+                except Exception:
+                    col_names = None
+
             while result.has_next():
                 row = result.get_next()
-                # Convert row to dict
-                if len(row) == 1:
-                    # Single column result
-                    rows.append({'result': _safe_get_row_value(row, 0)})
+
+                # Kuzu row objects are iterable but may not implement __len__.
+                if isinstance(row, (list, tuple)):
+                    values = list(row)
+                elif isinstance(row, dict):
+                    # Preserve insertion order (Py3.7+) for deterministic col_0/col_1 mapping
+                    values = list(row.values())
                 else:
-                    # Multiple columns - create dict with column names
-                    row_dict = {}
-                    for i, value in enumerate(row):
-                        row_dict[f'col_{i}'] = value
-                    rows.append(row_dict)
-        else:
-            # Fallback: if it's already a list or other format
-            if isinstance(result, list):
-                return result
-            elif isinstance(result, dict):
-                return [result]
-            else:
-                # Try to convert to string representation
-                rows.append({'result': str(result)})
+                    try:
+                        values = list(row)  # type: ignore[arg-type]
+                    except Exception:
+                        values = [row]
+
+                if len(values) == 1:
+                    val = values[0]
+                    record: Dict[str, Any] = {'result': val, 'col_0': val}
+                    if col_names and len(col_names) >= 1:
+                        record[col_names[0]] = val
+                    rows.append(record)
+                else:
+                    record = {}
+                    for i, value in enumerate(values):
+                        record[f'col_{i}'] = value
+                        if col_names and i < len(col_names):
+                            record[col_names[i]] = value
+                    rows.append(record)
+            return rows
+
+        # Unknown result shape: best-effort stringify
+        return [{'result': str(result)}]
+
     except Exception as e:
         logger.warning(f"Error converting query result: {e}")
-        # Return empty list if conversion fails
         return []
-    
-    return rows
 
 
 class KuzuRelationshipService:
@@ -170,6 +192,31 @@ class KuzuRelationshipService:
         combined.update(relationship_data or {})
         # Personal metadata (HAS_PERSONAL_METADATA) stores json blob in personal_custom_fields; flatten known fields
         if personal_meta:
+            # Kuzu may materialize relationship values as a dict with nested "properties"
+            # (or similar key). Normalize so downstream parsing can consistently find
+            # personal_custom_fields and other keys.
+            if not isinstance(personal_meta, dict):
+                try:
+                    # Best-effort: some objects expose mapping-like behavior
+                    if hasattr(personal_meta, 'items'):
+                        personal_meta = dict(personal_meta.items())  # type: ignore[arg-type]
+                    elif hasattr(personal_meta, '__dict__'):
+                        personal_meta = dict(getattr(personal_meta, '__dict__') or {})
+                except Exception:
+                    personal_meta = None
+
+            if isinstance(personal_meta, dict):
+                for props_key in ('properties', '_properties'):
+                    props = personal_meta.get(props_key)
+                    if isinstance(props, dict) and props:
+                        # Prefer explicit top-level keys; fill missing from nested properties.
+                        merged = dict(personal_meta)
+                        for k, v in props.items():
+                            if k not in merged:
+                                merged[k] = v
+                        personal_meta = merged
+                        break
+
             # Accept direct fields if present
             for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date']:
                 if key in personal_meta and personal_meta[key] not in (None, ''):
@@ -183,7 +230,7 @@ class KuzuRelationshipService:
                         custom_blob = json.loads(custom_blob)
                     for k, v in custom_blob.items():
                         # Promote known keys; keep others as custom_*
-                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage'] and v not in (None, ''):
+                        if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage', 'needs_review'] and v not in (None, ''):
                             combined[k] = v
                 except Exception:
                     pass
@@ -207,6 +254,8 @@ class KuzuRelationshipService:
         # Optional progress fields for UI hints
         setattr(book, 'progress_ms', combined.get('progress_ms'))
         setattr(book, 'last_listened_at', combined.get('last_listened_at'))
+        # Custom import QC flag: rows imported without ISBN are tagged Needs Review
+        setattr(book, 'needs_review', combined.get('needs_review'))
         # Expose progress percentage if present
         if 'progress_percentage' in combined:
             setattr(book, 'progress_percentage', combined.get('progress_percentage'))
@@ -597,6 +646,33 @@ class KuzuRelationshipService:
                     if 'id' in book_dict and 'uid' not in book_dict:
                         book_dict['uid'] = book_dict['id']
 
+                    # Template/search compatibility: inject author/series display fields
+                    try:
+                        authors = []
+                        for a in getattr(book, 'authors', []) or []:
+                            name = getattr(a, 'name', None)
+                            if not name and isinstance(a, dict):
+                                name = a.get('name')
+                            if isinstance(name, str) and name.strip():
+                                authors.append(name.strip())
+                        authors_text = ', '.join(authors)
+                        if authors_text:
+                            book_dict.setdefault('authors', authors)
+                            book_dict.setdefault('authors_text', authors_text)
+                            book_dict.setdefault('author', authors_text)
+
+                        series_obj = getattr(book, 'series', None)
+                        series_name = None
+                        if isinstance(series_obj, dict):
+                            series_name = series_obj.get('name')
+                        else:
+                            series_name = getattr(series_obj, 'name', None) if series_obj else None
+                        if isinstance(series_name, str) and series_name.strip():
+                            book_dict.setdefault('series', {'name': series_name.strip()})
+                            book_dict.setdefault('series_name', series_name.strip())
+                    except Exception:
+                        pass
+
                     book_dicts.append(book_dict)
 
                 except Exception as e:
@@ -610,6 +686,295 @@ class KuzuRelationshipService:
             logger.error(f"[RELATIONSHIP_SERVICE] Error in get_all_books_with_user_overlay: {e}")
             traceback.print_exc()
             return []
+
+    async def get_all_books_with_user_overlay_flat(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all books with a lightweight user overlay (universal library model).
+
+        This avoids per-book enrichment (and resulting N+1 queries) by returning
+        a flat dictionary shape suitable for search and template display.
+        """
+        try:
+            query = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (b)-[:STORED_AT]->(l:Location)
+            WITH b,
+                COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) AS locations
+            OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
+            WITH b, locations, pm
+            OPTIONAL MATCH (p:Person)-[:AUTHORED]->(b)
+            OPTIONAL MATCH (b)-[:PART_OF_SERIES]->(s:Series)
+            OPTIONAL MATCH (b)-[:CATEGORIZED_AS]->(c:Category)
+            OPTIONAL MATCH (b)-[:PUBLISHED_BY]->(pub:Publisher)
+            RETURN b,
+                   locations,
+                   pm,
+                   COLLECT(DISTINCT CASE WHEN p.name IS NOT NULL THEN p.name ELSE NULL END) AS authors,
+                   COLLECT(DISTINCT CASE WHEN s.name IS NOT NULL THEN s.name ELSE NULL END) AS series_names,
+                   COLLECT(DISTINCT CASE WHEN c.name IS NOT NULL THEN c.name ELSE NULL END) AS category_names,
+                   COLLECT(DISTINCT CASE WHEN pub.id IS NOT NULL AND pub.name IS NOT NULL THEN {id: pub.id, name: pub.name} ELSE NULL END) AS publishers
+            """
+
+            raw = safe_execute_kuzu_query(query, {"user_id": user_id})
+            rows = _convert_query_result_to_list(raw)
+
+            books: List[Dict[str, Any]] = []
+            for row in rows:
+                book_data = row.get('col_0')
+                if not book_data:
+                    continue
+                if isinstance(book_data, str):
+                    book_data = {'id': book_data}
+                if not isinstance(book_data, dict):
+                    # Unexpected shape
+                    continue
+
+                book_dict: Dict[str, Any] = dict(book_data)
+
+                # Ensure uid is available (templates expect this)
+                if 'id' in book_dict and 'uid' not in book_dict:
+                    book_dict['uid'] = book_dict['id']
+
+                # Locations
+                locations_data = row.get('col_1', []) or []
+                if isinstance(locations_data, list):
+                    book_dict['locations'] = [
+                        loc for loc in locations_data
+                        if isinstance(loc, dict) and loc.get('id') and loc.get('name')
+                    ]
+                else:
+                    book_dict['locations'] = []
+
+                # Personal metadata overlay (only set if present)
+                personal_meta = row.get('col_2') or {}
+
+                # Kuzu can materialize relationship values with nested "properties" (or as
+                # a mapping-like object). Normalize so we reliably extract reading_status,
+                # ownership_status, etc. even in universal-library mode.
+                if personal_meta and not isinstance(personal_meta, dict):
+                    try:
+                        if hasattr(personal_meta, 'items'):
+                            personal_meta = dict(personal_meta.items())  # type: ignore[arg-type]
+                        elif hasattr(personal_meta, '__dict__'):
+                            personal_meta = dict(getattr(personal_meta, '__dict__') or {})
+                    except Exception:
+                        personal_meta = {}
+
+                if isinstance(personal_meta, dict):
+                    for props_key in ('properties', '_properties'):
+                        props = personal_meta.get(props_key)
+                        if isinstance(props, dict) and props:
+                            merged = dict(personal_meta)
+                            for k, v in props.items():
+                                if k not in merged:
+                                    merged[k] = v
+                            personal_meta = merged
+                            break
+
+                    # Accept direct fields if present
+                    for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date', 'needs_review']:
+                        if key in personal_meta and personal_meta[key] not in (None, ''):
+                            book_dict[key] = personal_meta[key]
+
+                    # Extract known keys from personal_custom_fields JSON blob if present
+                    custom_blob = personal_meta.get('personal_custom_fields')
+                    if custom_blob and isinstance(custom_blob, (str, dict)):
+                        try:
+                            import json
+                            if isinstance(custom_blob, str):
+                                custom_blob = json.loads(custom_blob)
+                            if isinstance(custom_blob, dict):
+                                for k, v in custom_blob.items():
+                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage', 'needs_review'] and v not in (None, ''):
+                                        book_dict[k] = v
+                        except Exception:
+                            pass
+
+                # Authors
+                authors = row.get('col_3') or []
+                if not isinstance(authors, list):
+                    authors = [authors] if authors else []
+                authors = [a for a in authors if isinstance(a, str) and a.strip()]
+                authors_text = ", ".join(authors)
+                book_dict['authors'] = authors
+                book_dict['authors_text'] = authors_text
+                # Template/search compatibility: provide `author` as a string
+                book_dict['author'] = authors_text
+
+                # Series
+                series_names = row.get('col_4') or []
+                if not isinstance(series_names, list):
+                    series_names = [series_names] if series_names else []
+                series_names = [s for s in series_names if isinstance(s, str) and s.strip()]
+                series_name = series_names[0] if series_names else ''
+                book_dict['series'] = {'name': series_name} if series_name else {}
+                book_dict['series_name'] = series_name
+
+                # Categories
+                category_names = row.get('col_5') or []
+                if not isinstance(category_names, list):
+                    category_names = [category_names] if category_names else []
+                category_names = [c for c in category_names if isinstance(c, str) and c.strip()]
+                book_dict['categories'] = [{'name': name} for name in category_names]
+
+                # Publisher (optional)
+                publishers = row.get('col_6')
+                publisher_value: Optional[Dict[str, Any]] = None
+                if isinstance(publishers, dict):
+                    publisher_value = publishers
+                elif isinstance(publishers, list):
+                    for item in publishers:
+                        if isinstance(item, dict) and item.get('name'):
+                            publisher_value = item
+                            break
+                if publisher_value:
+                    # Keep existing route/filter compatibility: publisher is a text field.
+                    book_dict['publisher'] = publisher_value.get('name') or ''
+
+                books.append(book_dict)
+
+            return books
+        except Exception as e:
+            logger.error(f"[RELATIONSHIP_SERVICE] get_all_books_with_user_overlay_flat error: {e}")
+            traceback.print_exc()
+            return []
+
+    async def search_user_books_flat(self, user_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Search books for a user returning a lightweight dict shape.
+
+        Designed for autocomplete/API usage: avoids per-book enrichment and pushes
+        filtering + LIMIT into Kuzu.
+        """
+        try:
+            q = (query or '').strip()
+            if not q or len(q) < 2:
+                return []
+
+            cypher = """
+            MATCH (b:Book)
+            OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
+            OPTIONAL MATCH (p:Person)-[:AUTHORED]->(b)
+            OPTIONAL MATCH (b)-[:PART_OF_SERIES]->(s:Series)
+            OPTIONAL MATCH (b)-[:CATEGORIZED_AS]->(c:Category)
+            WITH b, pm,
+                 COLLECT(DISTINCT CASE WHEN p.name IS NOT NULL THEN p.name ELSE NULL END) AS authors,
+                 COLLECT(DISTINCT CASE WHEN s.name IS NOT NULL THEN s.name ELSE NULL END) AS series_names,
+                 COLLECT(DISTINCT CASE WHEN c.name IS NOT NULL THEN c.name ELSE NULL END) AS category_names
+            WITH b, pm, authors, series_names, category_names
+            WHERE
+                lower(CASE WHEN b.title IS NOT NULL THEN b.title ELSE '' END) CONTAINS lower($q)
+                OR lower(CASE WHEN b.normalized_title IS NOT NULL THEN b.normalized_title ELSE '' END) CONTAINS lower($q)
+                OR lower(CASE WHEN b.subtitle IS NOT NULL THEN b.subtitle ELSE '' END) CONTAINS lower($q)
+                OR lower(CASE WHEN b.description IS NOT NULL THEN b.description ELSE '' END) CONTAINS lower($q)
+                OR ANY(a IN authors WHERE a IS NOT NULL AND lower(a) CONTAINS lower($q))
+                OR ANY(sn IN series_names WHERE sn IS NOT NULL AND lower(sn) CONTAINS lower($q))
+                OR ANY(cn IN category_names WHERE cn IS NOT NULL AND lower(cn) CONTAINS lower($q))
+            RETURN b, pm, authors, series_names, category_names
+            ORDER BY lower(CASE WHEN b.normalized_title IS NOT NULL THEN b.normalized_title ELSE CASE WHEN b.title IS NOT NULL THEN b.title ELSE '' END END) ASC
+            LIMIT $limit
+            """
+
+            raw = safe_execute_kuzu_query(cypher, {"user_id": user_id, "q": q, "limit": int(limit)})
+            rows = _convert_query_result_to_list(raw)
+
+            books: List[Dict[str, Any]] = []
+            for row in rows:
+                book_data = row.get('col_0')
+                if not book_data:
+                    continue
+                if isinstance(book_data, str):
+                    book_data = {'id': book_data}
+                if not isinstance(book_data, dict):
+                    continue
+
+                book_dict: Dict[str, Any] = dict(book_data)
+                if 'id' in book_dict and 'uid' not in book_dict:
+                    book_dict['uid'] = book_dict['id']
+
+                personal_meta = row.get('col_1') or {}
+                if personal_meta and not isinstance(personal_meta, dict):
+                    try:
+                        if hasattr(personal_meta, 'items'):
+                            personal_meta = dict(personal_meta.items())  # type: ignore[arg-type]
+                        elif hasattr(personal_meta, '__dict__'):
+                            personal_meta = dict(getattr(personal_meta, '__dict__') or {})
+                    except Exception:
+                        personal_meta = {}
+
+                if isinstance(personal_meta, dict):
+                    for props_key in ('properties', '_properties'):
+                        props = personal_meta.get(props_key)
+                        if isinstance(props, dict) and props:
+                            merged = dict(personal_meta)
+                            for k, v in props.items():
+                                if k not in merged:
+                                    merged[k] = v
+                            personal_meta = merged
+                            break
+
+                    for key in ['personal_notes', 'user_review', 'user_rating', 'reading_status', 'ownership_status', 'start_date', 'finish_date', 'needs_review']:
+                        if key in personal_meta and personal_meta[key] not in (None, ''):
+                            book_dict[key] = personal_meta[key]
+
+                    custom_blob = personal_meta.get('personal_custom_fields')
+                    if custom_blob and isinstance(custom_blob, (str, dict)):
+                        try:
+                            import json
+                            if isinstance(custom_blob, str):
+                                custom_blob = json.loads(custom_blob)
+                            if isinstance(custom_blob, dict):
+                                for k, v in custom_blob.items():
+                                    if k in ['personal_notes', 'user_review', 'reading_status', 'ownership_status', 'user_rating', 'start_date', 'finish_date', 'progress_ms', 'last_listened_at', 'progress_percentage', 'needs_review'] and v not in (None, ''):
+                                        book_dict[k] = v
+                        except Exception:
+                            pass
+
+                authors = row.get('col_2') or []
+                if not isinstance(authors, list):
+                    authors = [authors] if authors else []
+                authors = [a for a in authors if isinstance(a, str) and a.strip()]
+                authors_text = ', '.join(authors)
+                book_dict['authors'] = authors
+                book_dict['authors_text'] = authors_text
+                book_dict['author'] = authors_text
+
+                series_names = row.get('col_3') or []
+                if not isinstance(series_names, list):
+                    series_names = [series_names] if series_names else []
+                series_names = [s for s in series_names if isinstance(s, str) and s.strip()]
+                series_name = series_names[0] if series_names else ''
+                book_dict['series'] = {'name': series_name} if series_name else {}
+                book_dict['series_name'] = series_name
+
+                category_names = row.get('col_4') or []
+                if not isinstance(category_names, list):
+                    category_names = [category_names] if category_names else []
+                category_names = [c for c in category_names if isinstance(c, str) and c.strip()]
+                book_dict['categories'] = [{'name': name} for name in category_names]
+
+                books.append(book_dict)
+
+            return books
+        except Exception as e:
+            logger.error(f"[RELATIONSHIP_SERVICE] search_user_books_flat error: {e}")
+            traceback.print_exc()
+
+            # Fallback: if the DB-side query fails (e.g., function support differs),
+            # do a best-effort Python filter over the flat overlay.
+            try:
+                from app.utils.library_search import library_book_matches_query
+                all_books = self.get_all_books_with_user_overlay_flat_sync(user_id)
+                matches = [b for b in (all_books or []) if isinstance(b, dict) and library_book_matches_query(b, query)]
+                return matches[: max(0, int(limit))]
+            except Exception:
+                return []
+
+    def search_user_books_flat_sync(self, user_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Sync wrapper for search_user_books_flat."""
+        return run_async(self.search_user_books_flat(user_id, query, limit))
+
+    def get_all_books_with_user_overlay_flat_sync(self, user_id: str) -> List[Dict[str, Any]]:
+        """Sync wrapper for get_all_books_with_user_overlay_flat."""
+        return run_async(self.get_all_books_with_user_overlay_flat(user_id))
     
     def get_book_by_uid_sync(self, uid: str, user_id: str) -> Optional[Book]:
         """Get a book by UID with user overlay data.
@@ -775,11 +1140,47 @@ class KuzuRelationshipService:
                     locations_data = row.get('col_1', []) or []
                     pm = row.get('col_2') or {}
                     book = self._create_enriched_book(book_data, {}, locations_data, pm)
-                    books.append(book.__dict__.copy() if hasattr(book, '__dict__') else {
-                        'id': getattr(book, 'id', ''),
-                        'uid': getattr(book, 'id', ''),
-                        'title': getattr(book, 'title', '')
-                    })
+                    book_dict: Dict[str, Any]
+                    if hasattr(book, '__dict__'):
+                        book_dict = book.__dict__.copy()
+                    else:
+                        book_dict = {
+                            'id': getattr(book, 'id', ''),
+                            'uid': getattr(book, 'id', ''),
+                            'title': getattr(book, 'title', '')
+                        }
+
+                    if 'id' in book_dict and 'uid' not in book_dict:
+                        book_dict['uid'] = book_dict['id']
+
+                    # Template/search compatibility: inject author/series display fields
+                    try:
+                        authors = []
+                        for a in getattr(book, 'authors', []) or []:
+                            name = getattr(a, 'name', None)
+                            if not name and isinstance(a, dict):
+                                name = a.get('name')
+                            if isinstance(name, str) and name.strip():
+                                authors.append(name.strip())
+                        authors_text = ', '.join(authors)
+                        if authors_text:
+                            book_dict.setdefault('authors', authors)
+                            book_dict.setdefault('authors_text', authors_text)
+                            book_dict.setdefault('author', authors_text)
+
+                        series_obj = getattr(book, 'series', None)
+                        series_name = None
+                        if isinstance(series_obj, dict):
+                            series_name = series_obj.get('name')
+                        else:
+                            series_name = getattr(series_obj, 'name', None) if series_obj else None
+                        if isinstance(series_name, str) and series_name.strip():
+                            book_dict.setdefault('series', {'name': series_name.strip()})
+                            book_dict.setdefault('series_name', series_name.strip())
+                    except Exception:
+                        pass
+
+                    books.append(book_dict)
                 except Exception:
                     continue
             return books
@@ -816,11 +1217,26 @@ class KuzuRelationshipService:
             'wishlist': 0,
         }
         try:
+            # IMPORTANT: use the unified overlay (supports legacy OWNS + HAS_PERSONAL_METADATA)
+            # so counts match what the library page shows in badges.
             books = self.get_all_books_with_user_overlay_sync(user_id)
+
             for book in books or []:
-                # Support both dicts and objects
-                rs = (book.get('reading_status') if isinstance(book, dict) else getattr(book, 'reading_status', None))
-                owner = (book.get('ownership_status') if isinstance(book, dict) else getattr(book, 'ownership_status', None))
+                if isinstance(book, dict):
+                    ownership = book.get('ownership') if isinstance(book, dict) else None
+                    rs = (
+                        book.get('reading_status') or
+                        (ownership.get('reading_status') if isinstance(ownership, dict) else None) or
+                        book.get('status')
+                    )
+                    owner = (
+                        book.get('ownership_status') or
+                        (ownership.get('ownership_status') if isinstance(ownership, dict) else None)
+                    )
+                else:
+                    rs = getattr(book, 'reading_status', None)
+                    owner = getattr(book, 'ownership_status', None)
+
                 rs = rs.strip().lower() if isinstance(rs, str) else rs
                 owner = owner.strip().lower() if isinstance(owner, str) else owner
 
@@ -847,6 +1263,7 @@ class KuzuRelationshipService:
 
                 if owner == 'wishlist':
                     counts['wishlist'] += 1
+
             # No fallback: empty/default statuses are not counted under plan_to_read
         except Exception as e:
             logger.error(f"[RELATIONSHIP_SERVICE] get_library_status_counts_sync error: {e}")

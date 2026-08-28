@@ -63,7 +63,9 @@ class UserProfileForm(FlaskForm):
         self.original_email = original_email
 
     def validate_username(self, username):
-        if username.data != self.original_username:
+        # A casing-only change is the same username and should not be rejected
+        # by the case-insensitive lookup used by the repository.
+        if username.data.casefold() != self.original_username.casefold():
             from .services import user_service
             user = user_service.get_user_by_username_sync(username.data)
             if user is not None:

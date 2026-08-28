@@ -415,6 +415,19 @@
             <span class="config-value">{{ onboarding_data.data_options.import_file | basename }}</span>
         </div>
         {% endif %}
+
+        {% if onboarding_data.data_options.option == 'import' %}
+        <div class="config-item">
+            <span class="config-label" data-bs-toggle="tooltip" title="Controls whether MyBibliotheca will fetch missing metadata during import.">Import Mode:</span>
+            <span class="config-value">
+                {% if onboarding_data.data_options.quick_start %}
+                    Quick Start (skip metadata lookup)
+                {% else %}
+                    Standard (metadata lookup enabled)
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -430,6 +443,9 @@
         <li>You can modify these settings later in the admin panel</li>
         {% if onboarding_data.data_options.option in ['migrate', 'import'] %}
         <li>Data processing may take a few moments depending on the size of your collection</li>
+        {% endif %}
+        {% if onboarding_data.data_options.option == 'import' and onboarding_data.data_options.quick_start %}
+        <li><strong>Quick Start:</strong> Import uses only what’s in your file (no metadata lookup). Missing covers/descriptions can be added later.</li>
         {% endif %}
     </ul>
 </div>

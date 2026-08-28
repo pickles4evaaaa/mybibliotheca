@@ -29,7 +29,7 @@ echo "[INFO] Running ad-hoc Postgres export (no permanent dependency changes)."
 if command -v uv >/dev/null 2>&1; then
   echo "[INFO] Detected 'uv'; running with transient dependency injection."
   # --with ensures psycopg is available just-in-time.
-  uv run --with psycopg[binary] "$EXPORT_SCRIPT" "$@"
+  uv run --with 'psycopg[binary]==3.3.4' "$EXPORT_SCRIPT" "$@"
   exit 0
 fi
 
@@ -42,7 +42,7 @@ if [ ! -d "$VENV_DIR" ]; then
   source "$VENV_DIR/bin/activate"
   python -m pip install --upgrade pip >/dev/null
   echo "[INFO] Installing psycopg (binary) inside ephemeral venv"
-  python -m pip install 'psycopg[binary]>=3.2' >/dev/null
+  python -m pip install 'psycopg[binary]==3.3.4' >/dev/null
 else
   # shellcheck disable=SC1091
   source "$VENV_DIR/bin/activate"
@@ -52,7 +52,7 @@ sys.exit(0 if importlib.util.find_spec('psycopg') else 1)
 PY
   then
     echo "[INFO] Updating ephemeral venv with psycopg dependency"
-    python -m pip install 'psycopg[binary]>=3.2' >/dev/null
+    python -m pip install 'psycopg[binary]==3.3.4' >/dev/null
   fi
 fi
 
