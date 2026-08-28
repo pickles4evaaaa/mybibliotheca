@@ -17,6 +17,23 @@
       </div>
     {% endif %}
     <p class="text-muted small">Use the quick fixes below to resolve common data consistency issues. All operations are additive and safe to rerun.</p>
+    {% if repair_job %}
+      {% set repair_status = repair_job.status|lower %}
+      {% set repair_pct = ((repair_job.processed or 0) * 100 // (repair_job.total or 1)) if repair_job.total else 0 %}
+      <div id="repairJobStatus"
+           class="alert {{ 'alert-success' if repair_status == 'completed' else ('alert-danger' if repair_status == 'failed' else 'alert-info') }} py-2"
+           data-repair-job-status="1"
+           data-status-url="{{ url_for('auth.settings_repair_job_status', job_id=repair_job.job_id) }}">
+        <div class="d-flex justify-content-between align-items-center gap-2">
+          <strong><i class="bi bi-hourglass-split me-1"></i>{{ repair_job.phase or 'Repair queued' }}</strong>
+          <span class="repair-job-count">{{ repair_job.processed or 0 }}/{{ repair_job.total or '…' }}</span>
+        </div>
+        <div class="progress mt-2" style="height: 8px;">
+          <div class="progress-bar repair-job-progress" role="progressbar" style="width: {{ repair_pct }}%" aria-valuenow="{{ repair_pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div class="small mt-1 repair-job-detail">The repair is running in the background. You can leave this page open or come back later.</div>
+      </div>
+    {% endif %}
     {% set media_labels = {'physical': 'Physical Book', 'ebook': 'E-book', 'audiobook': 'Audiobook', 'kindle': 'Kindle'} %}
     {% set default_media_label = media_labels.get(default_media, default_media|capitalize) %}
     <div class="row g-3">
@@ -27,7 +44,7 @@
             <span class="badge bg-{{ 'danger' if issue_stats.get('missing_media_type', 0) else 'success' }}">{{ issue_stats.get('missing_media_type', 0) }}</span>
           </div>
           <p class="small text-muted mb-3">Assign the admin default format (<strong>{{ default_media_label }}</strong>) to books where the media type is missing.</p>
-          <form method="post" action="{{ url_for('auth.settings') }}?section=server&panel=repairs" hx-post="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
+          <form method="post" action="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-post="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="hidden" name="action" value="backfill_media_type" />
             <button type="submit" class="btn btn-outline-primary w-100" {% if issue_stats.get('missing_media_type', 0) == 0 %}disabled{% endif %}>
@@ -43,7 +60,7 @@
             <span class="badge bg-{{ 'warning' if issue_stats.get('missing_locations', 0) else 'success' }}">{{ issue_stats.get('missing_locations', 0) }}</span>
           </div>
           <p class="small text-muted mb-3">Ensure every book is linked to the default location so shelves and filters work correctly.</p>
-          <form method="post" action="{{ url_for('auth.settings') }}?section=server&panel=repairs" hx-post="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
+          <form method="post" action="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-post="{{ url_for('auth.settings_server_partial', panel='repairs') }}" hx-target="#serverDynamicContainer" hx-swap="innerHTML">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="hidden" name="action" value="assign_default_location" />
             <button type="submit" class="btn btn-outline-warning w-100" {% if issue_stats.get('missing_locations', 0) == 0 %}disabled{% endif %}>
@@ -65,6 +82,47 @@
         </div>
       </div>
     </div>
+
+    <hr class="my-4" />
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <i class="bi bi-magic"></i>
+      <h5 class="mb-0">Import cleanup tools</h5>
+    </div>
+    <p class="text-muted small">These tools only fill blank fields. ISBNs are assigned only when the title and author produce a strong, unambiguous match; everything else is left for manual review.</p>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="border rounded h-100 p-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong><i class="bi bi-upc-scan me-1"></i>Assign missing ISBNs</strong>
+            <span class="badge bg-{{ 'warning' if issue_stats.get('missing_isbn', 0) else 'success' }}">{{ issue_stats.get('missing_isbn', 0) }} missing</span>
+          </div>
+          <p class="small text-muted">Search Google Books and OpenLibrary using each book’s title and contributors. Ambiguous or weak matches are not changed.</p>
+          <form method="post" action="{{ url_for('auth.settings_repairs_action', action='assign_missing_isbns') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="action" value="assign_missing_isbns" />
+            <button type="submit" class="btn btn-outline-primary w-100">
+              <i class="bi bi-search me-1"></i>Find and assign ISBNs
+            </button>
+          </form>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="border rounded h-100 p-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong><i class="bi bi-images me-1"></i>Fetch missing covers</strong>
+            <span class="badge bg-{{ 'warning' if issue_stats.get('missing_covers', 0) else 'success' }}">{{ issue_stats.get('missing_covers', 0) }} missing</span>
+          </div>
+          <p class="small text-muted">Fetch the best available cover from the stored ISBN, or fall back to a title/author search. Covers are cached locally when possible.</p>
+          <form method="post" action="{{ url_for('auth.settings_repairs_action', action='fetch_missing_covers') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="action" value="fetch_missing_covers" />
+            <button type="submit" class="btn btn-outline-primary w-100">
+              <i class="bi bi-cloud-arrow-down me-1"></i>Fetch and cache covers
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="card-footer small text-muted">Repairs run inside safe transactions and will log details in the application logs.</div>
 </div>
@@ -77,7 +135,9 @@
     {% set sample_definitions = [
       ('missing_media_type', 'Missing Media Type'),
       ('missing_locations', 'Missing Location'),
-      ('missing_authors', 'Missing Contributor')
+      ('missing_authors', 'Missing Contributor'),
+      ('missing_isbn', 'Missing ISBN'),
+      ('missing_covers', 'Missing Cover')
     ] %}
     {% for key, label in sample_definitions %}
       <div class="mb-4">

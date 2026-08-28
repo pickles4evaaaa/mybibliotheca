@@ -804,6 +804,58 @@ def settings_ai_ollama_models():
         current_app.logger.error(f"Ollama models fetch failed: {e}")
         return jsonify({'ok': False, 'error': 'Failed to fetch models'}), 400
 
+@auth.route('/settings/repairs/<string:action>', methods=['POST'])
+@login_required
+def settings_repairs_action(action: str):
+    """Queue a repair from a regular form POST and return to the Repairs panel.
+
+    The Repairs panel is injected with JavaScript, but the repair itself must
+    not depend on that JavaScript being available. This endpoint is the
+    reliable fallback for browsers with stale/blocked settings scripts.
+    """
+    if not current_user.is_admin:
+        abort(403)
+    action = (action or '').strip().lower()
+    current_app.logger.error(
+        '[REPAIRS][DIRECT_REQUEST] action=%s user=%s',
+        action or '<missing>', getattr(current_user, 'id', '<unknown>'),
+    )
+    if action not in {'assign_missing_isbns', 'fetch_missing_covers'}:
+        flash('Unknown repair action.', 'warning')
+        return redirect(url_for('auth.settings', section='server', panel='repairs'))
+    try:
+        from app.services.book_repair_service import start_repair_job
+        job = start_repair_job(action)
+        current_app.logger.error('[REPAIRS][QUEUED] action=%s job=%s', action, job.get('job_id'))
+        if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('HX-Request'):
+            return jsonify({'ok': True, 'job': job}), 202
+        label = 'ISBN assignment' if action == 'assign_missing_isbns' else 'cover fetching'
+        if job.get('status') in {'queued', 'running'}:
+            flash(f'{label.capitalize()} started. Progress will appear in the Repairs panel.', 'info')
+        else:
+            flash(f'A repair is already running. Progress will appear in the Repairs panel.', 'info')
+        return redirect(url_for(
+            'auth.settings', section='server', panel='repairs', repair_job=job.get('job_id')
+        ))
+    except Exception as err:
+        current_app.logger.error('[REPAIRS][DIRECT_FAILURE] action=%s error=%s', action, err, exc_info=True)
+        flash(f'Could not complete the {"ISBN" if action == "assign_missing_isbns" else "cover"} repair. Check logs for details.', 'error')
+    return redirect(url_for('auth.settings', section='server', panel='repairs'))
+
+
+@auth.route('/settings/repairs/jobs/<string:job_id>', methods=['GET'])
+@login_required
+def settings_repair_job_status(job_id: str):
+    """Return progress for a queued ISBN/cover repair."""
+    if not current_user.is_admin:
+        abort(403)
+    from app.services.book_repair_service import get_repair_job
+    job = get_repair_job(job_id)
+    if not job:
+        return jsonify({'ok': False, 'error': 'Repair job not found'}), 404
+    return jsonify({'ok': True, 'job': job})
+
+
 @auth.route('/settings/partial/server/<string:panel>', methods=['GET','POST'])
 @login_required
 def settings_server_partial(panel: str):
@@ -1913,6 +1965,13 @@ def settings_server_partial(panel: str):
         action_taken = (request.form.get('action') or '').strip().lower() if request.method == 'POST' else ''
         default_media = get_default_book_format()
 
+        if request.method == 'POST':
+            current_app.logger.error(
+                '[REPAIRS][REQUEST] action=%s user=%s ajax=%s',
+                action_taken or '<missing>', getattr(current_user, 'id', '<unknown>'),
+                bool(request.headers.get('X-Requested-With') or request.headers.get('HX-Request')),
+            )
+
         if request.method == 'POST' and action_taken:
             if action_taken == 'backfill_media_type':
                 try:
@@ -1971,6 +2030,15 @@ def settings_server_partial(panel: str):
                 except Exception as err:
                     current_app.logger.error(f"Repair action assign_default_location failed: {err}")
                     flash('Failed to assign default locations. Check logs for details.', 'error')
+            elif action_taken in {'assign_missing_isbns', 'fetch_missing_covers'}:
+                try:
+                    from app.services.book_repair_service import start_repair_job
+                    job = start_repair_job(action_taken)
+                    current_app.logger.error('[REPAIRS][QUEUED] action=%s job=%s', action_taken, job.get('job_id'))
+                    flash('Repair started. Progress will update in this panel.', 'info')
+                except Exception as err:
+                    current_app.logger.error(f"Repair action {action_taken} failed: {err}", exc_info=True)
+                    flash(f'Could not start the {"ISBN" if action_taken == "assign_missing_isbns" else "cover"} repair. Check logs for details.', 'error')
             else:
                 flash('Unknown repair action.', 'warning')
 
@@ -2007,6 +2075,16 @@ def settings_server_partial(panel: str):
                 "MATCH (b:Book) WHERE NOT (b)-[:STORED_AT]->(:Location) RETURN COUNT(b) AS total",
                 "MATCH (b:Book) WHERE NOT (b)-[:STORED_AT]->(:Location) RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
             ),
+            (
+                'missing_isbn',
+                "MATCH (b:Book) WHERE (b.isbn13 IS NULL OR b.isbn13 = '') AND (b.isbn10 IS NULL OR b.isbn10 = '') RETURN COUNT(b) AS total",
+                "MATCH (b:Book) WHERE (b.isbn13 IS NULL OR b.isbn13 = '') AND (b.isbn10 IS NULL OR b.isbn10 = '') RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
+            ),
+            (
+                'missing_covers',
+                "MATCH (b:Book) WHERE b.cover_url IS NULL OR b.cover_url = '' RETURN COUNT(b) AS total",
+                "MATCH (b:Book) WHERE b.cover_url IS NULL OR b.cover_url = '' RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
+            ),
         ]
 
         for key, count_query, sample_query in stats_config:
@@ -2042,6 +2120,12 @@ def settings_server_partial(panel: str):
 
         inline_messages = get_flashed_messages(with_categories=True)
 
+        try:
+            from app.services.book_repair_service import get_active_repair_job, get_repair_job
+            repair_job = get_repair_job(request.args.get('repair_job')) or get_active_repair_job()
+        except Exception:
+            repair_job = None
+
         return render_template(
             'settings/partials/server_repairs.html',
             issue_stats=issue_stats,
@@ -2049,7 +2133,8 @@ def settings_server_partial(panel: str):
             total_books=total_books,
             total_issues=total_issues,
             default_media=default_media,
-            inline_messages=inline_messages
+            inline_messages=inline_messages,
+            repair_job=repair_job,
         )
     if panel == 'jobs':
         # Admin view of all import/sync jobs across users
