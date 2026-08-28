@@ -4429,7 +4429,18 @@ def replace_cover(uid):
             except Exception as downgrade_err:
                 current_app.logger.debug(f"[COVER][REPLACE][DOWNGRADE_CHECK_FAIL] uid={uid} err={downgrade_err}")
 
-            book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=abs_cover_url)
+            updated_book = book_service.update_book_sync(uid, str(current_user.id), cover_url=abs_cover_url)
+            if updated_book is None:
+                # The image has already been cached; remove it if the database update fails.
+                try:
+                    cached_path = get_covers_dir() / new_cached_cover_url.split('/')[-1]
+                    if cached_path.exists():
+                        cached_path.unlink()
+                except Exception as cleanup_error:
+                    current_app.logger.debug(
+                        f"[COVER][REPLACE][CLEANUP_FAIL] uid={uid} err={cleanup_error}"
+                    )
+                return jsonify({'success': False, 'error': 'Failed to save the new cover'}), 500
             current_app.logger.info(f"[COVER][REPLACE] STORED uid={uid} cached={new_cached_cover_url}")
 
             try:
@@ -4511,8 +4522,19 @@ def upload_cover(uid):
         abs_cover_url = new_cover_url
         if new_cover_url.startswith('/'):
             abs_cover_url = request.host_url.rstrip('/') + new_cover_url
-        # Update the book with the new cover URL
-        book_service.update_book_sync(user_book.uid, str(current_user.id), cover_url=abs_cover_url)
+        # Update the book with the new cover URL. The route parameter is the
+        # canonical book ID; Book objects expose `id`, not the legacy `uid`.
+        updated_book = book_service.update_book_sync(uid, str(current_user.id), cover_url=abs_cover_url)
+        if updated_book is None:
+            try:
+                cached_path = get_covers_dir() / new_cover_url.split('/')[-1]
+                if cached_path.exists():
+                    cached_path.unlink()
+            except Exception as cleanup_error:
+                current_app.logger.debug(
+                    f"[COVER][UPLOAD][CLEANUP_FAIL] uid={uid} err={cleanup_error}"
+                )
+            return jsonify({'success': False, 'error': 'Failed to save the new cover'}), 500
         
         # Clean up old cover file if it exists and is a local file
         if old_cover_url and (old_cover_url.startswith('/covers/') or old_cover_url.startswith('/static/covers/')):
