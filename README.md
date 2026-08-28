@@ -30,37 +30,6 @@ Version 2.2.0 uses **KuzuDB** for graph-based library data and relationships. Ba
 - 📱 Responsive interface for desktop and mobile devices
 - 💾 Backup, restore, and data export tools
 
-## Docker quick start
-
-### Use the published image
-
-The stable release is published with both of these tags:
-
-- `pickles4evaaaa/mybibliotheca:latest`
-- `pickles4evaaaa/mybibliotheca:2.2.0`
-
-Use the pinned `2.2.0` tag for reproducible deployments.
-
-```bash
-# Create a data directory and an environment file
-mkdir -p data
-cp .env.example .env
-
-# Edit .env and set unique SECRET_KEY and SECURITY_PASSWORD_SALT values
-nano .env
-
-# Start MyBibliotheca using the stable release image
-docker run -d \
-  --name mybibliotheca \
-  --restart unless-stopped \
-  --env-file .env \
-  -p 5054:5054 \
-  -v "$(pwd)/data:/app/data" \
-  pickles4evaaaa/mybibliotheca:2.2.0
-```
-
-Open <http://localhost:5054> and complete the first-time setup to create your administrator account.
-
 ### Build from source with Docker Compose
 
 ```bash
