@@ -13,7 +13,6 @@ import importlib
 import json
 import os
 from pathlib import Path
-from typing import Iterable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +21,13 @@ BASELINE_ROUTE_COUNT = 331
 BASELINE_ROUTE_SHA256 = "4a248c61337b8581e3a2af82a7919879b297017b296083bbcbd43a481d79c95a"
 
 COMPATIBILITY_SYMBOLS = {
-    "app.routes.book_routes": ("book_bp", "fetch_book", "get_best_cover_for_book"),
+    "app.routes.book_routes": (
+        "book_bp",
+        "fetch_book",
+        "get_best_cover_for_book",
+        "library",
+        "search_book_details",
+    ),
     "app.routes.import_routes": (
         "import_bp",
         "detect_csv_format",
@@ -37,6 +42,14 @@ COMPATIBILITY_SYMBOLS = {
     "app.auth": ("auth", "settings_server_partial"),
     "app.onboarding_system": ("onboarding_bp", "execute_onboarding"),
     "app.routes.stats_routes": ("stats_bp", "library_journey"),
+    "app.routes.book_route_helpers": ("_normalize_personal_datetime", "_humanize_status"),
+    "app.routes.import_format_helpers": ("detect_csv_format", "auto_detect_fields"),
+    "app.routes.stats_helpers": ("_calculate_timeline_positions", "_build_network_data"),
+    "app.utils.legacy_book_search": ("search_book_by_title_author", "normalize_goodreads_value"),
+    "app.auth_settings": ("settings_server_partial",),
+    "app.onboarding_state": ("get_onboarding_data", "clear_onboarding_session"),
+    "app.utils.safe_kuzu_schema": ("initialize_schema",),
+    "app.infrastructure.kuzu_book_repository": ("KuzuBookRepository",),
 }
 
 
@@ -87,7 +100,18 @@ def check_disposable_database_boundary() -> dict[str, str]:
     if db_path == REAL_DATA_DIR or REAL_DATA_DIR in db_path.parents:
         raise AssertionError(f"refactor test database is inside real data directory: {db_path}")
 
-    return {"project_root": str(PROJECT_ROOT), "kuzu_db_path": str(db_path)}
+    data_value = os.environ.get("MYBIBLIOTHECA_REFACTOR_DATA")
+    if not data_value:
+        raise AssertionError("refactor checks require MYBIBLIOTHECA_REFACTOR_DATA")
+    data_path = Path(data_value).resolve()
+    if data_path == REAL_DATA_DIR or REAL_DATA_DIR in data_path.parents:
+        raise AssertionError(f"refactor test data directory is inside real data directory: {data_path}")
+
+    return {
+        "project_root": str(PROJECT_ROOT),
+        "kuzu_db_path": str(db_path),
+        "test_data_dir": str(data_path),
+    }
 
 
 def run_checks() -> dict[str, object]:
