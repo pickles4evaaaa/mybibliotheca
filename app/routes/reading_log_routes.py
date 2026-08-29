@@ -21,6 +21,23 @@ logger = logging.getLogger(__name__)
 reading_logs = Blueprint('reading_logs', __name__, url_prefix='/reading-logs')
 
 
+def _coerce_existing_timestamp(value: Any) -> datetime:
+    """Return a datetime for an existing Kuzu timestamp value.
+
+    Kuzu returns TIMESTAMP properties as ``datetime`` instances, while older
+    storage paths may provide ISO-formatted strings.  Only strings should be
+    passed to ``datetime.fromisoformat``.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            logger.warning("Invalid existing reading-log timestamp: %r", value)
+    return datetime.now(timezone.utc)
+
+
 @reading_logs.route('/create', methods=['POST'])
 @login_required
 def create_reading_log_entry():
@@ -502,7 +519,7 @@ def edit_reading_log(log_id):
             pages_read=pages_read,
             minutes_read=minutes_read,
             notes=notes or None,
-            created_at=datetime.fromisoformat(existing_log['created_at']) if existing_log.get('created_at') else datetime.now(timezone.utc),
+            created_at=_coerce_existing_timestamp(existing_log.get('created_at')),
             updated_at=datetime.now(timezone.utc)
         )
         

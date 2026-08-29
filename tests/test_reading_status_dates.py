@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
 from unittest.mock import patch
 
+from app.routes.reading_log_routes import _coerce_existing_timestamp
 from app.services.kuzu_service_facade import KuzuServiceFacade
 
 
@@ -63,3 +65,17 @@ def test_plan_to_read_keeps_existing_start_date_clearing_behavior():
             'start_date': None,
         },
     }
+
+
+def test_existing_reading_log_timestamp_preserves_kuzu_datetime():
+    value = datetime(2026, 2, 13, 3, 41, 48)
+
+    assert _coerce_existing_timestamp(value) is value
+
+
+def test_existing_reading_log_timestamp_parses_iso_string():
+    value = '2026-02-13T03:41:48+00:00'
+
+    assert _coerce_existing_timestamp(value) == datetime(
+        2026, 2, 13, 3, 41, 48, tzinfo=timezone.utc
+    )
