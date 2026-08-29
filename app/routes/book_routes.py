@@ -2657,6 +2657,18 @@ def view_book_enhanced(uid):
     # Get custom metadata for display
     global_metadata_display = []
     personal_metadata_display = []  # Initialize as empty list
+
+    # Reading history is loaded separately from the book record so the detail
+    # page can show it without changing any book or library data.
+    reading_logs = []
+    try:
+        book_id = getattr(user_book, 'id', None)
+        if book_id:
+            reading_logs = reading_log_service.get_book_reading_logs_sync(
+                str(current_user.id), str(book_id), limit=10
+            ) or []
+    except Exception as e:
+        current_app.logger.error(f"Error loading reading logs for book {uid}: {e}")
     
     # Get available custom fields for edit mode
     personal_fields = []
@@ -2721,7 +2733,8 @@ def view_book_enhanced(uid):
         'user_locations': user_locations,
         'personal_fields': personal_fields,
         'global_fields': global_fields,
-        'current_metadata': current_metadata
+        'current_metadata': current_metadata,
+        'reading_logs': reading_logs
     }
     
     # Get all persons for contributor search
@@ -2744,7 +2757,8 @@ def view_book_enhanced(uid):
         personal_fields=personal_fields,
         global_fields=global_fields,
         current_metadata=current_metadata,
-        all_persons=all_persons
+        all_persons=all_persons,
+        reading_logs=reading_logs
     )
 
 

@@ -728,6 +728,7 @@ def reading_logs():
         # Get pagination parameters
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 25))
+        book_id = request.args.get('book_id') or None
         
         # Validate per_page options
         valid_per_page = [10, 25, 50, 100]
@@ -736,7 +737,7 @@ def reading_logs():
         
         # Get paginated logs
         result = reading_log_service.get_user_reading_logs_paginated_sync(
-            str(current_user.id), page=page, per_page=per_page
+            str(current_user.id), page=page, per_page=per_page, book_id=book_id
         )
         
         # Get all-time stats for totals
@@ -746,7 +747,8 @@ def reading_logs():
                              logs=result['logs'],
                              pagination=result['pagination'],
                              all_time_stats=all_time_stats,
-                             valid_per_page=valid_per_page)
+                             valid_per_page=valid_per_page,
+                             book_id=book_id)
     
     except Exception as e:
         current_app.logger.error(f"Error loading reading logs: {e}")
@@ -754,7 +756,8 @@ def reading_logs():
                              logs=[], 
                              pagination={'page': 1, 'per_page': 25, 'total_count': 0, 'total_pages': 1, 'has_prev': False, 'has_next': False},
                              all_time_stats={'total_log_entries': 0, 'total_pages': 0, 'total_minutes': 0, 'distinct_books': 0, 'distinct_days': 0, 'total_time_formatted': '0m'},
-                             valid_per_page=[10, 25, 50, 100])
+                             valid_per_page=[10, 25, 50, 100],
+                             book_id=None)
 
 @stats_bp.route('/community_stats/recent-activity')
 @login_required
@@ -1007,7 +1010,6 @@ def reading_journey():
 
 
     
-
 
 
 

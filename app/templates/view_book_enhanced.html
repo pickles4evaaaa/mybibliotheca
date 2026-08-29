@@ -79,7 +79,9 @@
                         </span>
                     {% endif %}
                 </div>
-                {# Progress bar omitted to avoid inline CSS parsing issues in some environments #}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('stats.reading_logs', book_id=book.id) }}">
+                    <i class="bi bi-journal-text me-1"></i>View Reading Log
+                </a>
             </div>
             <!-- 📇 BOOK CARD SECTION - Essential overview information -->
             <div class="card shadow-sm mb-4 book-card">
@@ -1306,6 +1308,46 @@
                                     <small>Click the edit button above to add your thoughts, rating, and reading progress.</small>
                                 </div>
                                 {% endif %}
+                            </div>
+
+                            <!-- Reading Log -->
+                            <div class="card shadow-sm mb-4" id="reading-log">
+                                <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                    <h2 class="h5 mb-0">
+                                        <i class="bi bi-journal-text me-2"></i>Reading Log
+                                    </h2>
+                                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('stats.reading_logs', book_id=book.id) }}">
+                                        <i class="bi bi-list-ul me-1"></i>View Reading Log
+                                    </a>
+                                </div>
+                                <div class="card-body">
+                                    {% if reading_logs %}
+                                    <div class="table-responsive">
+                                        <table class="table table-sm align-middle mb-0">
+                                            <thead>
+                                                <tr>
+                                                    <th scope="col">Date</th>
+                                                    <th scope="col">Pages</th>
+                                                    <th scope="col">Time</th>
+                                                    <th scope="col">Notes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for log in reading_logs %}
+                                                <tr>
+                                                    <td class="text-nowrap">{{ log.date.strftime('%Y-%m-%d') if log.date else 'N/A' }}</td>
+                                                    <td>{{ log.pages_read or 0 }}</td>
+                                                    <td>{{ log.minutes_read or 0 }} min</td>
+                                                    <td>{{ log.notes or '' }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {% else %}
+                                    <p class="text-muted mb-0">No reading sessions have been logged for this book yet.</p>
+                                    {% endif %}
+                                </div>
                             </div>
                             
                             <!-- Personal Notes Edit Mode (Hidden by default) -->

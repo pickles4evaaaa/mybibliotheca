@@ -4,7 +4,7 @@
 <!-- Header -->
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="h3 mb-0">
-        <i class="bi bi-journal-text me-2"></i>My Reading Logs
+        <i class="bi bi-journal-text me-2"></i>{% if book_id %}Book Reading Log{% else %}My Reading Logs{% endif %}
     </h2>
     <div>
         <button class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#quickLogModal">
@@ -15,6 +15,13 @@
         </a>
     </div>
 </div>
+
+{% if book_id %}
+<div class="alert alert-info d-flex justify-content-between align-items-center gap-2">
+    <span><i class="bi bi-funnel me-2"></i>Showing reading sessions for this book.</span>
+    <a href="{{ url_for('stats.reading_logs') }}" class="btn btn-sm btn-outline-secondary">View All Logs</a>
+</div>
+{% endif %}
 
 <!-- Quick Log Modal -->
 <div class="modal fade" id="quickLogModal" tabindex="-1" aria-labelledby="quickLogModalLabel" aria-hidden="true">
@@ -410,7 +417,9 @@ function showAlert(message, type) {
 
 function loadPage(page) {
     const perPage = document.getElementById('per-page-select').value;
-    const url = `/stats/reading-logs?page=${page}&per_page=${perPage}`;
+    const bookFilter = {{ book_id|tojson }};
+    const bookQuery = bookFilter ? `&book_id=${encodeURIComponent(bookFilter)}` : '';
+    const url = `/stats/reading-logs?page=${page}&per_page=${perPage}${bookQuery}`;
     
     const content = document.getElementById('reading-logs-detail-content');
     content.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';

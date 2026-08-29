@@ -191,6 +191,35 @@ class KuzuReadingLogService:
             logger.error(f"Error getting user reading logs: {e}")
             return []
 
+    def get_book_reading_logs_sync(self, user_id: str, book_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get a user's reading logs for one book, newest first.
+
+        The user-to-log relationship is part of the match so a book detail page
+        cannot expose another user's reading history. This is a read-only query.
+        """
+        try:
+            query = """
+            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book {id: $book_id})
+            RETURN rl
+            ORDER BY rl.date DESC, rl.created_at DESC
+            LIMIT $limit
+            """
+            results = safe_execute_kuzu_query(query, {
+                "user_id": user_id,
+                "book_id": book_id,
+                "limit": max(1, limit)
+            })
+
+            logs = []
+            for result in _convert_query_result_to_list(results):
+                log_data = result.get('result') or result.get('col_0')
+                if log_data:
+                    logs.append(dict(log_data))
+            return logs
+        except Exception as e:
+            logger.error(f"Error getting reading logs for book {book_id}: {e}")
+            return []
+
     def get_user_reading_dates_sync(self, user_id: str, days_back: Optional[int] = None) -> List[date]:
         """Return unique reading-log dates for a user ordered from most recent to oldest."""
         try:
@@ -770,7 +799,8 @@ class KuzuReadingLogService:
                 'total_time_formatted': '0m'
             }
 
-    def get_user_reading_logs_paginated_sync(self, user_id: str, page: int = 1, per_page: int = 25) -> Dict[str, Any]:
+    def get_user_reading_logs_paginated_sync(self, user_id: str, page: int = 1, per_page: int = 25,
+                                             book_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get paginated reading logs for a user.
         
@@ -783,13 +813,22 @@ class KuzuReadingLogService:
             Dictionary with logs, pagination info, and totals
         """
         try:
-            # First get total count
-            count_query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+            # Keep the original query path when no book filter is requested.
+            # When present, the FOR_BOOK relationship scopes both the count and
+            # page contents to this user's logs for the selected book.
+            if book_id:
+                match_clause = "MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book {id: $book_id})"
+                query_params = {"user_id": user_id, "book_id": book_id}
+            else:
+                match_clause = "MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)"
+                query_params = {"user_id": user_id}
+
+            count_query = f"""
+            {match_clause}
             RETURN COUNT(rl) as total_count
             """
-            
-            count_result = safe_execute_kuzu_query(count_query, {"user_id": user_id})
+
+            count_result = safe_execute_kuzu_query(count_query, query_params)
             count_list = _convert_query_result_to_list(count_result)
             total_count = count_list[0].get('col_0', 0) if count_list else 0
             
@@ -797,8 +836,8 @@ class KuzuReadingLogService:
             offset = (page - 1) * per_page
             
             # Get paginated logs with optional book details
-            logs_query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+            logs_query = f"""
+            {match_clause}
             OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
             RETURN rl, b
             ORDER BY rl.date DESC, rl.created_at DESC
@@ -806,11 +845,8 @@ class KuzuReadingLogService:
             LIMIT $limit
             """
             
-            logs_result = safe_execute_kuzu_query(logs_query, {
-                "user_id": user_id,
-                "offset": offset,
-                "limit": per_page
-            })
+            query_params.update({"offset": offset, "limit": per_page})
+            logs_result = safe_execute_kuzu_query(logs_query, query_params)
             
             logs_list = _convert_query_result_to_list(logs_result)
             logs = []
