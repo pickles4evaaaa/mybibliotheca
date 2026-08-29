@@ -263,7 +263,10 @@ class KuzuServiceFacade:
             else:
                 if not user_set_finish and not user_cleared_finish and existing_finish is not None:
                     custom_updates['finish_date'] = None
-                if status_norm not in ('reading', 'currently_reading', 'in_progress'):
+                # On Hold means the user has started the book but paused it. Keep
+                # the historical start date so it remains distinct from Plan to
+                # Read. Other non-active statuses retain the existing behavior.
+                if status_norm not in ('reading', 'currently_reading', 'in_progress', 'on_hold', 'paused'):
                     if not user_set_start and not user_cleared_start and existing_start is not None:
                         custom_updates['start_date'] = None
                 elif status_norm in ('reading', 'currently_reading', 'in_progress'):
