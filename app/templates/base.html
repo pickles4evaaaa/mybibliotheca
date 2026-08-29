@@ -1141,7 +1141,9 @@
 
   .overlay {
     position: relative;
-    z-index: 1;
+    /* Keep the shell out of its own stacking context so Bootstrap modals
+       can render above the body-level modal backdrop on every page. */
+    z-index: auto;
     min-height: calc(100vh - (clamp(12px, 2vw, 32px) * 2));
     display: flex;
     flex-direction: column;
