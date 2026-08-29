@@ -20,6 +20,7 @@ from .reading_log_routes import reading_logs
 from .genre_taxonomy_routes import genre_taxonomy_bp
 from .api_routes import api_bp
 from .series_routes import series_bp
+from .repair_routes import repairs_bp
 
 # Create a main blueprint that can be registered with the app
 main_bp = Blueprint('main', __name__)
@@ -375,6 +376,9 @@ def register_blueprints(app):
     app.register_blueprint(genres_bp, url_prefix='/genres')
     app.register_blueprint(genres_bp, url_prefix='/categories', name='categories')
     app.register_blueprint(reading_logs, url_prefix='/reading-logs')
+    # Keep repair endpoints under /auth while separating them from the large
+    # authentication/settings module.
+    app.register_blueprint(repairs_bp, url_prefix='/auth')
     # Register admin genre taxonomy routes
     app.register_blueprint(genre_taxonomy_bp, url_prefix='/admin/genre-taxonomy')
     
@@ -388,4 +392,4 @@ def register_blueprints(app):
     # Or add URL rules to the main blueprint for backward compatibility
 
 # For backward compatibility, we can also export the blueprints
-__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'reading_logs', 'register_blueprints']
+__all__ = ['book_bp', 'people_bp', 'import_bp', 'genres_bp', 'main_bp', 'reading_logs', 'repairs_bp', 'register_blueprints']

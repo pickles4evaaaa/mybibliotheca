@@ -804,58 +804,6 @@ def settings_ai_ollama_models():
         current_app.logger.error(f"Ollama models fetch failed: {e}")
         return jsonify({'ok': False, 'error': 'Failed to fetch models'}), 400
 
-@auth.route('/settings/repairs/<string:action>', methods=['POST'])
-@login_required
-def settings_repairs_action(action: str):
-    """Queue a repair from a regular form POST and return to the Repairs panel.
-
-    The Repairs panel is injected with JavaScript, but the repair itself must
-    not depend on that JavaScript being available. This endpoint is the
-    reliable fallback for browsers with stale/blocked settings scripts.
-    """
-    if not current_user.is_admin:
-        abort(403)
-    action = (action or '').strip().lower()
-    current_app.logger.error(
-        '[REPAIRS][DIRECT_REQUEST] action=%s user=%s',
-        action or '<missing>', getattr(current_user, 'id', '<unknown>'),
-    )
-    if action not in {'assign_missing_isbns', 'fetch_missing_covers'}:
-        flash('Unknown repair action.', 'warning')
-        return redirect(url_for('auth.settings', section='server', panel='repairs'))
-    try:
-        from app.services.book_repair_service import start_repair_job
-        job = start_repair_job(action)
-        current_app.logger.error('[REPAIRS][QUEUED] action=%s job=%s', action, job.get('job_id'))
-        if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.headers.get('HX-Request'):
-            return jsonify({'ok': True, 'job': job}), 202
-        label = 'ISBN assignment' if action == 'assign_missing_isbns' else 'cover fetching'
-        if job.get('status') in {'queued', 'running'}:
-            flash(f'{label.capitalize()} started. Progress will appear in the Repairs panel.', 'info')
-        else:
-            flash(f'A repair is already running. Progress will appear in the Repairs panel.', 'info')
-        return redirect(url_for(
-            'auth.settings', section='server', panel='repairs', repair_job=job.get('job_id')
-        ))
-    except Exception as err:
-        current_app.logger.error('[REPAIRS][DIRECT_FAILURE] action=%s error=%s', action, err, exc_info=True)
-        flash(f'Could not complete the {"ISBN" if action == "assign_missing_isbns" else "cover"} repair. Check logs for details.', 'error')
-    return redirect(url_for('auth.settings', section='server', panel='repairs'))
-
-
-@auth.route('/settings/repairs/jobs/<string:job_id>', methods=['GET'])
-@login_required
-def settings_repair_job_status(job_id: str):
-    """Return progress for a queued ISBN/cover repair."""
-    if not current_user.is_admin:
-        abort(403)
-    from app.services.book_repair_service import get_repair_job
-    job = get_repair_job(job_id)
-    if not job:
-        return jsonify({'ok': False, 'error': 'Repair job not found'}), 404
-    return jsonify({'ok': True, 'job': job})
-
-
 @auth.route('/settings/partial/server/<string:panel>', methods=['GET','POST'])
 @login_required
 def settings_server_partial(panel: str):

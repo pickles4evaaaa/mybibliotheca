@@ -23,7 +23,7 @@
       <div id="repairJobStatus"
            class="alert {{ 'alert-success' if repair_status == 'completed' else ('alert-danger' if repair_status == 'failed' else 'alert-info') }} py-2"
            data-repair-job-status="1"
-           data-status-url="{{ url_for('auth.settings_repair_job_status', job_id=repair_job.job_id) }}">
+           data-status-url="{{ url_for('repairs.repair_job_status', job_id=repair_job.job_id) }}">
         <div class="d-flex justify-content-between align-items-center gap-2">
           <strong><i class="bi bi-hourglass-split me-1"></i>{{ repair_job.phase or 'Repair queued' }}</strong>
           <span class="repair-job-count">{{ repair_job.processed or 0 }}/{{ repair_job.total or '…' }}</span>
@@ -97,7 +97,7 @@
             <span class="badge bg-{{ 'warning' if issue_stats.get('missing_isbn', 0) else 'success' }}">{{ issue_stats.get('missing_isbn', 0) }} missing</span>
           </div>
           <p class="small text-muted">Search Google Books and OpenLibrary using each book’s title and contributors. Ambiguous or weak matches are not changed.</p>
-          <form method="post" action="{{ url_for('auth.settings_repairs_action', action='assign_missing_isbns') }}">
+          <form method="post" action="{{ url_for('repairs.start_repair', action='assign_missing_isbns') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="hidden" name="action" value="assign_missing_isbns" />
             <button type="submit" class="btn btn-outline-primary w-100">
@@ -113,7 +113,7 @@
             <span class="badge bg-{{ 'warning' if issue_stats.get('missing_covers', 0) else 'success' }}">{{ issue_stats.get('missing_covers', 0) }} missing</span>
           </div>
           <p class="small text-muted">Fetch the best available cover from the stored ISBN, or fall back to a title/author search. Covers are cached locally when possible.</p>
-          <form method="post" action="{{ url_for('auth.settings_repairs_action', action='fetch_missing_covers') }}">
+          <form method="post" action="{{ url_for('repairs.start_repair', action='fetch_missing_covers') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
             <input type="hidden" name="action" value="fetch_missing_covers" />
             <button type="submit" class="btn btn-outline-primary w-100">

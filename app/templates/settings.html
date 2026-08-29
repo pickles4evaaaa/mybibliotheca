@@ -183,6 +183,7 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/settings-repairs.js') }}"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const tiles = document.querySelectorAll('.settings-tile');
@@ -1067,54 +1068,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         serverContainer._userEditDelegationAttached = true;
     }
-        window.__initRepairJobProgress = function(root){
-                const status = root && root.querySelector('[data-repair-job-status]');
-                if(!status) return;
-                if(window.__repairJobPollTimer){ clearInterval(window.__repairJobPollTimer); }
-                const statusUrl = status.getAttribute('data-status-url');
-                if(!statusUrl) return;
-                const countEl = status.querySelector('.repair-job-count');
-                const detailEl = status.querySelector('.repair-job-detail');
-                const progressEl = status.querySelector('.repair-job-progress');
-                const update = (job) => {
-                        const processed = Number(job.processed || 0);
-                        const total = Number(job.total || 0);
-                        const updated = Number(job.updated || 0);
-                        const skipped = Number(job.skipped || 0);
-                        const failed = Number(job.failed || 0);
-                        const state = String(job.status || '').toLowerCase();
-                        const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
-                        if(countEl) countEl.textContent = `${processed}/${total || '…'}`;
-                        if(progressEl){ progressEl.style.width = `${pct}%`; progressEl.setAttribute('aria-valuenow', pct); }
-                        const phase = job.phase || (state === 'queued' ? 'Queued' : 'Working');
-                        if(state === 'completed'){
-                                status.classList.remove('alert-info','alert-danger'); status.classList.add('alert-success');
-                                status.querySelector('strong').innerHTML = '<i class="bi bi-check-circle me-1"></i>Repair complete';
-                                if(detailEl) detailEl.textContent = `${updated} updated, ${skipped} left for manual review${failed ? `, ${failed} failed` : ''}.`;
-                        } else if(state === 'failed'){
-                                status.classList.remove('alert-info','alert-success'); status.classList.add('alert-danger');
-                                status.querySelector('strong').innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Repair stopped';
-                                if(detailEl) detailEl.textContent = job.error || 'The repair stopped unexpectedly. Check the application logs.';
-                        } else {
-                                if(status.querySelector('strong')) status.querySelector('strong').innerHTML = `<i class="bi bi-hourglass-split me-1"></i>${phase}`;
-                                if(detailEl) detailEl.textContent = total ? 'Working in the background. You can leave this page open or come back later.' : 'Preparing the repair and counting affected books…';
-                        }
-                        return state;
-                };
-                const poll = async () => {
-                        try{
-                                const response = await fetch(statusUrl, { credentials:'same-origin', cache:'no-store' });
-                                if(!response.ok) return;
-                                const payload = await response.json();
-                                if(!payload.ok || !payload.job) return;
-                                const state = update(payload.job);
-                                if(state === 'completed' || state === 'failed') clearInterval(window.__repairJobPollTimer);
-                        }catch(err){ console.debug('Repair progress request failed', err); }
-                };
-                poll();
-                window.__repairJobPollTimer = setInterval(poll, 2000);
-        };
-
         function loadServerPanel(panel){
                 if(!serverContainer) return;
                 let endpoint;
