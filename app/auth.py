@@ -584,12 +584,14 @@ def settings_privacy_partial():
             # Apply changes
             setattr(user_obj, 'share_current_reading', p_form.share_current_reading.data)
             setattr(user_obj, 'share_reading_activity', p_form.share_reading_activity.data)
+            setattr(user_obj, 'share_library', p_form.share_library.data)
             updated = user_service.update_user_sync(user_obj)  # type: ignore
             if updated:
                 # Mirror onto session's current_user for immediate reflection
                 try:
                     current_user.share_current_reading = updated.share_current_reading  # type: ignore
                     current_user.share_reading_activity = updated.share_reading_activity  # type: ignore
+                    current_user.share_library = updated.share_library  # type: ignore
                 except Exception:
                     pass
                 flash('Privacy settings updated.', 'success')
@@ -605,6 +607,7 @@ def settings_privacy_partial():
         try:
             p_form.share_current_reading.data = getattr(current_user, 'share_current_reading', False)
             p_form.share_reading_activity.data = getattr(current_user, 'share_reading_activity', False)
+            p_form.share_library.data = getattr(current_user, 'share_library', False)
         except Exception:
             pass
     return render_template('settings/partials/privacy_form.html', form=p_form, streak_form=streak_form)

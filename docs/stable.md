@@ -176,6 +176,11 @@ Granular sharing settings per user:
 * Community features with privacy respect
 * Public library views with privacy filters
 
+These settings are available from **Settings → Privacy**. Library sharing is
+off by default. Public library views include only books from active users who
+enable **Share library contents**; current-reading and reading-activity details
+remain controlled by their respective sharing settings.
+
 ### Advanced Features
 
 #### 📅 Reading Analytics
@@ -258,7 +263,7 @@ CREATE TABLE user (
     last_login DATETIME,
     share_current_reading BOOLEAN DEFAULT TRUE,
     share_reading_activity BOOLEAN DEFAULT TRUE,
-    share_library BOOLEAN DEFAULT TRUE,
+    share_library BOOLEAN DEFAULT FALSE,
     password_must_change BOOLEAN DEFAULT FALSE,
     password_changed_at DATETIME,
     reading_streak_offset INTEGER DEFAULT 0

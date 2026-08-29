@@ -107,9 +107,9 @@
             {{ book.author }}
           </div>
           <div class="book-badges">
-            {% if book.want_to_read %}<span class="badge bg-info">Plan to Read</span>{% endif %}
-            {% if not book.finish_date and not book.want_to_read and not book.library_only %}<span class="badge bg-warning">Currently Reading</span>{% endif %}
-            {% if book.finish_date %}<span class="badge bg-success">Finished</span>{% endif %}
+            {% if book.public_status == 'want_to_read' %}<span class="badge bg-info">Plan to Read</span>{% endif %}
+            {% if book.public_status == 'currently_reading' %}<span class="badge bg-warning">Currently Reading</span>{% endif %}
+            {% if book.public_status == 'read' %}<span class="badge bg-success">Finished</span>{% endif %}
             {% if book.library_only %}<span class="badge bg-secondary">Library Only</span>{% endif %}
           </div>
           <div style="font-size:0.85em; color:#888; margin-bottom:8px;">ISBN: {{ book.isbn }}</div>

@@ -1777,18 +1777,104 @@ def update_status(uid):
 
 from .library_route import library as _library
 
+
+def _public_book_value(book: Any, key: str, default: Any = None) -> Any:
+    """Read a book field from either the flat overlay dict or a domain object."""
+    if isinstance(book, dict):
+        return book.get(key, default)
+    return getattr(book, key, default)
+
+
+def _public_library_books(users: List[Any], books_by_user: Dict[str, List[Any]], filter_status: str) -> List[Dict[str, Any]]:
+    """Build a privacy-filtered, de-duplicated public library view.
+
+    Books are global in the Kuzu model, while reading status is user-specific.
+    A book is listed once when at least one active user has enabled library
+    sharing. Personal status is included only when the relevant activity
+    sharing setting also permits it.
+    """
+    allowed_filters = {'all', 'currently_reading', 'want_to_read'}
+    filter_status = filter_status if filter_status in allowed_filters else 'all'
+    books: Dict[str, Dict[str, Any]] = {}
+    status_priority = {'currently_reading': 4, 'read': 3, 'want_to_read': 2, 'library_only': 1, None: 0}
+
+    for user in users:
+        if not getattr(user, 'is_active', True) or not getattr(user, 'share_library', False):
+            continue
+
+        user_id = str(getattr(user, 'id', ''))
+        activity_shared = bool(getattr(user, 'share_reading_activity', False))
+        current_shared = bool(getattr(user, 'share_current_reading', False))
+
+        for raw_book in books_by_user.get(user_id, []) or []:
+            title = _public_book_value(raw_book, 'title', '') or ''
+            book_id = _public_book_value(raw_book, 'uid') or _public_book_value(raw_book, 'id')
+            isbn = (_public_book_value(raw_book, 'isbn') or
+                    _public_book_value(raw_book, 'isbn13') or
+                    _public_book_value(raw_book, 'isbn10'))
+            dedupe_key = str(book_id or isbn or title).strip().casefold()
+            if not dedupe_key:
+                continue
+
+            raw_status = _public_book_value(raw_book, 'reading_status')
+            normalized_status = _normalize_reading_status(raw_status) if isinstance(raw_status, str) else None
+            if normalized_status == 'reading' and not (activity_shared and current_shared):
+                visible_status = None
+            elif normalized_status in {'read', 'plan_to_read', 'on_hold', 'did_not_finish'} and not activity_shared:
+                visible_status = None
+            elif normalized_status == 'reading':
+                visible_status = 'currently_reading'
+            elif normalized_status == 'plan_to_read':
+                visible_status = 'want_to_read'
+            else:
+                visible_status = normalized_status if activity_shared else None
+
+            if filter_status == 'currently_reading' and visible_status != 'currently_reading':
+                continue
+            if filter_status == 'want_to_read' and visible_status != 'want_to_read':
+                continue
+
+            public_book = {
+                'uid': book_id,
+                'title': title,
+                'author': _public_book_value(raw_book, 'author', '') or _public_book_value(raw_book, 'authors_text', ''),
+                'cover_url': _public_book_value(raw_book, 'cover_url'),
+                'isbn': isbn or '',
+                'library_only': bool(_public_book_value(raw_book, 'library_only', False)),
+                'public_status': visible_status,
+                'want_to_read': visible_status == 'want_to_read',
+                'finish_date': _public_book_value(raw_book, 'finish_date') if visible_status == 'read' else None,
+            }
+
+            existing = books.get(dedupe_key)
+            if existing is None or status_priority.get(public_book['public_status'], 0) > status_priority.get(existing['public_status'], 0):
+                books[dedupe_key] = public_book
+
+    return list(books.values())
+
 @book_bp.route('/library')
 def library():
     return _library()
 
 @book_bp.route('/public-library')
 def public_library():
-    filter_status = request.args.get('filter', 'all')
-    
-    # Use Kuzu service to get all books from all users
-    # TODO: Implement public library functionality in Kuzu service
-    # For now, return empty list
-    books = []
+    filter_status = request.args.get('filter', 'all').strip().lower()
+
+    # Library contents are opt-in per user. Use the flat overlay so the
+    # universal book metadata and that user's reading status are available
+    # without exposing private notes, ratings, or reviews.
+    books_by_user: Dict[str, List[Any]] = {}
+    try:
+        users = user_service.get_all_users_sync()
+        for user in users:
+            if not getattr(user, 'is_active', True) or not getattr(user, 'share_library', False):
+                continue
+            user_id = str(getattr(user, 'id', ''))
+            books_by_user[user_id] = book_service.get_all_books_with_user_overlay_flat_sync(user_id)
+        books = _public_library_books(users, books_by_user, filter_status)
+    except Exception as exc:
+        current_app.logger.error(f"Error loading public library: {exc}")
+        books = []
     
     return render_template('public_library.html', books=books, filter_status=filter_status)
 

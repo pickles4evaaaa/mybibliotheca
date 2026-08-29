@@ -128,11 +128,49 @@ class KuzuReadingLogService:
             limit: Maximum number of logs to return
             
         Returns:
-            List of reading log dictionaries (currently empty as feature is not implemented)
+            List of recent reading logs from users who opted into activity sharing.
         """
-        # TODO: Implement actual reading log retrieval from Kuzu
-        logger.debug(f"Reading log system not fully implemented - returning empty list for recent shared logs")
-        return []
+        try:
+            query = """
+            MATCH (u:User)-[:LOGGED]->(rl:ReadingLog)
+            WHERE u.share_reading_activity = true
+              AND rl.date >= $cutoff_date
+            OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
+            OPTIONAL MATCH (p:Person)-[:AUTHORED]->(b)
+            WITH u, rl, b, COLLECT(DISTINCT p.name) AS author_names
+            RETURN u, rl, b, author_names
+            ORDER BY rl.date DESC, rl.created_at DESC
+            LIMIT $limit
+            """
+            results = _convert_query_result_to_list(safe_execute_kuzu_query(query, {
+                'cutoff_date': date.today() - timedelta(days=max(0, days_back)),
+                'limit': max(1, limit),
+            }))
+
+            logs = []
+            for result in results:
+                user_data = result.get('col_0')
+                log_data = result.get('col_1')
+                book_data = result.get('col_2')
+                if not user_data or not log_data:
+                    continue
+
+                log = dict(log_data)
+                log['user'] = dict(user_data)
+                if book_data:
+                    book = dict(book_data)
+                    authors = [name for name in (result.get('col_3') or []) if name]
+                    book['author'] = ', '.join(authors)
+                    log['book'] = book
+                else:
+                    # The community template expects a book; bookless logs are
+                    # valid personal entries but are not useful in this feed.
+                    continue
+                logs.append(log)
+            return logs
+        except Exception as e:
+            logger.error(f"Error getting recent shared logs: {e}")
+            return []
     
     def get_user_reading_logs_sync(self, user_id: str, days_back: int = 30, limit: Optional[int] = 100) -> List[Dict[str, Any]]:
         """

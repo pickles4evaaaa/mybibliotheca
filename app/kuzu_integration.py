@@ -258,7 +258,14 @@ class KuzuIntegrationService:
                 'timezone': user.get('timezone'),
                 'is_admin': user.get('is_admin'),
                 'is_active': user.get('is_active'),
-                'created_at': user.get('created_at')
+                'created_at': user.get('created_at'),
+                # Keep privacy values at this integration boundary. Omitting
+                # them causes the domain service to silently reconstruct the
+                # defaults after every save/reload.
+                'share_current_reading': user.get('share_current_reading') if user.get('share_current_reading') is not None else True,
+                'share_reading_activity': user.get('share_reading_activity') if user.get('share_reading_activity') is not None else True,
+                'share_library': user.get('share_library') if user.get('share_library') is not None else False,
+                'reading_streak_offset': user.get('reading_streak_offset') if user.get('reading_streak_offset') is not None else 0,
             }
         else:
             return {
@@ -271,7 +278,11 @@ class KuzuIntegrationService:
                 'timezone': getattr(user, 'timezone', None),
                 'is_admin': getattr(user, 'is_admin', None),
                 'is_active': getattr(user, 'is_active', None),
-                'created_at': getattr(user, 'created_at', None)
+                'created_at': getattr(user, 'created_at', None),
+                'share_current_reading': getattr(user, 'share_current_reading', True),
+                'share_reading_activity': getattr(user, 'share_reading_activity', True),
+                'share_library': getattr(user, 'share_library', False),
+                'reading_streak_offset': getattr(user, 'reading_streak_offset', 0),
             }
     
     async def get_user_count(self) -> int:
