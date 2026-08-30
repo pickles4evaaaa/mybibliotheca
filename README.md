@@ -47,7 +47,7 @@ The Compose configuration stores application data in `./data` and configures Kuz
 
 ## Documentation
 
-Full installation, configuration, administration, backup, and troubleshooting guides are available at [mybibliotheca.org](https://mybibliotheca.org).
+Full installation, configuration, administration, backup, and troubleshooting guides are available at [docs.mybibliotheca.org](https://docs.mybibliotheca.org).
 
 ## Project structure
 
@@ -87,7 +87,7 @@ Bug reports, documentation improvements, and pull requests are welcome on [GitHu
 
 ## Getting help
 
-- Check the [documentation](https://mybibliotheca.org)
+- Check the [documentation](https://docs.mybibliotheca.org)
 - Review container logs with `docker compose logs -f`
 - Open an issue on [GitHub](https://github.com/pickles4evaaaa/mybibliotheca/issues)
 - Join the [Discord community](https://discord.gg/Hc8C5eRm7Q)
