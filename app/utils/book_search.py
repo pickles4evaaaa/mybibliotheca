@@ -8,6 +8,8 @@ with intelligent ranking and deduplication of results.
 import requests
 
 from app.utils.adaptive_http import adaptive_get
+from app.utils.google_books import google_books_url
+from app.utils.http_utils import redact_url
 from difflib import SequenceMatcher
 from typing import List, Dict, Optional, Any
 import re
@@ -252,14 +254,11 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
         return []
     
     # Prepare search query
-    q_title = quote_plus(title)
+    q = f"intitle:{title}"
     if author and isinstance(author, str) and author.strip():
-        q_author = quote_plus(author.strip())
-        q = f"intitle:{q_title}+inauthor:{q_author}"
-    else:
-        q = f"intitle:{q_title}"
-    url = f"https://www.googleapis.com/books/v1/volumes?q={q}&maxResults={max_results}"
-    
+        q += f" inauthor:{author.strip()}"
+    url = google_books_url(q=q, maxResults=max_results)
+
     try:
         response = adaptive_get('google_books', url, timeout=(_GOOGLE_CONNECT_TIMEOUT, _GOOGLE_READ_TIMEOUT))
         response.raise_for_status()
@@ -392,10 +391,10 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
         return results
         
     except requests.exceptions.RequestException as e:
-        print(f"❌ [GOOGLE_BOOKS_SEARCH] Request error: {e}")
+        print(f"❌ [GOOGLE_BOOKS_SEARCH] Request error: {redact_url(str(e))}")
         return []
     except Exception as e:
-        print(f"❌ [GOOGLE_BOOKS_SEARCH] Unexpected error: {e}")
+        print(f"❌ [GOOGLE_BOOKS_SEARCH] Unexpected error: {redact_url(str(e))}")
         return []
 
 

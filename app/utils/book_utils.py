@@ -1366,6 +1366,9 @@ import requests
 import os
 from flask import current_app
 
+from .google_books import google_books_url
+from .http_utils import redact_url
+
 # Quiet logging by default; enable with VERBOSE=true or IMPORT_VERBOSE=true
 _IMPORT_VERBOSE = (
     (os.getenv('VERBOSE') or 'false').lower() == 'true'
@@ -1822,8 +1825,8 @@ def get_google_books_cover(isbn, fetch_title_author=False):
         print(f"❌ [GOOGLE_BOOKS] No ISBN provided")
         return None
         
-    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
-    print(f"📚 [GOOGLE_BOOKS] Request URL: {url}")
+    url = google_books_url(q=f"isbn:{isbn}")
+    print(f"📚 [GOOGLE_BOOKS] Request URL: {redact_url(url)}")
     
     # Cached metadata short‑circuit
     cache_key = ('google_isbn', isbn, fetch_title_author)
@@ -1966,10 +1969,10 @@ def get_google_books_cover(isbn, fetch_title_author=False):
             return None
             
     except requests.exceptions.RequestException as e:
-        print(f"❌ [GOOGLE_BOOKS] Request error for ISBN {isbn}: {e}")
+        print(f"❌ [GOOGLE_BOOKS] Request error for ISBN {isbn}: {redact_url(str(e))}")
         return None
     except Exception as e:
-        print(f"❌ [GOOGLE_BOOKS] Unexpected error for ISBN {isbn}: {e}")
+        print(f"❌ [GOOGLE_BOOKS] Unexpected error for ISBN {isbn}: {redact_url(str(e))}")
         return None
 
 def generate_month_review_image(books, month, year):

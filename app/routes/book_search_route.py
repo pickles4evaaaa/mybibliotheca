@@ -48,6 +48,8 @@ def search_book_details():
 
         import concurrent.futures
         import requests as _req
+        from app.utils.google_books import google_books_url
+        from app.utils.http_utils import redact_url
 
         def _fetch_openlibrary():
             """Fetch search results from OpenLibrary with fast-path strategy.
@@ -145,11 +147,10 @@ def search_book_details():
                         gb_parts.append(f'intitle:"{t_variant}"')
                     if author:
                         gb_parts.append(f'inauthor:"{author}"')
-                    gb_query = '+'.join(gb_parts)
+                    gb_query = ' '.join(gb_parts)
                     if not gb_query:
                         continue
-                    g_url = f"https://www.googleapis.com/books/v1/volumes?q={gb_query}&maxResults=8"
-                    r = _req.get(g_url, timeout=(2.5, 3.5))  # (connect, read) tuple for faster fail
+                    r = _req.get(google_books_url(q=gb_query, maxResults=8), timeout=(2.5, 3.5))  # (connect, read) tuple for faster fail
                     r.raise_for_status()
                     data = r.json()
                     items = data.get('items', [])[:8]
@@ -200,7 +201,7 @@ def search_book_details():
                         return out
                 return []
             except Exception as e:
-                current_app.logger.debug(f"[SEARCH] Google Books failed: {e}")
+                current_app.logger.debug(f"[SEARCH] Google Books failed: {redact_url(str(e))}")
                 return []
 
         provider_timeout = float(current_app.config.get('BOOK_SEARCH_PROVIDER_TIMEOUT', 7.0)) if current_app else 7.0

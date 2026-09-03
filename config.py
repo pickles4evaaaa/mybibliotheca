@@ -120,6 +120,7 @@ class Config:
 
     # External APIs
     ISBN_API_KEY = os.environ.get('ISBN_API_KEY') or 'your_isbn_api_key'
+    GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
     
     # Application settings
     SITE_NAME = os.environ.get('SITE_NAME', 'MyBibliotheca')

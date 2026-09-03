@@ -18,6 +18,8 @@ import threading
 import time
 
 from app.utils.adaptive_http import adaptive_get
+from app.utils.google_books import google_books_url
+from app.utils.http_utils import redact_url
 
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
@@ -333,7 +335,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	2) Highest date specificity of volumeInfo.publishedDate
 	Fallback to the first item if list is empty.
 	"""
-	url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
+	url = google_books_url(q=f"isbn:{isbn}")
 	try:
 		bulk = _bulk_fetch_mode()
 		timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
@@ -345,7 +347,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		items = data.get('items') or []
 		if not items:
 			if _META_DEBUG:
-				_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EMPTY] isbn={isbn} status={resp.status_code} len=0 url={url}")
+				_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EMPTY] isbn={isbn} status={resp.status_code} len=0 url={redact_url(url)}")
 			return {}
 
 		# Normalize target ISBN (strip non-digits/X)
@@ -425,7 +427,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 				if vol_id:
 					full_resp = adaptive_get(
 						'google_books',
-						f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full",
+						google_books_url(f"volumes/{vol_id}", projection='full'),
 						timeout=timeout,
 						max_retries=max_retries,
 					)
@@ -518,7 +520,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	except Exception as e:
 		# Suppress but record when debugging; callers still treat empty dict as failure.
 		if _META_DEBUG:
-			_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EXC] isbn={isbn} err={e}")
+			_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EXC] isbn={isbn} err={redact_url(str(e))}")
 		return {}
 
 
@@ -853,7 +855,7 @@ def _unified_fetch_pair(isbn: str):
 			google = _fetch_google_by_isbn(isbn_clean) or {}
 		except Exception as ex_var:
 			google = {}
-			_errors['google'] = f"exception:{ex_var}"
+			_errors['google'] = f"exception:{redact_url(str(ex_var))}"
 
 		# If Google already provides a cover in bulk mode, we can usually skip OpenLibrary
 		# (OpenLibrary is often slower and more likely to throttle during imports).
@@ -893,7 +895,7 @@ def _unified_fetch_pair(isbn: str):
 						data = fut.result(timeout=_FETCH_TIMEOUT) or {}
 					except Exception as ex_var:  # defensive; provider funcs should swallow
 						data = {}
-						_errors[kind] = f"exception:{ex_var}"
+						_errors[kind] = f"exception:{redact_url(str(ex_var))}"
 					if kind == 'google':
 						google = data
 					else:

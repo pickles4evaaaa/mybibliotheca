@@ -27,6 +27,8 @@ from typing import Dict, Optional, Mapping
 
 import requests
 
+from app.utils.http_utils import redact_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,7 +197,7 @@ def adaptive_get(
             if resp.status_code == 429 or _looks_like_google_quota(resp):
                 ra = _parse_retry_after_seconds(resp.headers) or None
                 limiter.on_rate_limited(ra)
-                logger.warning(f"[HTTP][RATE_LIMIT] key={limiter_key} url={url} status={resp.status_code} retry_after={ra}")
+                logger.warning(f"[HTTP][RATE_LIMIT] key={limiter_key} url={redact_url(url)} status={resp.status_code} retry_after={ra}")
                 if attempt < retries - 1:
                     continue
                 return resp
@@ -212,7 +214,7 @@ def adaptive_get(
 
         except requests.exceptions.RequestException as exc:
             limiter.on_transient_error()
-            logger.warning(f"[HTTP][ERROR] key={limiter_key} url={url} err={exc}")
+            logger.warning(f"[HTTP][ERROR] key={limiter_key} url={redact_url(url)} err={redact_url(str(exc))}")
             if attempt < retries - 1:
                 continue
             raise

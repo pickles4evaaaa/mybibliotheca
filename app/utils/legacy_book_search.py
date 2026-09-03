@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import requests
 
+from .google_books import google_books_url
+from .http_utils import redact_url
 from .book_utils import (
     _google_title_cache_get,
     _google_title_cache_set,
@@ -461,11 +463,10 @@ def search_google_books_by_title_author(title, author=None, limit=10):
         if author:
             safe_author = str(author).replace('"', '')
             query_parts.append(f'inauthor:"{safe_author}"')
-        query = '+'.join(query_parts)
-        url = f"https://www.googleapis.com/books/v1/volumes?q={query}&maxResults={fetch_n}"
+        url = google_books_url(q=' '.join(query_parts), maxResults=fetch_n)
 
         if _VERBOSE:
-            print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{t_variant}', author='{author}' at {url}")
+            print(f"[GOOGLE_BOOKS] Searching for multiple books: title='{t_variant}', author='{author}' at {redact_url(url)}")
 
         try:
             response = None
@@ -557,7 +558,7 @@ def search_google_books_by_title_author(title, author=None, limit=10):
 
         except Exception as e:
             if _VERBOSE:
-                print(f"[GOOGLE_BOOKS] Failed variant search for '{t_variant}' by '{author}': {e}")
+                print(f"[GOOGLE_BOOKS] Failed variant search for '{t_variant}' by '{author}': {redact_url(str(e))}")
             continue
 
     return []
