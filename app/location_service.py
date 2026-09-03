@@ -24,9 +24,11 @@ _IMPORT_VERBOSE = (
     or (_os_for_import_verbosity.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
 )
 
+import builtins as _py_builtins
+
 def _dprint(*args, **kwargs):
     if _IMPORT_VERBOSE:
-        __builtins__.print(*args, **kwargs)
+        _py_builtins.print(*args, **kwargs)
 
 # Redirect module print to conditional debug print
 print = _dprint

@@ -51,9 +51,11 @@ _IMPORT_VERBOSE = (
     (_os_for_verbose.getenv('VERBOSE') or 'false').lower() == 'true'
     or (_os_for_verbose.getenv('IMPORT_VERBOSE') or 'false').lower() == 'true'
 )
+import builtins as _py_builtins
+
 def _dprint(*args, **kwargs):
     if _IMPORT_VERBOSE:
-        __builtins__.print(*args, **kwargs)
+        _py_builtins.print(*args, **kwargs)
 print = _dprint
 
 # =============================

@@ -39,7 +39,7 @@ def search_book_details():
         cache_key = f"{title.lower()}|{author.lower()}"
         if cache_key in _SEARCH_CACHE:
             cached = _SEARCH_CACHE[cache_key]
-            current_app.logger.debug("[SEARCH] Cache hit for title/author combination")
+            current_app.logger.info("[SEARCH] Cache hit for title/author combination")
             return jsonify(cached)
 
         results = []
@@ -134,7 +134,7 @@ def search_book_details():
                         return out
                 return []
             except Exception as e:
-                current_app.logger.debug(f"[SEARCH] OpenLibrary failed: {e}")
+                current_app.logger.info(f"[SEARCH] OpenLibrary failed: {e}")
                 return []
 
         def _fetch_google():
@@ -200,7 +200,7 @@ def search_book_details():
                         return out
                 return []
             except Exception as e:
-                current_app.logger.debug(f"[SEARCH] Google Books failed: {e}")
+                current_app.logger.info(f"[SEARCH] Google Books failed: {e}")
                 return []
 
         provider_timeout = float(current_app.config.get('BOOK_SEARCH_PROVIDER_TIMEOUT', 7.0)) if current_app else 7.0
@@ -216,7 +216,7 @@ def search_book_details():
                 fut_ol.cancel()
                 ol_results = []
             except Exception as e:
-                current_app.logger.debug(f"[SEARCH] OpenLibrary exception: {e}")
+                current_app.logger.info(f"[SEARCH] OpenLibrary exception: {e}")
                 ol_results = []
             results.extend(ol_results)
             # Always fetch Google Books results too for better coverage
@@ -228,7 +228,7 @@ def search_book_details():
                 current_app.logger.warning(f"[SEARCH] Google Books timed out after {provider_timeout:.1f}s")
                 fut_gb.cancel()
             except Exception as e:
-                current_app.logger.debug(f"[SEARCH] Google Books exception: {e}")
+                current_app.logger.info(f"[SEARCH] Google Books exception: {e}")
                 gb_results = []
             existing_keys = {(r.get('title','').lower(), r.get('authors','').lower()) for r in results}
             for r in gb_results:
