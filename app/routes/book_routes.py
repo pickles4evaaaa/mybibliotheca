@@ -26,6 +26,7 @@ from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, B
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.utils.book_utils import get_best_cover_for_book
 from app.utils.google_books import google_books_url
+from app.utils.http_utils import redact_url
 from app.utils.author_sorting import author_first_sort_key_for_book, author_last_sort_key_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
@@ -654,7 +655,7 @@ def fetch_book(isbn):
         return jsonify(book_data), 200 if book_data else 404
     except Exception as e:
         # Fallback to legacy behavior if unified fails
-        current_app.logger.warning(f"Unified fetch failed for {isbn}: {e}. Falling back to legacy.")
+        current_app.logger.warning(f"Unified fetch failed for {isbn}: {redact_url(str(e))}. Falling back to legacy.")
         book_data = fetch_book_data(isbn) or {}
         google_data = get_google_books_cover(isbn, fetch_title_author=True)
         if google_data:
@@ -4140,8 +4141,13 @@ def search_books_in_library():
     
     if query:
         # Google Books API search
-        resp = requests.get(google_books_url(q=query, maxResults=10), timeout=15)
-        data = resp.json()
+        try:
+            resp = requests.get(google_books_url(q=query, maxResults=10), timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            current_app.logger.warning(f"[SEARCH] Google Books request failed: {redact_url(str(e))}")
+            data = {}
         for item in data.get('items', []):
             volume_info = item.get('volumeInfo', {})
             image_links = volume_info.get('imageLinks', {})

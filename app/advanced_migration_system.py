@@ -45,6 +45,7 @@ from app.domain.models import (
 )
 from app.infrastructure.kuzu_repositories import KuzuBookRepository, KuzuUserRepository
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
+from app.utils.http_utils import redact_url
 from app.services import book_service, user_service, run_async
 from config import Config
 
@@ -927,7 +928,7 @@ class AdvancedMigrationSystem:
                     if google_data:
                         logger.info(f"✅ Got Google Books data for {isbn}")
                 except Exception as e:
-                    logger.warning(f"⚠️ Google Books failed for {isbn}: {e}")
+                    logger.warning(f"⚠️ Google Books failed for {isbn}: {redact_url(str(e))}")
                 try:
                     openlibrary_data = fetch_book_data(isbn)
                     if openlibrary_data:

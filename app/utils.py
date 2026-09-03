@@ -7,6 +7,7 @@ from io import BytesIO
 import requests
 import os
 from flask import current_app
+from app.utils.http_utils import redact_url
 
 def fetch_book_data(isbn):
     """Enhanced OpenLibrary API lookup with comprehensive field mapping and timeout handling."""
@@ -424,7 +425,7 @@ def get_google_books_cover(isbn, fetch_title_author=False):
                 return base_payload
             return base_payload
     except Exception as e:
-        current_app.logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {e}")
+        current_app.logger.error(f"Failed to fetch Google Books data for ISBN {isbn}: {redact_url(str(e))}")
         return None
     if fetch_title_author:
         return None
