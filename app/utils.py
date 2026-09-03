@@ -290,9 +290,9 @@ def get_google_books_cover(isbn, fetch_title_author=False):
     if not isbn:
         return None
         
-    url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
     try:
-        resp = requests.get(url, timeout=15)  # Increased timeout
+        from app.utils.google_books import google_books_url
+        resp = requests.get(google_books_url(q=f"isbn:{isbn}"), timeout=15)  # Increased timeout
         resp.raise_for_status()  # Raise exception for bad status codes
         data = resp.json()
         items = data.get("items")

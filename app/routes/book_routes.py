@@ -25,6 +25,7 @@ from app.services import book_service, reading_log_service, custom_field_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.utils.book_utils import get_best_cover_for_book
+from app.utils.google_books import google_books_url
 from app.utils.author_sorting import author_first_sort_key_for_book, author_last_sort_key_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
 from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
@@ -4139,10 +4140,7 @@ def search_books_in_library():
     
     if query:
         # Google Books API search
-        resp = requests.get(
-            'https://www.googleapis.com/books/v1/volumes',
-            params={'q': query, 'maxResults': 10}
-        )
+        resp = requests.get(google_books_url(q=query, maxResults=10), timeout=15)
         data = resp.json()
         for item in data.get('items', []):
             volume_info = item.get('volumeInfo', {})
@@ -4965,10 +4963,8 @@ def resolve_duplicate():
         
         # Enhanced Google Books API lookup
         def enhanced_google_books_lookup(isbn):
-            url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
             try:
-                import requests
-                response = requests.get(url, timeout=10)
+                response = requests.get(google_books_url(q=f"isbn:{isbn}"), timeout=10)
                 response.raise_for_status()
                 data = response.json()
                 

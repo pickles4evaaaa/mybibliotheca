@@ -18,6 +18,7 @@ import threading
 import time
 
 from app.utils.adaptive_http import adaptive_get
+from app.utils.google_books import google_books_url
 
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
@@ -333,7 +334,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	2) Highest date specificity of volumeInfo.publishedDate
 	Fallback to the first item if list is empty.
 	"""
-	url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
+	url = google_books_url(q=f"isbn:{isbn}")
 	try:
 		bulk = _bulk_fetch_mode()
 		timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
@@ -425,7 +426,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 				if vol_id:
 					full_resp = adaptive_get(
 						'google_books',
-						f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full",
+						google_books_url(f"volumes/{vol_id}", projection='full'),
 						timeout=timeout,
 						max_retries=max_retries,
 					)

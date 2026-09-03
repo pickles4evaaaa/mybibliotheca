@@ -26,6 +26,7 @@ services:
       # Application settings
       SITE_NAME: ${SITE_NAME:-MyBibliotheca}
       TIMEZONE: ${TIMEZONE:-UTC}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       # CRITICAL: Use single worker for KuzuDB compatibility
       WORKERS: "1"
       # Central log level (controls Gunicorn and Flask loggers)
