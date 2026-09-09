@@ -672,6 +672,15 @@ def create_app():
         # Check for SQLite databases that might need migration
         check_for_migration_reminder()
 
+    @app.after_request
+    def set_security_headers(response):
+        """Keep browser capabilities scoped to the self-hosted application."""
+        response.headers.setdefault(
+            'Permissions-Policy',
+            'camera=(self), microphone=(), geolocation=()'
+        )
+        return response
+
     # Add middleware to check for setup requirements
     @app.before_request
     def check_setup_and_password_requirements():

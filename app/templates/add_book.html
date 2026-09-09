@@ -867,7 +867,7 @@ function fetchBookData() {
                     showMessage('Book data fetched successfully!', 'success');
                 }
             } else {
-                showMessage('No book data found for this ISBN. You can enter details manually.', 'warning');
+                showMessage(resp.message || 'No book data found for this ISBN. You can enter details manually.', 'warning');
             }
         })
         .catch(error => {

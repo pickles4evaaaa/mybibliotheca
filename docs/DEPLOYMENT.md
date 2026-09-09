@@ -49,6 +49,13 @@ WORKERS=4  # Adjust based on CPU cores
 READING_STREAK_OFFSET=0
 # Set import concurrency only if you need a fixed fallback; the admin settings UI overrides this at runtime.
 IMPORT_METADATA_CONCURRENCY=4
+
+# Optional but recommended for reliable self-hosted ISBN lookups/imports.
+# Create a Google Books API key in your own Google Cloud project.
+GOOGLE_BOOKS_API_KEY=your-google-books-api-key
+
+# Optional: helps OpenLibrary identify your installation.
+OPENLIBRARY_CONTACT_EMAIL=you@example.com
 ```
 
 > **Tip:** Once the app is running you can adjust metadata fetch concurrency from the Admin → Settings → Server Configuration panel without touching the environment file. Leaving the field blank reverts to the environment fallback shown above.

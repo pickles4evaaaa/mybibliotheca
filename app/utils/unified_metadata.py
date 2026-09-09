@@ -22,11 +22,38 @@ from app.utils.adaptive_http import adaptive_get
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
 
+
+class MetadataProviderError(RuntimeError):
+	"""Provider failure that should be exposed as a diagnostic, not a crash."""
+
 # Configurable timeouts for metadata fetching
 # Individual request timeout (default 8 seconds per request)
 _REQUEST_TIMEOUT = int(os.getenv('METADATA_REQUEST_TIMEOUT', '8'))
 # Overall fetch timeout for parallel provider requests (default 20 seconds total)
 _FETCH_TIMEOUT = int(os.getenv('METADATA_FETCH_TIMEOUT', '20'))
+
+
+def _google_request_kwargs() -> Dict[str, Any]:
+	"""Return Google Books request options without putting secrets in log URLs."""
+	key = (os.getenv('GOOGLE_BOOKS_API_KEY') or os.getenv('GOOGLE_API_KEY') or '').strip()
+	return {'params': {'key': key}} if key else {}
+
+
+def _openlibrary_headers() -> Dict[str, str]:
+	"""Identify self-hosted clients so OpenLibrary can contact/rate-limit them."""
+	user_agent = (os.getenv('OPENLIBRARY_USER_AGENT') or '').strip()
+	contact = (os.getenv('OPENLIBRARY_CONTACT_EMAIL') or '').strip()
+	if not user_agent:
+		user_agent = 'MyBibliotheca/metadata-fetch (self-hosted)'
+	if contact and contact.lower() not in user_agent.lower():
+		user_agent = f'{user_agent}; contact={contact}'
+	return {'User-Agent': user_agent}
+
+
+def _openlibrary_edition_enabled() -> bool:
+	"""Enable the stricter edition endpoint only when explicitly requested."""
+	return (os.getenv('OPENLIBRARY_USE_EDITION_API', 'false').lower()
+			in ('1', 'true', 'yes', 'on'))
 
 
 def _in_executor_worker_thread() -> bool:
@@ -160,6 +187,7 @@ def _load_openlibrary_edition_payload(isbn: str, *, include_edition: bool = True
 			f"https://openlibrary.org/isbn/{isbn}.json",
 			timeout=timeout,
 			max_retries=max_retries,
+			headers=_openlibrary_headers(),
 		)
 		resp.raise_for_status()
 		return resp.json() or {}
@@ -339,7 +367,9 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
 		max_retries = 1 if bulk else None
 		resp = adaptive_get('google_books', url, timeout=timeout, max_retries=max_retries, headers={
-			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
+			'User-Agent': 'MyBibliotheca/metadata-fetch (self-hosted)'}, **_google_request_kwargs())
+		if resp.status_code == 429:
+			raise MetadataProviderError('rate_limited')
 		resp.raise_for_status()
 		data = resp.json()
 		items = data.get('items') or []
@@ -428,6 +458,7 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 						f"https://www.googleapis.com/books/v1/volumes/{vol_id}?projection=full",
 						timeout=timeout,
 						max_retries=max_retries,
+						**_google_request_kwargs(),
 					)
 					full_resp.raise_for_status()
 					full_data = full_resp.json() or {}
@@ -516,6 +547,8 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 			'series': series_value,
 		}
 	except Exception as e:
+		if isinstance(e, MetadataProviderError):
+			raise
 		# Suppress but record when debugging; callers still treat empty dict as failure.
 		if _META_DEBUG:
 			_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EXC] isbn={isbn} err={e}")
@@ -539,15 +572,21 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 	bulk = _bulk_fetch_mode()
 	timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
 	max_retries = 1 if bulk else None
-	# Edition payload is an extra call; skip for bulk imports.
-	edition_payload = _load_openlibrary_edition_payload(isbn, include_edition=(not bulk))
+	# The edition endpoint commonly returns 403 for automated clients. Fetch the
+	# lightweight data endpoint first and only use the edition endpoint as a
+	# fallback, avoiding an unnecessary request for every interactive lookup.
+	edition_payload: Dict[str, Any] = {}
 	try:
 		resp = adaptive_get('openlibrary', url, timeout=timeout, max_retries=max_retries, headers={
-			'User-Agent': 'MyBibliotheca/metadata-fetch (+https://example.local)'})
+			**_openlibrary_headers()})
+		if resp.status_code == 429:
+			raise MetadataProviderError('rate_limited')
 		resp.raise_for_status()
 		data = resp.json() or {}
 		ol = data.get(bibkey) or {}
 		if not ol:
+			edition_payload = _load_openlibrary_edition_payload(
+				isbn, include_edition=(not bulk and _openlibrary_edition_enabled()))
 			return _build_payload_from_edition(edition_payload, target_isbn13, target_isbn10)
 
 		# jscmd=data shape
@@ -632,7 +671,11 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 			'isbn10': isbn10,
 			'isbn13': isbn13,
 		}
-		# Overlay edition-specific fields to ensure correct volume metadata
+		# Overlay edition-specific fields to ensure correct volume metadata. This
+		# request is deliberately lazy because the lightweight response is enough
+		# for most books and is much kinder to OpenLibrary during imports.
+		if not bulk and not edition_payload and _openlibrary_edition_enabled():
+			edition_payload = _load_openlibrary_edition_payload(isbn, include_edition=True)
 		if edition_payload:
 			edition_overlay = _build_payload_from_edition(edition_payload, target_isbn13, target_isbn10)
 			for key in ['title', 'subtitle', 'publisher', 'published_date', 'published_date_raw', 'published_date_specificity', 'page_count', 'language', 'description', 'series', 'isbn10', 'isbn13', 'openlibrary_id']:
@@ -641,6 +684,8 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 					payload[key] = val
 		return payload
 	except Exception as e:
+		if isinstance(e, MetadataProviderError):
+			raise
 		if _META_DEBUG:
 			_META_LOG.warning(f"[UNIFIED_METADATA][OPENLIB][EXC] isbn={isbn} err={e}")
 		return {}

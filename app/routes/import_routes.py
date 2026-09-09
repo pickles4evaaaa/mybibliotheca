@@ -2705,7 +2705,35 @@ async def process_simple_import(import_config):
                 logger.warning(f"Failed launching post-import backup thread: {outer_be}")
     except Exception as e:
         traceback.print_exc()
-        err = {'status': 'failed', 'error_messages': [str(e)]}
+        # A background import can encounter a late service/progress error after
+        # books have already been persisted. Keep the partial result visible as
+        # a completed import with errors so users do not mistake it for an
+        # all-or-nothing rollback and can download/retry the failed ISBNs.
+        try:
+            existing_job = safe_get_import_job(user_id, task_id) or {}
+            existing_errors = list(existing_job.get('error_messages') or [])
+            existing_errors.append({
+                'row_number': processed_count or '',
+                'error_type': 'import_runtime_error',
+                'message': str(e)[:500],
+            })
+        except Exception:
+            existing_errors = [str(e)]
+        partial = processed_count > 0
+        err = {
+            'status': 'completed_with_errors' if partial else 'failed',
+            'processed': processed_count,
+            'success': success_count,
+            'merged': merged_count,
+            'errors': error_count + 1,
+            'skipped': skipped_count,
+            'current_book': None,
+            'recent_activity': [
+                f'Import stopped after {processed_count} rows: {str(e)[:300]}'
+            ],
+            'error_messages': existing_errors,
+            'error': str(e)[:500],
+        }
         update_job_in_kuzu(task_id, err)
         safe_update_import_job(user_id, task_id, err)
     finally:

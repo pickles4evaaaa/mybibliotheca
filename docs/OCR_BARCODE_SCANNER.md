@@ -2,6 +2,8 @@
 
 This feature allows you to extract ISBNs from uploaded images using OCR (Optical Character Recognition) and barcode detection.
 
+For live camera scanning, open **Fast Add Mode** and choose **Scan with camera**. Browsers only expose the camera in a secure context: use HTTPS (or `localhost` during local testing), then allow camera access when prompted. USB/Bluetooth barcode scanners also work because they type the ISBN into the ISBN field.
+
 ## Features
 
 - **Barcode Detection**: Automatically detects and reads EAN/UPC barcodes containing ISBNs

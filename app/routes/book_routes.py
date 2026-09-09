@@ -1052,7 +1052,7 @@ def add_book_fast():
 @login_required
 def fast_add_save():
     """
-    API endpoint for Fast Add mode - saves book with minimal validation.
+    API endpoint for Fast Add mode - saves book with server-side ISBN validation.
     Returns JSON response for AJAX handling.
     """
     import json
@@ -1065,8 +1065,10 @@ def fast_add_save():
         author = (request.form.get('author') or '').strip() or 'Unknown Author'
         
         # ISBN handling
-        isbn10 = (request.form.get('isbn10') or '').strip().upper()
-        isbn13 = (request.form.get('isbn13') or '').strip().upper()
+        raw_isbn10 = (request.form.get('isbn10') or '').strip().upper()
+        raw_isbn13 = (request.form.get('isbn13') or '').strip().upper()
+        isbn10 = raw_isbn10
+        isbn13 = raw_isbn13
         
         # Clean up ISBNs
         isbn10 = re.sub(r'[^0-9X]', '', isbn10) if isbn10 else None
@@ -1074,9 +1076,26 @@ def fast_add_save():
         
         # Validate ISBN lengths
         if isbn10 and len(isbn10) != 10:
-            isbn10 = None
+            return jsonify({'success': False, 'message': 'Invalid ISBN-10 format'}), 400
         if isbn13 and len(isbn13) != 13:
-            isbn13 = None
+            return jsonify({'success': False, 'message': 'Invalid ISBN-13 format'}), 400
+
+        def _valid_isbn10(value):
+            if not value or len(value) != 10 or not re.fullmatch(r'[0-9]{9}[0-9X]', value):
+                return False
+            total = sum((10 if char == 'X' else int(char)) * (10 - index) for index, char in enumerate(value))
+            return total % 11 == 0
+
+        def _valid_isbn13(value):
+            if not value or len(value) != 13 or not value.isdigit() or not value.startswith(('978', '979')):
+                return False
+            total = sum(int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(value[:12]))
+            return (10 - (total % 10)) % 10 == int(value[-1])
+
+        if isbn10 and not _valid_isbn10(isbn10):
+            return jsonify({'success': False, 'message': 'Invalid ISBN-10 checksum'}), 400
+        if isbn13 and not _valid_isbn13(isbn13):
+            return jsonify({'success': False, 'message': 'Invalid ISBN-13 checksum'}), 400
         
         # Other fields
         subtitle = (request.form.get('subtitle') or '').strip() or None
@@ -4139,9 +4158,13 @@ def search_books_in_library():
     
     if query:
         # Google Books API search
+        google_key = (_os_for_verbose.getenv('GOOGLE_BOOKS_API_KEY') or _os_for_verbose.getenv('GOOGLE_API_KEY') or '').strip()
+        google_params = {'q': query, 'maxResults': 10}
+        if google_key:
+            google_params['key'] = google_key
         resp = requests.get(
             'https://www.googleapis.com/books/v1/volumes',
-            params={'q': query, 'maxResults': 10}
+            params=google_params
         )
         data = resp.json()
         for item in data.get('items', []):
@@ -4968,7 +4991,9 @@ def resolve_duplicate():
             url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
             try:
                 import requests
-                response = requests.get(url, timeout=10)
+                google_key = (_os_for_verbose.getenv('GOOGLE_BOOKS_API_KEY') or _os_for_verbose.getenv('GOOGLE_API_KEY') or '').strip()
+                request_kwargs = {'params': {'key': google_key}} if google_key else {}
+                response = requests.get(url, timeout=10, **request_kwargs)
                 response.raise_for_status()
                 data = response.json()
                 

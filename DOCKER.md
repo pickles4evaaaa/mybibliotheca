@@ -46,6 +46,8 @@ docker-compose -f docker-compose.dev.yml up -d
 | `WORKERS` | `1` | **DO NOT CHANGE** - KuzuDB limitation |
 | `KUZU_DB_PATH` | `/app/data/kuzu` | KuzuDB storage path |
 | `GRAPH_DATABASE_ENABLED` | `true` | Enable KuzuDB |
+| `GOOGLE_BOOKS_API_KEY` | unset | Optional Google Books API key; recommended for reliable ISBN lookups/imports |
+| `OPENLIBRARY_CONTACT_EMAIL` | unset | Optional contact email included in OpenLibrary requests |
 
 #### Volume Mounts
 - `./data:/app/data` - Application data and KuzuDB storage

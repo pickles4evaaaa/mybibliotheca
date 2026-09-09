@@ -32,6 +32,11 @@ def _dprint(*args, **kwargs):
 print = _dprint
 
 
+def _google_request_kwargs() -> Dict[str, Any]:
+    key = (_os_for_verbose.getenv('GOOGLE_BOOKS_API_KEY') or _os_for_verbose.getenv('GOOGLE_API_KEY') or '').strip()
+    return {'params': {'key': key}} if key else {}
+
+
 _SEARCH_CACHE_TTL = int((_os_for_verbose.getenv('BOOK_SEARCH_CACHE_TTL') or '300'))
 _SEARCH_CACHE_MAX = int((_os_for_verbose.getenv('BOOK_SEARCH_CACHE_MAX') or '128'))
 _SEARCH_CACHE: "OrderedDict[tuple, tuple[float, List[Dict[str, Any]]]]" = OrderedDict()
@@ -261,7 +266,11 @@ def search_google_books(title: str, max_results: int = 20, author: Optional[str]
     url = f"https://www.googleapis.com/books/v1/volumes?q={q}&maxResults={max_results}"
     
     try:
-        response = adaptive_get('google_books', url, timeout=(_GOOGLE_CONNECT_TIMEOUT, _GOOGLE_READ_TIMEOUT))
+        response = adaptive_get(
+            'google_books', url,
+            timeout=(_GOOGLE_CONNECT_TIMEOUT, _GOOGLE_READ_TIMEOUT),
+            **_google_request_kwargs(),
+        )
         response.raise_for_status()
         data = response.json()
         

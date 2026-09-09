@@ -615,6 +615,27 @@ def unified_metadata_lookup():
                 response_data['isbn_mismatch'] = True
             if errors:
                 response_data['provider_errors'] = errors
+
+                # Give the web UI a useful explanation when both providers
+                # are unavailable (for example, a Google Books 429 during a
+                # bulk import) instead of making the lookup appear to do
+                # nothing.
+                if not data:
+                    readable = []
+                    for provider, reason in errors.items():
+                        reason = str(reason or '')
+                        label = 'Google Books' if provider == 'google' else 'OpenLibrary' if provider == 'openlib' else provider
+                        if reason == 'rate_limited' or 'rate_limited' in reason or '429' in reason:
+                            readable.append(f'{label} is rate limited')
+                        elif reason.startswith('http_'):
+                            readable.append(f'{label} returned {reason[5:]}')
+                        elif reason not in ('empty', 'skipped_google_cover'):
+                            readable.append(f'{label} unavailable')
+                    if readable:
+                        response_data['message'] = (
+                            'No metadata was returned. ' + ', '.join(readable) +
+                            '. You can try again later or enter the book manually.'
+                        )
             
             return jsonify(response_data), 200
 

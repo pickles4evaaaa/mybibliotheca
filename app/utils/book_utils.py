@@ -1832,7 +1832,9 @@ def get_google_books_cover(isbn, fetch_title_author=False):
         return cached
 
     try:
-        response = requests.get(url, timeout=3.5)
+        google_key = (_os_cover_debug.getenv('GOOGLE_BOOKS_API_KEY') or _os_cover_debug.getenv('GOOGLE_API_KEY') or '').strip()
+        request_kwargs = {'params': {'key': google_key}} if google_key else {}
+        response = requests.get(url, timeout=3.5, **request_kwargs)
         print(f"📚 [GOOGLE_BOOKS] Response status: {response.status_code}")
         response.raise_for_status()
         data = response.json()
