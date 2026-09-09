@@ -364,9 +364,9 @@
   <div class="book-cover-section">
     {% if book.cover_url %}
       <img src="{{ book.cover_url }}" alt="Book Cover" class="book-cover"
-           onerror="this.onerror=null;this.src='{{ url_for('static', filename='book_cover.png') }}';">
+           onerror="this.onerror=null;this.src='{{ url_for('serve_static', filename='book_cover.png') }}';">
     {% else %}
-      <img src="{{ url_for('static', filename='book_cover.png') }}" alt="Book Cover" class="book-cover">
+      <img src="{{ url_for('serve_static', filename='book_cover.png') }}" alt="Book Cover" class="book-cover">
     {% endif %}
   </div>
 
