@@ -30,6 +30,10 @@ import requests
 logger = logging.getLogger(__name__)
 
 
+class RateLimitDeferred(RuntimeError):
+    """Raised when a request would wait beyond its caller's pacing budget."""
+
+
 def _read_float_env(name: str, default: float) -> float:
     try:
         raw = os.getenv(name)
@@ -83,10 +87,18 @@ class AdaptiveRateLimiter:
         now = time.monotonic()
         self._state = _LimiterState(delay=self._min_delay, next_allowed=now, success_streak=0)
 
-    def wait(self) -> None:
+    def wait(self, max_wait_seconds: Optional[float] = None) -> bool:
+        """Wait for the next provider slot, or return False if it is too far away.
+
+        Bulk callers can use a small wait budget to avoid spending their whole
+        import deadline sleeping through a provider cooldown. A deferred call
+        does not reserve a future slot.
+        """
         with self._lock:
             now = time.monotonic()
             wait_for = max(0.0, self._state.next_allowed - now)
+            if max_wait_seconds is not None and wait_for > max(0.0, max_wait_seconds):
+                return False
             if wait_for > 0:
                 time.sleep(wait_for)
 
@@ -102,6 +114,7 @@ class AdaptiveRateLimiter:
             # Reserve the next slot.
             now2 = time.monotonic()
             self._state.next_allowed = now2 + self._state.delay
+            return True
 
     def on_success(self) -> None:
         with self._lock:
@@ -174,11 +187,14 @@ def adaptive_get(
     *,
     timeout: float | tuple[float, float] | None = None,
     max_retries: Optional[int] = None,
+    max_wait_seconds: Optional[float] = None,
     **kwargs,
 ) -> requests.Response:
     """requests.get with adaptive pacing and retry-on-rate-limit.
 
-    Returns the final response (even if unsuccessful) after retries.
+    Returns the final response (even if unsuccessful) after retries. When a
+    wait budget is supplied, raises RateLimitDeferred rather than sleeping
+    through a longer provider cooldown.
     """
     limiter = get_limiter(limiter_key)
     retries = max_retries if max_retries is not None else _read_int_env('HTTP_MAX_RETRIES', 3)
@@ -186,7 +202,10 @@ def adaptive_get(
 
     last_resp: Optional[requests.Response] = None
     for attempt in range(retries):
-        limiter.wait()
+        if not limiter.wait(max_wait_seconds=max_wait_seconds):
+            raise RateLimitDeferred(
+                f"request deferred by {limiter_key} limiter cooldown"
+            )
         try:
             resp = requests.get(url, timeout=timeout, **kwargs)
             last_resp = resp

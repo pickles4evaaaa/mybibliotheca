@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 
-from app.utils.adaptive_http import adaptive_get
+from app.utils.adaptive_http import adaptive_get, RateLimitDeferred
 
 _META_LOG = logging.getLogger(__name__)
 _META_DEBUG = os.getenv('METADATA_DEBUG', '0').lower() in ('1','true','yes','on')
@@ -367,7 +367,8 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 		timeout = min(_REQUEST_TIMEOUT, 6) if bulk else _REQUEST_TIMEOUT
 		max_retries = 1 if bulk else None
 		resp = adaptive_get('google_books', url, timeout=timeout, max_retries=max_retries, headers={
-			'User-Agent': 'MyBibliotheca/metadata-fetch (self-hosted)'}, **_google_request_kwargs())
+			'User-Agent': 'MyBibliotheca/metadata-fetch (self-hosted)'},
+			max_wait_seconds=0.0 if bulk else None, **_google_request_kwargs())
 		if resp.status_code == 429:
 			raise MetadataProviderError('rate_limited')
 		resp.raise_for_status()
@@ -549,6 +550,8 @@ def _fetch_google_by_isbn(isbn: str) -> Dict[str, Any]:
 	except Exception as e:
 		if isinstance(e, MetadataProviderError):
 			raise
+		if isinstance(e, RateLimitDeferred):
+			raise MetadataProviderError('rate_limited') from e
 		# Suppress but record when debugging; callers still treat empty dict as failure.
 		if _META_DEBUG:
 			_META_LOG.warning(f"[UNIFIED_METADATA][GOOGLE][EXC] isbn={isbn} err={e}")
@@ -578,7 +581,7 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 	edition_payload: Dict[str, Any] = {}
 	try:
 		resp = adaptive_get('openlibrary', url, timeout=timeout, max_retries=max_retries, headers={
-			**_openlibrary_headers()})
+			**_openlibrary_headers()}, max_wait_seconds=0.0 if bulk else None)
 		if resp.status_code == 429:
 			raise MetadataProviderError('rate_limited')
 		resp.raise_for_status()
@@ -686,6 +689,8 @@ def _fetch_openlibrary_by_isbn(isbn: str) -> Dict[str, Any]:
 	except Exception as e:
 		if isinstance(e, MetadataProviderError):
 			raise
+		if isinstance(e, RateLimitDeferred):
+			raise MetadataProviderError('rate_limited') from e
 		if _META_DEBUG:
 			_META_LOG.warning(f"[UNIFIED_METADATA][OPENLIB][EXC] isbn={isbn} err={e}")
 		return {}

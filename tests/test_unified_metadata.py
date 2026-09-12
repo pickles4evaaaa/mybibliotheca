@@ -2,6 +2,9 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+import time
+
+import pytest
 import requests
 
 
@@ -37,6 +40,13 @@ def load_unified_metadata_module():
     sys.modules["app.utils"] = utils_mod
     sys.modules["app.utils.metadata_settings"] = metadata_settings
     sys.modules["app.utils.book_utils"] = book_utils
+
+    adaptive_path = Path(__file__).resolve().parent.parent / "app" / "utils" / "adaptive_http.py"
+    adaptive_name = "app.utils.adaptive_http"
+    adaptive_spec = importlib.util.spec_from_file_location(adaptive_name, adaptive_path)
+    adaptive_http = importlib.util.module_from_spec(adaptive_spec)
+    sys.modules[adaptive_name] = adaptive_http
+    adaptive_spec.loader.exec_module(adaptive_http)
 
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     module = importlib.util.module_from_spec(spec)
@@ -110,6 +120,35 @@ def test_unified_fetch_prefers_matching_metadata(monkeypatch):
     assert merged["title"] == "Fruits Basket, Vol. 2"
     assert merged.get("_isbn_mismatch") is False
     assert errors.get("google") == "empty"
+
+
+@pytest.mark.parametrize(
+    ("fetcher", "limiter_key"),
+    [
+        ("_fetch_google_by_isbn", "google_books"),
+        ("_fetch_openlibrary_by_isbn", "openlibrary"),
+    ],
+)
+def test_bulk_provider_fetch_skips_active_rate_limit_cooldown(
+    monkeypatch, fetcher, limiter_key
+):
+    """An active provider cooldown should defer bulk fetches instead of blocking the import."""
+    unified_metadata = load_unified_metadata_module()
+    adaptive_http = sys.modules["app.utils.adaptive_http"]
+    monkeypatch.setattr(unified_metadata, "_bulk_fetch_mode", lambda: True)
+    limiter = adaptive_http.get_limiter(limiter_key)
+    limiter._state.next_allowed = time.monotonic() + 30
+    requests_made = []
+    monkeypatch.setattr(
+        adaptive_http.requests,
+        "get",
+        lambda *args, **kwargs: requests_made.append((args, kwargs)),
+    )
+
+    with pytest.raises(unified_metadata.MetadataProviderError, match="rate_limited"):
+        getattr(unified_metadata, fetcher)("9780306406157")
+
+    assert requests_made == []
 
 
 def test_people_card_uses_blueprint_generated_person_url():
