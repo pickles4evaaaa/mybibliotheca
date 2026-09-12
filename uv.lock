@@ -34,7 +34,7 @@ wheels = [
 
 [[package]]
 name = "bibliotheca"
-version = "2.2.0"
+version = "2.2.1"
 source = { virtual = "." }
 dependencies = [
     { name = "cryptography" },
