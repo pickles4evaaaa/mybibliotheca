@@ -235,6 +235,7 @@ cookies.txt
 test_*.py
 check_*.py
 tests/
+!tests/
 scripts/debug/
 
 # Planning and internal documentation
@@ -342,3 +343,6 @@ dev_tools/
 # Local curl cookie jars (created by curl -b/-c during debugging)
 cookiejar
 *.cookiejar*.whl
+
+# Regression test for server settings persistence
+!tests/test_settings_server_partial.py

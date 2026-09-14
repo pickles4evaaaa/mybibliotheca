@@ -529,10 +529,12 @@
                                             <i class="bi bi-search me-1"></i>Fetch Book
                                         </button>
                                     </div>
+                                    <div id="isbnFetchStatus" class="small mt-2" role="status" aria-live="polite"></div>
+                                    <button id="reviewFetchedBookButton" type="button" class="btn btn-link btn-sm p-0 d-none" onclick="reviewFetchedBook()">Review populated form</button>
                                     <div class="text-center">
                                         <small class="text-muted">
                                             <i class="bi bi-info-circle me-1"></i>
-                                            Enter an ISBN above and click "Fetch Book" to automatically populate book details
+                                            Fetch Book fills the form above. Review the details there, then click Add Book to save.
                                         </small>
                                     </div>
                                 </div>
@@ -792,9 +794,30 @@ function htmlDescriptionToText(html) {
 }
 
 // Fetch book data from ISBN
+function setIsbnFetchStatus(message, type = '') {
+    const status = document.getElementById('isbnFetchStatus');
+    const reviewButton = document.getElementById('reviewFetchedBookButton');
+    if (status) {
+        status.className = 'small mt-2';
+        if (type) status.classList.add(type);
+        status.textContent = message || '';
+    }
+    if (reviewButton && type !== 'text-success') {
+        reviewButton.classList.add('d-none');
+    }
+}
+
+function reviewFetchedBook() {
+    const titleField = document.getElementById('title');
+    if (!titleField) return;
+    titleField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    titleField.focus({ preventScroll: true });
+}
+
 function fetchBookData() {
     const isbn = document.getElementById('isbn').value.trim();
     if (!isbn) {
+        setIsbnFetchStatus('Enter an ISBN-10 or ISBN-13 to look up book details.', 'text-danger');
         showMessage('Please enter an ISBN to fetch book data.', 'error');
         return;
     }
@@ -802,6 +825,7 @@ function fetchBookData() {
     // Show loading state
     const button = document.getElementById('fetchBookButton');
     const originalText = button ? button.innerHTML : null;
+    setIsbnFetchStatus('Looking up book details…', 'text-primary');
     if (button) {
         button.innerHTML = '<i class="bi bi-spinner spin me-1"></i>Fetching...';
         button.disabled = true;
@@ -853,6 +877,14 @@ function fetchBookData() {
                     }
                 } catch (_) { /* noop */ }
                 populateFormWithBookData(mapped);
+
+                const statusTitle = data.title ? `“${data.title}”` : 'Book details';
+                setIsbnFetchStatus(
+                    `Found ${statusTitle}. The form above is populated; review it, then click Add Book to save.`,
+                    'text-success'
+                );
+                const reviewButton = document.getElementById('reviewFetchedBookButton');
+                if (reviewButton) reviewButton.classList.remove('d-none');
                 
                 // Display success message with title
                 const matchedTitle = data.title ? escapeHtml(String(data.title)) : null;
@@ -867,11 +899,14 @@ function fetchBookData() {
                     showMessage('Book data fetched successfully!', 'success');
                 }
             } else {
-                showMessage(resp.message || 'No book data found for this ISBN. You can enter details manually.', 'warning');
+                const message = resp.message || 'No book data found for this ISBN. You can enter details manually.';
+                setIsbnFetchStatus(message, 'text-warning');
+                showMessage(message, 'warning');
             }
         })
         .catch(error => {
             console.error('Error fetching book data:', error);
+            setIsbnFetchStatus('Lookup failed. Please check the ISBN and try again, or enter the book details manually.', 'text-danger');
             showMessage('Error fetching book data. Please try again or enter details manually.', 'error');
         })
         .finally(() => {

@@ -22,7 +22,7 @@ from flask import (
 )
 from flask_login import current_user, login_required
 
-from app.admin import get_admin_settings_context
+from app.admin import get_admin_settings_context, save_system_config
 from app.domain.models import MediaType
 from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.services import user_service
@@ -1376,4 +1376,3 @@ def settings_server_partial(panel: str):
         return render_template('settings/partials/server_jobs.html', jobs=jobs, manager_stats=stats)
     # 'system' panel removed; info moved to overview section
     return '<div class="text-danger small">Unknown panel.</div>'
-

@@ -122,6 +122,36 @@ def test_unified_fetch_prefers_matching_metadata(monkeypatch):
     assert errors.get("google") == "empty"
 
 
+def test_unified_fetch_accepts_isbn10_and_keeps_requested_identifier(monkeypatch):
+    """The normal Add Book lookup must accept ISBN-10 metadata as Fast Add does."""
+    unified_metadata = load_unified_metadata_module()
+    isbn10 = "0756404746"
+    monkeypatch.delenv("GOOGLE_BOOKS_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    def fake_get(url, timeout=None, headers=None, **kwargs):
+        if "googleapis.com/books/v1/volumes?q=isbn:" in url:
+            return DummyResponse({
+                "items": [{
+                    "volumeInfo": {
+                        "title": "The Name of the Wind",
+                        "industryIdentifiers": [
+                            {"type": "ISBN_10", "identifier": isbn10},
+                        ],
+                    }
+                }]
+            })
+        if "openlibrary.org/api/books" in url:
+            return DummyResponse({})
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    metadata, _errors = unified_metadata.fetch_unified_by_isbn_detailed(isbn10)
+
+    assert metadata["title"] == "The Name of the Wind"
+    assert metadata["isbn10"] == isbn10
+
+
 @pytest.mark.parametrize(
     ("fetcher", "limiter_key"),
     [
@@ -189,6 +219,16 @@ def test_add_book_supports_isbn_lookup_and_title_result_selection():
     assert "function moveAddBookModalsToBody()" in template
     assert "document.body.appendChild(modal)" in template
     assert "hidden.bs.modal" in template
+
+
+def test_add_book_isbn_lookup_shows_result_and_save_instructions():
+    template_path = Path(__file__).resolve().parent.parent / "app" / "templates" / "add_book.html"
+    template = template_path.read_text(encoding="utf-8")
+
+    assert 'id="isbnFetchStatus"' in template
+    assert 'id="reviewFetchedBookButton"' in template
+    assert "The form above is populated; review it, then click Add Book to save." in template
+    assert "function reviewFetchedBook()" in template
 
 
 def test_mobile_layout_has_compact_page_controls():

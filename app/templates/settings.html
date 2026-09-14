@@ -233,6 +233,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             });
             const html = await resp.text();
+            if(!resp.ok){
+                throw new Error(`Configuration save failed (${resp.status})`);
+            }
             unifiedContainer.innerHTML = html;
             ensureServerConfigBindings();
             if(!unifiedContainer.querySelector('.alert-inline-save-success')){
@@ -243,7 +246,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(()=>alert.remove(), 3000);
             }
         } catch(err){
-            alert('Failed to save configuration.');
+            console.error('Failed to save server configuration:', err);
+            const previousError = unifiedContainer.querySelector('.alert-inline-save-error');
+            if(previousError) previousError.remove();
+            const errorAlert = document.createElement('div');
+            errorAlert.className = 'alert alert-danger py-2 mb-3 alert-inline-save-error';
+            errorAlert.textContent = 'Failed to save configuration. Your changes are still in the form; please try again.';
+            unifiedContainer.prepend(errorAlert);
+            setTimeout(()=>errorAlert.remove(), 5000);
         } finally {
             if(btn){
                 btn.disabled = false;
