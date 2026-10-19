@@ -41,6 +41,7 @@
   }
 
   function renderCard(book){
+    const bookId = book.uid || book.id || book.book_id;
     const col = document.createElement('div');
     col.className = 'col-lg-2 col-md-3 col-sm-4 col-6 book-item';
   // Canonicalize reading status; keep empty as default (no personal status)
@@ -56,11 +57,11 @@
     if(rs === 'finished' || rs === 'complete' || rs === 'completed') rs = 'read';
   col.dataset.readingStatus = rs;
     col.dataset.ownershipStatus = book.ownership_status || 'owned';
-    const checked = state.selected.has(String(book.id)) ? 'checked' : '';
+    const checked = state.selected.has(String(bookId)) ? 'checked' : '';
     col.innerHTML = `
-      <div class="card h-100 book-card shadow-sm position-relative" data-book-id="${book.id}">
+      <div class="card h-100 book-card shadow-sm position-relative" data-book-id="${bookId || ''}">
         <div class="position-absolute top-0 end-0 p-2" style="z-index:10; pointer-events: none;">
-          <input type="checkbox" class="form-check-input book-checkbox" value="${book.id}" ${checked} style="pointer-events:auto;">
+          <input type="checkbox" class="form-check-input book-checkbox" value="${bookId || ''}" ${checked} style="pointer-events:auto;">
         </div>
         <div class="book-cover-wrapper position-relative" style="cursor:pointer;">
           <img alt="cover" class="card-img-top book-cover" loading="lazy" src="${book.cover_url || '/static/bookshelf.png'}" />
@@ -69,7 +70,7 @@
           <h6 class="card-title mb-1 book-title">${book.title || ''}</h6>
           ${book.author ? `<div class=\"mb-1 small text-muted\">${book.author}</div>` : ''}
         </div>
-        <a href="/view_book_enhanced/${book.id}" class="stretched-link" aria-label="View book"></a>
+        ${bookId ? `<a href="/view_book_enhanced/${encodeURIComponent(bookId)}" class="stretched-link" aria-label="View book"></a>` : ''}
       </div>
     `;
     return col;

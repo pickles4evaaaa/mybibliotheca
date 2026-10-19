@@ -156,9 +156,10 @@ def library_journey():
         for book in user_books:
             try:
                 # Extract basic book data with robust fallbacks
+                book_id = _get_value(book, 'uid') or _get_value(book, 'id') or _get_value(book, 'book_id', '')
                 book_data = {
-                    'id': _get_value(book, 'id', ''),
-                    'uid': _get_value(book, 'uid', ''),
+                    'id': book_id,
+                    'uid': book_id,
                     'title': _get_value(book, 'title', 'Unknown Title'),
                     'cover_url': _get_value(book, 'cover_url', None),
                     'reading_status': _get_value(book, 'reading_status', None),

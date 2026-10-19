@@ -848,10 +848,11 @@ function generateBookModalContent(book) {
                 </div>
                 ` : ''}
                 
+                ${(() => { const bookId = book.uid || book.id || book.book_id; return bookId ? `
                 <div class="mt-3">
-                    <a href="/view_book_enhanced/${book.uid}" class="btn btn-primary btn-sm">View Details</a>
-                    <a href="/view_book_enhanced/${book.uid}" class="btn btn-outline-secondary btn-sm">Edit</a>
-                </div>
+                    <a href="/view_book_enhanced/${encodeURIComponent(bookId)}" class="btn btn-primary btn-sm">View Details</a>
+                    <a href="/view_book_enhanced/${encodeURIComponent(bookId)}" class="btn btn-outline-secondary btn-sm">Edit</a>
+                </div>` : ''; })()}
             </div>
         </div>
     `;

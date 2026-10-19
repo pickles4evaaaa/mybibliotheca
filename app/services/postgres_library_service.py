@@ -60,6 +60,18 @@ class PostgresLibraryService:
     def _user_tag(user_id: str) -> str:
         return f"postgres:user_books:{user_id}"
 
+    @staticmethod
+    def _with_book_id_aliases(row: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Keep legacy consumers working with normalized PostgreSQL rows."""
+        if row is None:
+            return None
+        normalized = dict(row)
+        book_id = normalized.get("uid") or normalized.get("id") or normalized.get("book_id")
+        if book_id:
+            normalized.setdefault("id", str(book_id))
+            normalized.setdefault("uid", str(book_id))
+        return normalized
+
     def _cached_query(self, key: str, tags: tuple[str, ...], callback):
         snapshot = redis_cache.snapshot_tag_versions(tags)
         hit, cached = redis_cache.get_json(key, tags=tags, snapshot=snapshot)
@@ -90,7 +102,7 @@ class PostgresLibraryService:
                 row = cursor.fetchone()
             return dict(zip(_LIBRARY_KEYS, row)) if row else None
 
-        return self._cached_query(cache_key, tags, read)
+        return self._with_book_id_aliases(self._cached_query(cache_key, tags, read))
 
     def get_books_with_user_overlay_paginated_sync(
         self,
@@ -115,7 +127,8 @@ class PostgresLibraryService:
                 )
                 return [dict(zip(_LIBRARY_KEYS, row)) for row in cursor.fetchall()]
 
-        return self._cached_query(cache_key, tags, read)
+        rows = self._cached_query(cache_key, tags, read)
+        return [self._with_book_id_aliases(row) or row for row in rows]
 
     def search_user_books_sync(self, user_id: str, query: str, limit: int = 20) -> list[dict[str, Any]]:
         query = str(query or "").strip()
@@ -144,7 +157,8 @@ class PostgresLibraryService:
                     for row in cursor.fetchall()
                 ]
 
-        return self._cached_query(cache_key, tags, read)
+        rows = self._cached_query(cache_key, tags, read)
+        return [self._with_book_id_aliases(row) or row for row in rows]
 
     def get_library_status_counts_sync(self, user_id: str) -> dict[str, int]:
         with self.store.connection() as connection, connection.cursor() as cursor:
