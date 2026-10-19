@@ -519,7 +519,6 @@ let editModalInstance = null;
 let barcodeScannerRunning = false;
 let barcodeScannerModalInstance = null;
 let barcodeDetectedHandler = null;
-let barcodeCameraStream = null;
 let barcodeCandidate = '';
 let barcodeCandidateReads = 0;
 let barcodeScannerState = 'ready';
@@ -682,37 +681,13 @@ function openBarcodeScanner() {
     startBarcodeScanner();
 }
 
-async function startBarcodeScanner() {
+function startBarcodeScanner() {
     const message = document.getElementById('barcodeScannerMessage');
     if (barcodeScannerRunning) return;
     barcodeScannerRunning = true;
     const viewport = document.getElementById('barcodeScannerViewport');
     viewport.innerHTML = '<div class="barcode-scan-guide" aria-hidden="true"></div>';
-
-    // Request permission only after the user clicks Scan ISBN. Quagga keeps
-    // frames local in the browser; no camera image is sent to the server.
-    try {
-        barcodeCameraStream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { facingMode: { ideal: 'environment' } }
-        });
-        if (!barcodeScannerRunning) {
-            barcodeCameraStream.getTracks().forEach(track => track.stop());
-            barcodeCameraStream = null;
-            return;
-        }
-        barcodeCameraStream.getTracks().forEach(track => track.stop());
-        barcodeCameraStream = null;
-    } catch (error) {
-        stopBarcodeScanner();
-        setScannerState('error');
-        message.textContent = 'Camera unavailable; enter ISBN manually.';
-        console.error('Camera permission failed:', error);
-        return;
-    }
-
-    setScannerState('scanning');
-    message.textContent = 'Hold the barcode steady';
+    message.textContent = 'Opening camera…';
     barcodeDetectedHandler = function(result) {
         const code = cleanIsbn(result && result.codeResult && result.codeResult.code);
         // ISBN barcodes use EAN-13 beginning with 978 or 979. Ignore other
@@ -747,34 +722,43 @@ async function startBarcodeScanner() {
         lookupISBN();
     };
     Quagga.onDetected(barcodeDetectedHandler);
-    Quagga.init({
-        inputStream: {
-            type: 'LiveStream',
-            target: viewport,
-            frequency: 12,
-            constraints: { facingMode: 'environment', width: { min: 640 }, height: { min: 480 } }
-        },
-        locator: { patchSize: 'medium', halfSample: true },
-        decoder: { readers: ['ean_reader'], multiple: false },
-        locate: true
-    }, function(error) {
-        if (error) {
-            stopBarcodeScanner();
-            setScannerState('error');
-            message.textContent = 'Camera unavailable. Check browser permission and HTTPS, then try again.';
-            console.error('Barcode scanner init failed:', error);
-            return;
-        }
-        message.textContent = 'Point your camera at the ISBN barcode on the back cover.';
-        Quagga.start();
-    });
+    try {
+        Quagga.init({
+            inputStream: {
+                type: 'LiveStream',
+                target: viewport,
+                frequency: 12,
+                constraints: { facingMode: { ideal: 'environment' } }
+            },
+            locator: { patchSize: 'medium', halfSample: true },
+            decoder: { readers: ['ean_reader'], multiple: false },
+            locate: true
+        }, function(error) {
+            // The user may have closed the modal while camera permission was pending.
+            if (!barcodeScannerRunning) {
+                try { Quagga.stop(); } catch (_) { /* scanner did not finish initializing */ }
+                return;
+            }
+            if (error) {
+                stopBarcodeScanner();
+                setScannerState('error');
+                message.textContent = 'Camera unavailable. Check browser permission and HTTPS, then try again.';
+                console.error('Barcode scanner init failed:', error);
+                return;
+            }
+            setScannerState('scanning');
+            message.textContent = 'Point your camera at the ISBN barcode on the back cover.';
+            Quagga.start();
+        });
+    } catch (error) {
+        stopBarcodeScanner();
+        setScannerState('error');
+        message.textContent = 'Camera unavailable. Check browser permission and HTTPS, then try again.';
+        console.error('Barcode scanner init failed:', error);
+    }
 }
 
 function stopBarcodeScanner() {
-    if (barcodeCameraStream) {
-        barcodeCameraStream.getTracks().forEach(track => track.stop());
-        barcodeCameraStream = null;
-    }
     if (window.Quagga) {
         try { Quagga.stop(); } catch (_) { /* scanner may not have started */ }
         try {

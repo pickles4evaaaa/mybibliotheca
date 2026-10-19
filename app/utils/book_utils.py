@@ -44,10 +44,7 @@ def _cover_ahash_hex(data: bytes) -> Optional[str]:
         from io import BytesIO
         from PIL import Image
         img = Image.open(BytesIO(data)).convert('L').resize((16, 16))
-        try:
-            pixels_raw = list(img.get_flattened_data())
-        except Exception:
-            pixels_raw = list(img.getdata().tolist())
+        pixels_raw = list(img.get_flattened_data())
         pixels = [int(p[0]) if isinstance(p, tuple) else int(p) for p in pixels_raw]
         avg = sum(pixels) / len(pixels)
         bits = ''.join('1' if p > avg else '0' for p in pixels)

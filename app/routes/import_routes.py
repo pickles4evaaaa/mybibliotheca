@@ -99,6 +99,35 @@ def _resolve_data_dir() -> Path:
     return Path(os.getcwd()) / 'data'
 
 
+def _owned_import_file_path(file_path: Optional[str], user_id: Any) -> Optional[str]:
+    """Resolve an uploaded import file only when it belongs to this user.
+
+    Import mapping forms carry the temporary path between requests. Never trust
+    that client-provided value as an arbitrary server path.
+    """
+    if not file_path or not user_id:
+        return None
+    safe_user_id = secure_filename(str(user_id))
+    if not safe_user_id:
+        return None
+
+    allowed_prefixes = (
+        f'import_{safe_user_id}_',
+        f'direct_import_{safe_user_id}_',
+        f'reading_history_{safe_user_id}_',
+    )
+    try:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        resolved = Path(file_path).resolve(strict=True)
+        if resolved.parent != temp_root or not resolved.is_file():
+            return None
+        if not resolved.name.startswith(allowed_prefixes):
+            return None
+        return str(resolved)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def _import_error_log_path(user_id: str, task_id: str) -> Path:
     safe_user = str(user_id).replace(os.sep, '_')
     safe_task = str(task_id).replace(os.sep, '_')
@@ -378,7 +407,10 @@ def import_books():
         
         if existing_csv_path and force_custom:
             # Reuse existing CSV file for custom mapping
-            temp_path = existing_csv_path
+            temp_path = _owned_import_file_path(existing_csv_path, current_user.id)
+            if not temp_path:
+                flash('The uploaded file is no longer available. Please upload it again.', 'danger')
+                return redirect(url_for('import.import_books'))
         else:
             # Handle new file upload and show field mapping
             file = request.files.get('csv_file')
@@ -394,7 +426,7 @@ def import_books():
             
             # Save file temporarily
             filename = secure_filename(file.filename)
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'import_{current_user.id}_')
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'import_{secure_filename(str(current_user.id))}_')
             file.save(temp_file.name)
             temp_path = temp_file.name
         try:
@@ -655,7 +687,10 @@ def import_books():
 @login_required
 def import_books_execute():
     """Execute the import with user-defined field mappings or template mappings."""
-    csv_file_path = request.form.get('csv_file_path')
+    csv_file_path = _owned_import_file_path(request.form.get('csv_file_path'), current_user.id)
+    if not csv_file_path:
+        flash('The uploaded file is no longer available. Please upload it again.', 'danger')
+        return redirect(url_for('import.import_books'))
     use_template = request.form.get('use_template')
     skip_mapping = request.form.get('skip_mapping', 'false').lower() == 'true'
     csv_headers = [header for header in request.form.getlist('csv_headers[]') if header]
@@ -953,7 +988,7 @@ def import_books_execute():
                 update_job_in_kuzu(task_id, error_update)
                 
                 # Update safely with user isolation
-                safe_update_import_job(current_user.id, task_id, error_update)
+                safe_update_import_job(import_config['user_id'], task_id, error_update)
                 
             except Exception as update_error:
                 pass  # Error updating job status
@@ -1397,7 +1432,12 @@ def direct_import():
         
         if use_suggested_file and session.get('direct_import_file'):
             # Use the file from session (already uploaded)
-            temp_path = session['direct_import_file']
+            temp_path = _owned_import_file_path(session['direct_import_file'], current_user.id)
+            if not temp_path:
+                session.pop('direct_import_file', None)
+                session.pop('direct_import_filename', None)
+                flash('The uploaded file is no longer available. Please upload it again.', 'error')
+                return redirect(url_for('import.direct_import'))
             original_filename = session.get('direct_import_filename', 'import.csv')
         else:
             # Handle new file upload
@@ -1408,10 +1448,15 @@ def direct_import():
             
             # Save file temporarily
             filename = secure_filename(file.filename)
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'direct_import_{current_user.id}_')
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'direct_import_{secure_filename(str(current_user.id))}_')
             file.save(temp_file.name)
             temp_path = temp_file.name
             original_filename = filename
+
+        temp_path = _owned_import_file_path(temp_path, current_user.id)
+        if not temp_path:
+            flash('The uploaded file is no longer available. Please upload it again.', 'error')
+            return redirect(url_for('import.direct_import'))
         
         # Detect import type based on file content
         detected_format, confidence = detect_csv_format(temp_path)
@@ -1518,7 +1563,7 @@ def direct_import():
                     }
                     update_job_in_kuzu(task_id, error_update)
                     # Update safely with user isolation
-                    safe_update_import_job(current_user.id, task_id, error_update)
+                    safe_update_import_job(import_config['user_id'], task_id, error_update)
                 except Exception as update_error:
                     pass  # Error updating job status
         
@@ -1658,13 +1703,14 @@ def upload_import():
         flash('No CSV file selected.', 'error')
         return redirect(url_for('import.import_books'))
     
-    if not csv_file.filename.endswith('.csv'):
+    if not csv_file.filename.lower().endswith('.csv'):
         flash('Please upload a CSV file.', 'error')
         return redirect(url_for('import.import_books'))
     
     try:
         # Save uploaded file temporarily
-        temp_filename = f"import_{uuid.uuid4().hex}.csv"
+        user_id = current_user.id
+        temp_filename = f"upload_{secure_filename(str(user_id))}_{uuid.uuid4().hex}.csv"
         csv_file_path = os.path.join('/tmp', temp_filename)
         csv_file.save(csv_file_path)
         
@@ -1690,7 +1736,7 @@ def upload_import():
         task_id = str(uuid.uuid4())
         job_data = {
             'task_id': task_id,
-            'user_id': current_user.id,
+            'user_id': user_id,
             'csv_file_path': csv_file_path,
             'field_mappings': mappings,
             'default_reading_status': default_reading_status,
@@ -1713,50 +1759,35 @@ def upload_import():
             with open(csv_file_path, 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
                 total_rows = sum(1 for row in reader)
-                job_data['total'] = total_rows - 1  # Subtract header row
+                job_data['total'] = max(0, total_rows - 1)  # Subtract the header row.
         except Exception as e:
             job_data['total'] = 0
             current_app.logger.error(f"Error counting CSV rows: {e}")
 
         # Store job data with user isolation
-        safe_create_import_job(current_user.id, task_id, job_data)
+        safe_create_import_job(user_id, task_id, job_data)
 
         # Start the import in background thread
         import_config = {
             'task_id': task_id,
             'csv_file_path': csv_file_path,
             'field_mappings': mappings,
-            'user_id': current_user.id,
+            'user_id': user_id,
             'default_reading_status': default_reading_status,
-            'duplicate_handling': duplicate_handling
+            'duplicate_handling': duplicate_handling,
+            'default_import_media_type': request.form.get('default_import_media_type', 'physical'),
+            'enable_api_enrichment': request.form.get('enable_api_enrichment', 'true').lower() == 'true'
         }
 
         def run_import():
             try:
-                # Import process would go here
-                # For now, just simulate a successful import
-                job = safe_get_import_job(current_user.id, task_id)
-                if job:
-                    updates = {
-                        'status': 'running',
-                        'processed': job['total'],
-                        'success': job['total'],
-                        'current_book': None
-                    }
-                    safe_update_import_job(current_user.id, task_id, updates)
-
-                    # Final completion update
-                    completion_updates = {
-                        'status': 'completed',
-                        'recent_activity': job.get('recent_activity', []) + [f"Import completed! {job['total']} books imported"]
-                    }
-                    safe_update_import_job(current_user.id, task_id, completion_updates)
+                asyncio.run(process_simple_import(import_config))
             except Exception as e:
                 error_updates = {
                     'status': 'failed',
                     'error_messages': [str(e)]
                 }
-                safe_update_import_job(current_user.id, task_id, error_updates)
+                safe_update_import_job(user_id, task_id, error_updates)
                 logger.error(f"Import job {task_id} failed: {e}")
 
         # Start the import process in background
@@ -3376,7 +3407,7 @@ def simple_csv_import():
         print(f"📁 [SIMPLE_IMPORT] File received: {file.filename}")
         
         # Save file temporarily
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'simple_import_{current_user.id}_')
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'simple_import_{secure_filename(str(current_user.id))}_')
         file.save(temp_file.name)
         temp_path = temp_file.name
         print(f"💾 [SIMPLE_IMPORT] File saved to: {temp_path}")
@@ -3519,7 +3550,7 @@ def simple_upload():
             return jsonify({'error': 'File must be a CSV (.csv)'}), 400
         
         # Save file temporarily
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'upload_{current_user.id}_')
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'upload_{secure_filename(str(current_user.id))}_')
         file.save(temp_file.name)
         temp_path = temp_file.name
         print(f"💾 [SIMPLE_UPLOAD] File saved to: {temp_path}")
@@ -3627,7 +3658,7 @@ def simple_upload():
                     'status': 'failed',
                     'error_messages': [str(e)]
                 }
-                safe_update_import_job(current_user.id, task_id, error_updates)
+                safe_update_import_job(import_config['user_id'], task_id, error_updates)
         
         thread = threading.Thread(target=process_upload)
         thread.daemon = True
@@ -3861,8 +3892,9 @@ def import_reading_history():
     """Import reading history from CSV."""
     if request.method == 'GET':
         # If handed off from generic importer with an existing temp file, go straight to mapping
-        csv_file_path = request.args.get('csv_file_path')
-        if csv_file_path and os.path.exists(csv_file_path):
+        requested_csv_path = request.args.get('csv_file_path')
+        csv_file_path = _owned_import_file_path(requested_csv_path, current_user.id)
+        if csv_file_path:
             try:
                 with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
                     sample = csvfile.read(1024)
@@ -3909,7 +3941,7 @@ def import_reading_history():
     try:
         # Save uploaded file temporarily
         filename = secure_filename(csv_file.filename)
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'reading_history_{current_user.id}_')
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv', prefix=f'reading_history_{secure_filename(str(current_user.id))}_')
         csv_file.save(temp_file.name)
         temp_path = temp_file.name
         
@@ -3969,7 +4001,7 @@ def import_reading_history():
 @login_required
 def import_reading_history_execute():
     """Execute the reading history import with user-defined field mappings."""
-    csv_file_path = request.form.get('csv_file_path')
+    csv_file_path = _owned_import_file_path(request.form.get('csv_file_path'), current_user.id)
     
     if not csv_file_path or not os.path.exists(csv_file_path):
         flash('CSV file not found. Please upload the file again.', 'error')

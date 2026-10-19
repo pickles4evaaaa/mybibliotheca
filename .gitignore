@@ -288,6 +288,7 @@ test_*.py
 verify_*.py
 *_test.py
 *_debug.py
+!tests/test_*.py
 
 # Migration and development documentation  
 *MIGRATION*.md

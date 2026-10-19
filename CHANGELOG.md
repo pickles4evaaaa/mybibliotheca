@@ -5,6 +5,18 @@ All notable changes to MyBibliotheca will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-10-19
+
+### Fixed
+- Restored the self-hosted Quagga2 camera scanner bundle and removed duplicate camera stream acquisition.
+- Restricted CSV import processing to the current user's temporary upload files.
+- Fixed the legacy CSV upload route to process imported books instead of reporting a false success.
+- Fixed background import error handlers to use captured user IDs outside the request context.
+- Restored missing server settings panel loader imports.
+
+### Changed
+- Updated Python dependencies and lockfile.
+
 ## [2.2.1] - 2026-09-09
 
 ### Added

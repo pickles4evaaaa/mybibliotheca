@@ -4,17 +4,17 @@ MyBibliotheca is a self-hosted personal library manager and reading tracker. Org
 
 ## Current release
 
-**2.2.1 is the latest stable release.**
+**2.2.2 is the latest stable release.**
 
-Version 2.2.1 uses **KuzuDB** for graph-based library data and relationships. Back up your data before upgrading.
+Version 2.2.2 uses **KuzuDB** for graph-based library data and relationships. Back up your data before upgrading.
 
-### What's new in 2.2.1
+### What's new in 2.2.2
 
-- Added Google Books API support for ISBN metadata lookups and imports
-- Re-enabled camera-based ISBN barcode scanning in Fast Add mode
-- Improved ISBN validation, scanner feedback, and scanner fallbacks
-- Improved CSV import handling, metadata enrichment, timeouts, and partial results
-- Fixed static asset links on Settings and book-detail pages
+- Restored the camera scanner library and improved camera stream handling in Fast Add mode
+- Restricted CSV import paths to the signed-in user's temporary uploads
+- Fixed legacy CSV upload processing and background import error reporting
+- Restored AI, SMTP, and backup settings panel configuration loaders
+- Updated Python dependencies
 
 ## Features
 
