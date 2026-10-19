@@ -43,7 +43,7 @@ docker compose up -d --build
 
 The Compose configuration stores application data in `./data` and configures KuzuDB at `/app/data/kuzu`.
 
-> **Important:** KuzuDB requires a single application worker. Keep `WORKERS=1` in production deployments.
+> **Worker defaults:** PostgreSQL starts with six Gunicorn workers by default. While KuzuDB is active, startup keeps Gunicorn at one worker; after a verified cutover, it scales to the PostgreSQL worker setting. Set `WORKERS` lower in `.env` on memory-constrained hosts.
 
 ## Documentation
 

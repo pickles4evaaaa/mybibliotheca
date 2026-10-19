@@ -13,16 +13,14 @@ import traceback
 
 from ..api_auth import api_token_required, api_auth_optional
 from ..services import book_service
-from ..services.kuzu_service_facade import KuzuServiceFacade as KuzuBookService
 from ..domain.models import Book as DomainBook, Author, Publisher, BookContribution, ContributionType
 from ..utils.unified_metadata import fetch_unified_by_isbn, fetch_unified_by_title
 
 # Create API blueprint
 books_api = Blueprint('books_api', __name__, url_prefix='/api/v1/books')
 
-# Initialize the correct services
-kuzu_book_service = KuzuBookService()
-# Note: KuzuUserBookService was removed - functionality is now part of the facade
+# Resolve all book API calls through the shared service registry so the
+# application can select a single backend after the verified upgrade flow.
 
 
 def serialize_book(domain_book):
@@ -202,7 +200,7 @@ def get_book(book_id):
     """Get a specific book by ID."""
     try:
         # Use KuzuBookService to get book for user
-        domain_book = kuzu_book_service.get_book_by_uid_sync(book_id, current_user.id)
+        domain_book = book_service.get_book_by_uid_sync(book_id, current_user.id)
         
         if not domain_book:
             return jsonify({
@@ -249,7 +247,7 @@ def create_book():
         domain_book = parse_book_data(data)
         
         # Create book using KuzuBookService
-        created_book = kuzu_book_service.create_book_sync(domain_book, current_user.id)
+        created_book = book_service.create_book_sync(domain_book, current_user.id)
         
         if not created_book:
             return jsonify({
@@ -291,7 +289,7 @@ def update_book(book_id):
         updates = {k: v for k, v in data.items() if k != 'id'}
         
         # Update book using KuzuBookService
-        updated_book = kuzu_book_service.update_book_sync(book_id, current_user.id, **updates)
+        updated_book = book_service.update_book_sync(book_id, current_user.id, **updates)
         
         if not updated_book:
             return jsonify({
@@ -321,7 +319,7 @@ def delete_book(book_id):
     """Delete a book."""
     try:
         # Delete book using KuzuBookService
-        success = kuzu_book_service.delete_book_sync(book_id, current_user.id)
+        success = book_service.delete_book_sync(book_id, current_user.id)
         
         if not success:
             return jsonify({
@@ -357,7 +355,7 @@ def search_books():
         author = request.args.get('author', '').strip()
         
         # Use KuzuBookService to get user's books
-        books = kuzu_book_service.get_user_books_sync(str(current_user.id))
+        books = book_service.get_user_books_sync(str(current_user.id))
         
         # Apply filters
         filtered_books = []

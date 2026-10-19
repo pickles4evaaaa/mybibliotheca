@@ -33,6 +33,96 @@ except Exception:
     _SLOW_QUERY_MS = 150
 _VERBOSE_INIT = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() in ('1', 'true', 'on', 'yes') or \
                 os.getenv('KUZU_DEBUG', 'false').lower() in ('1', 'true', 'on', 'yes')
+_KUZU_MUTATION_WORDS = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DROP|ALTER|COPY|REMOVE|ADD)\b", re.IGNORECASE)
+_KUZU_NONDETERMINISTIC_WORDS = re.compile(r"\b(rand|random|current_timestamp|current_date|now)\s*\(", re.IGNORECASE)
+_KUZU_CACHE_BYPASS_UNTIL = 0.0
+
+
+class _CachedKuzuResult:
+    """Minimal replayable QueryResult interface for Redis hits and misses."""
+
+    def __init__(self, columns: list[str], rows: list[list[Any]]):
+        self._columns = columns
+        self._rows = rows
+        self._index = 0
+
+    def has_next(self) -> bool:
+        return self._index < len(self._rows)
+
+    def get_next(self) -> list[Any]:
+        if not self.has_next():
+            raise StopIteration
+        row = self._rows[self._index]
+        self._index += 1
+        return row
+
+    def get_column_names(self) -> list[str]:
+        return list(self._columns)
+
+    def get_num_tuples(self) -> int:
+        return len(self._rows)
+
+    def get_as_df(self):
+        try:
+            import pandas as pd
+        except ImportError as exc:
+            raise RuntimeError("pandas is required for get_as_df()") from exc
+        return pd.DataFrame(self._rows, columns=self._columns)
+
+
+def _kuzu_cache_enabled() -> bool:
+    return (
+        os.getenv('KUZU_REDIS_CACHE_ENABLED', 'false').lower() in ('1', 'true', 'yes', 'on')
+        and bool(os.getenv('CACHE_REDIS_URL') or os.getenv('REDIS_URL'))
+        and time.monotonic() >= _KUZU_CACHE_BYPASS_UNTIL
+    )
+
+
+def _is_kuzu_mutation(query: str) -> bool:
+    return bool(_KUZU_MUTATION_WORDS.search(query or ''))
+
+
+def _is_cacheable_kuzu_read(query: str) -> bool:
+    if not query or _is_kuzu_mutation(query) or _KUZU_NONDETERMINISTIC_WORDS.search(query):
+        return False
+    # Only cache complete, deterministic read queries.  Procedures are
+    # excluded because their side effects cannot be inferred from the query.
+    upper = query.upper()
+    return 'RETURN' in upper and not re.search(r"\bCALL\b", upper)
+
+
+def _invalidate_kuzu_cache() -> None:
+    global _KUZU_CACHE_BYPASS_UNTIL
+    try:
+        from app.infrastructure import redis_cache
+
+        redis_cache.invalidate_tags('kuzu:graph')
+    except Exception:
+        # Kuzu has already committed its write.  Keep local requests off Redis
+        # briefly if invalidation is unavailable; the short cache TTL also
+        # bounds the stale window if Redis itself is unreachable.
+        _KUZU_CACHE_BYPASS_UNTIL = time.monotonic() + 30.0
+        logger.exception("Redis cache invalidation failed after Kuzu mutation")
+
+
+class _ObservedKuzuConnection:
+    """Proxy connections so writes through multi-query workflows invalidate."""
+
+    def __init__(self, connection: Any):
+        self._connection = connection
+
+    def execute(self, query: str, params: Optional[Dict[str, Any]] = None):
+        is_mutation = _is_kuzu_mutation(query)
+        if is_mutation:
+            # Invalidate before and after to cover readers that overlap a write.
+            _invalidate_kuzu_cache()
+        result = self._connection.execute(query, params or {})
+        if is_mutation:
+            _invalidate_kuzu_cache()
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._connection, name)
 
 
 class SafeKuzuManager:
@@ -88,6 +178,7 @@ class SafeKuzuManager:
         self._quiesce_condition = threading.Condition(self._lock)
         self._writes_quiesced = False
         self._pending_quiesce_reason: Optional[str] = None
+        self._permanently_quiesced = False
 
         # Shutdown marker path (directory containing DB)
         self._db_dir = Path(self.database_path).parent if Path(self.database_path).suffix else Path(self.database_path)
@@ -222,31 +313,75 @@ class SafeKuzuManager:
     # Quiesce (write pause) logic
     # ------------------------------------------------------------------
     @contextmanager
-    def quiesce_for_backup(self, reason: str = 'backup'):
-        """Pause new connections to allow a consistent filesystem copy.
+    def quiesce_for_backup(
+        self,
+        reason: str = 'backup',
+        *,
+        allowed_active_connections: int = 0,
+        timeout_seconds: float = 30.0,
+    ):
+        """Block new Kuzu connections until existing operations have drained.
 
-        Waits until active connections drain then yields.
+        A timeout is an error: taking a backup or migration snapshot while
+        writes may still be in flight can produce an inconsistent archive.
+        A migration may acquire its dedicated read connection first and pass
+        ``allowed_active_connections=1`` so that only that connection remains.
         """
+        allowed = max(0, int(allowed_active_connections))
+        timeout = max(0.0, float(timeout_seconds))
         with self._lock:
-            # Signal quiesce
+            if self._writes_quiesced:
+                raise RuntimeError(
+                    f"Kuzu is already quiesced for {self._pending_quiesce_reason or 'another operation'}"
+                )
             self._writes_quiesced = True
             self._pending_quiesce_reason = reason
-            # Wait for active connections to finish
-            wait_start = time.time()
-            while self._connection_count > 0:
-                self._quiesce_condition.wait(timeout=1.0)
-                if time.time() - wait_start > 30:
-                    logger.warning("[KUZU] Quiesce wait exceeded 30s; proceeding anyway")
-                    break
-            logger.info(f"[KUZU] Writes quiesced for {reason}")
         try:
+            with self._lock:
+                wait_start = time.monotonic()
+                while self._connection_count > allowed:
+                    remaining = timeout - (time.monotonic() - wait_start)
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"Kuzu connections did not drain for {reason}; "
+                            f"active={self._connection_count}, allowed={allowed}"
+                        )
+                    self._quiesce_condition.wait(timeout=min(1.0, remaining))
+                logger.info("[KUZU] Connections quiesced for %s (active=%s)", reason, self._connection_count)
             yield
         finally:
             with self._lock:
-                self._writes_quiesced = False
-                self._pending_quiesce_reason = None
+                if not self._permanently_quiesced:
+                    self._writes_quiesced = False
+                    self._pending_quiesce_reason = None
                 self._quiesce_condition.notify_all()
-                logger.info("[KUZU] Writes unquiesced")
+                logger.info(
+                    "[KUZU] Quiesce %s for %s",
+                    "retained after PostgreSQL cutover" if self._permanently_quiesced else "released",
+                    reason,
+                )
+
+    def retain_quiesce_for_postgres_cutover(self) -> None:
+        """Permanently block this process from using Kuzu after cutover commits."""
+        with self._lock:
+            if (
+                not self._writes_quiesced
+                or self._pending_quiesce_reason != "postgres_migration_snapshot"
+            ):
+                raise RuntimeError("Kuzu cutover hold requires the active PostgreSQL migration quiesce")
+            self._permanently_quiesced = True
+            self._writes_quiesced = True
+            self._pending_quiesce_reason = "postgres_cutover_restart_required"
+
+    def release_postgres_cutover_hold(self) -> None:
+        """Undo a not-yet-committed cutover hold if backend-state persistence fails."""
+        with self._lock:
+            if not self._permanently_quiesced:
+                return
+            self._permanently_quiesced = False
+            self._writes_quiesced = False
+            self._pending_quiesce_reason = None
+            self._quiesce_condition.notify_all()
 
     # ------------------------------------------------------------------
     # Corruption / anomaly logging
@@ -505,6 +640,16 @@ class SafeKuzuManager:
         thread_info = self._get_thread_info()
         connection_id = None
 
+        # Keep missed legacy call sites from silently writing to the retained
+        # Kuzu source after a verified PostgreSQL cutover. The source database
+        # stays on disk as the migration archive/rollback artifact, but the
+        # application must have exactly one writable persistence backend.
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() != "kuzu":
+            raise RuntimeError(
+                "Kuzu access is disabled because PostgreSQL is the active persistence backend"
+            )
+
         # Fast-path: if previous fatal init error cached, raise immediately without lock contention
         if self._fatal_init_error is not None:
             raise self._fatal_init_error
@@ -534,6 +679,8 @@ class SafeKuzuManager:
             
             # Respect quiesce state (wait until unquiesced)
             while self._writes_quiesced:
+                if self._permanently_quiesced:
+                    raise RuntimeError("Kuzu access is disabled after PostgreSQL cutover; restart the application")
                 # Allow integrity probe to still function (it calls get_connection too but shouldn't when quiesced for backup)
                 logger.debug(f"[THREAD-{thread_info['thread_id']}:{thread_info['thread_name']}] Waiting for quiesce release (reason={self._pending_quiesce_reason})")
                 self._quiesce_condition.wait(timeout=1.0)
@@ -566,7 +713,7 @@ class SafeKuzuManager:
         
         # Yield connection for use (outside the lock)
         try:
-            yield connection
+            yield _ObservedKuzuConnection(connection)
             
         except Exception as e:
             # Check if this is an expected error that should be logged as debug
@@ -727,6 +874,35 @@ class SafeKuzuManager:
             for k, v in list(sanitized_params.items()):
                 if _looks_like_datetime_key(k) and isinstance(v, str) and v.strip() == '':
                     sanitized_params[k] = None
+        cacheable = _kuzu_cache_enabled() and _is_cacheable_kuzu_read(query)
+        cache_key = None
+        cache_tags = ('kuzu:graph',)
+        cache_snapshot = None
+        if cacheable:
+            try:
+                from app.infrastructure import redis_cache
+
+                cache_key = json.dumps(
+                    {
+                        'query': query,
+                        'params': params or {},
+                        'user_id': user_id,
+                        'operation': operation,
+                        'database': self.database_path,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(',', ':'),
+                    default=lambda value: value.isoformat() if hasattr(value, 'isoformat') else str(value),
+                )
+                cache_snapshot = redis_cache.snapshot_tag_versions(cache_tags)
+                hit, payload = redis_cache.get_json(cache_key, tags=cache_tags, snapshot=cache_snapshot)
+                if hit and isinstance(payload, dict) and isinstance(payload.get('columns'), list) and isinstance(payload.get('rows'), list):
+                    return _CachedKuzuResult(payload['columns'], payload['rows'])
+            except Exception as cache_error:
+                logger.debug("Kuzu Redis cache read bypassed: %s", cache_error)
+                cacheable = False
+
         with self.get_connection(user_id=user_id, operation=operation) as conn:
             t0 = time.time()
             result = conn.execute(query, sanitized_params or params or {})
@@ -737,6 +913,39 @@ class SafeKuzuManager:
                     print(f"[KUZU] ◀ execute_query done in {dt:.2f}s")
                 except Exception:
                     pass
+
+            if cacheable and cache_key is not None:
+                try:
+                    columns = list(result.get_column_names())
+                    rows: list[list[Any]] = []
+                    while result.has_next():
+                        row = result.get_next()
+                        rows.append(list(row) if isinstance(row, (tuple, list)) else [row])
+                    replayable_result = _CachedKuzuResult(columns, rows)
+                except Exception as cache_error:
+                    logger.debug("Kuzu Redis result materialization bypassed: %s", cache_error)
+                    # Reading the result failed while it was being materialized;
+                    # returning the now partially-consumed cursor would silently
+                    # drop rows, so surface the actual cursor failure.
+                    raise
+                else:
+                    try:
+                        payload = {'columns': columns, 'rows': rows}
+                        ttl = min(300, max(1, int(os.getenv('KUZU_REDIS_CACHE_TTL_SECONDS', '10'))))
+                        from app.infrastructure import redis_cache
+
+                        redis_cache.set_json(
+                            cache_key,
+                            payload,
+                            ttl_seconds=ttl,
+                            tags=cache_tags,
+                            snapshot=cache_snapshot,
+                        )
+                    except Exception as cache_error:
+                        logger.debug("Kuzu Redis cache population bypassed: %s", cache_error)
+                    # Preserve the query's rows even when Redis is offline or
+                    # contains a value that cannot be JSON serialized.
+                    return replayable_result
             
             # Handle both single QueryResult and list[QueryResult]
             if isinstance(result, list):

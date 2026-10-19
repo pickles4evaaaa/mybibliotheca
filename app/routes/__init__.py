@@ -150,7 +150,7 @@ def bulk_delete_books():
     """Delete multiple books selected from the library view."""
     from flask import request, flash, redirect, url_for
     from flask_login import current_user, login_required
-    from app.services.kuzu_service_facade import KuzuServiceFacade
+    from app.services import book_service
     
     # Check authentication
     if not current_user.is_authenticated:
@@ -160,9 +160,6 @@ def bulk_delete_books():
     print(f"Request method: {request.method}")
     print(f"Request form keys: {list(request.form.keys())}")
     print(f"Full form data: {dict(request.form)}")
-    
-    # Initialize service
-    book_service = KuzuServiceFacade()
     
     # Try both possible field names
     selected_uids = request.form.getlist('selected_books')

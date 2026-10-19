@@ -3,8 +3,6 @@ from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from app.domain.models import User, MediaType
 from app.services import user_service, book_service, reading_log_service
-from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
-from app.services.kuzu_service_facade import _convert_query_result_to_list  # Reuse helper for query results
 from app.admin import (
     admin_required,
     save_ai_config,
@@ -72,12 +70,16 @@ def setup_status():
     """API endpoint to check setup status - useful for troubleshooting"""
     try:
         user_count = cast(int, user_service.get_user_count_sync())
+        from app.infrastructure.persistence_state import get_active_backend
+        backend = get_active_backend()
         return {
             'setup_completed': user_count > 0,
             'user_count': user_count,
             'csrf_enabled': current_app.config.get('WTF_CSRF_ENABLED', False),
             'debug_mode': current_app.config.get('DEBUG_MODE', False),
-            'kuzu_connected': True  # If we got here, Kuzu is working
+            'persistence_backend': backend,
+            'database_connected': True,
+            'kuzu_connected': backend == 'kuzu',
         }
     except Exception as e:
         return {
@@ -458,29 +460,14 @@ def settings():
         stats['admins'] = user_service.get_admin_count_sync() if hasattr(user_service, 'get_admin_count_sync') else 0  # type: ignore
     except Exception as e:
         current_app.logger.warning(f"Settings stats user counts failed: {e}")
-    # Generic helper to run count queries
-    def _simple_count(cypher: str, key: str):
-        try:
-            result = safe_execute_kuzu_query(cypher)
-            rows = _convert_query_result_to_list(result)
-            if rows:
-                # Row structure may be {'col_0': value} or {'result': value}
-                first = rows[0]
-                val = first.get('col_0') or first.get('result') or 0
-                stats[key] = int(val) if isinstance(val, (int, float)) else 0
-        except Exception as e:
-            current_app.logger.debug(f"Count query for {key} failed: {e}")
-    _simple_count("MATCH (b:Book) RETURN COUNT(b)", 'books')
-    _simple_count("MATCH (p:Person) RETURN COUNT(p)", 'people')
-    _simple_count("MATCH (rl:ReadingLog) RETURN COUNT(rl)", 'reading_logs')
-    # Fallbacks if user-related counts are zero (sync helpers missing or returned 0)
-    if stats['users'] == 0:
-        _simple_count("MATCH (u:User) RETURN COUNT(u)", 'users')
-    if stats['admins'] == 0:
-        _simple_count("MATCH (u:User) WHERE u.is_admin = true RETURN COUNT(u)", 'admins')
-    if stats['active_users'] == 0:
-        # Assume is_active flag; default to treating missing flag as active
-        _simple_count("MATCH (u:User) WHERE coalesce(u.is_active, true) = true RETURN COUNT(u)", 'active_users')
+    # Aggregate counts through the active service facade so this route follows
+    # the same database as user-facing book and reading-log operations.
+    try:
+        stats['books'] = int(book_service.get_total_book_count_sync())
+        stats['people'] = int(book_service.get_total_person_count_sync())
+        stats['reading_logs'] = int(book_service.get_total_reading_log_count_sync())
+    except Exception as e:
+        current_app.logger.debug(f"Settings aggregate stats failed: {e}")
     try:
         if stats['users']:
             stats['avg_books_per_user'] = round(stats['books'] / stats['users'], 2)
@@ -1590,49 +1577,9 @@ def update_timezone():
 
 @auth.route('/debug/user-count')
 def debug_user_count():
-    """Debug route to check user count - TEMPORARY"""
+    """Return the user count through the configured account service."""
     try:
-        
-        # Test multiple methods
-        results = {}
-        
-        # Method 1: Direct service call
-        try:
-            count1 = user_service.get_user_count_sync()
-            results['service_count'] = count1
-        except Exception as e:
-            results['service_error'] = str(e)
-        
-        # Method 2: Direct repository call
-        try:
-            from .infrastructure.kuzu_repositories import KuzuUserRepository
-            user_repo = KuzuUserRepository()
-            from .services.kuzu_async_helper import run_async
-            all_users = run_async(user_repo.get_all(limit=10000))
-            results['repo_count'] = len(all_users)
-        except Exception as e:
-            results['repo_error'] = str(e)
-        
-        # Method 3: Direct SafeKuzuManager call
-        try:
-            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
-            safe_manager = get_safe_kuzu_manager()
-            query_result = safe_manager.execute_query("MATCH (u:User) RETURN COUNT(u) as count")
-            
-            if query_result and hasattr(query_result, 'get_next') and query_result.has_next():
-                count3 = _safe_get_row_value(query_result.get_next(), 0)
-                results['direct_count'] = count3
-            elif query_result and hasattr(query_result, 'get_as_df'):
-                df = query_result.get_as_df()
-                if not df.empty:
-                    count3 = df.iloc[0]['count']
-                    results['direct_count'] = count3
-            else:
-                results['direct_error'] = f"Could not parse result: {query_result}"
-        except Exception as e:
-            results['direct_error'] = str(e)
-        
-        return jsonify(results)
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'service_count': user_service.get_user_count_sync()})
+    except Exception as exc:
+        current_app.logger.warning("User count diagnostic failed: %s", exc)
+        return jsonify({'error': 'user_count_unavailable'}), 500

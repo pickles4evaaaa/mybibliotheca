@@ -1,45 +1,33 @@
+"""Lightweight, backend-neutral database integrity endpoint."""
+
 from flask import Blueprint, jsonify
-from ..utils.safe_kuzu_manager import get_safe_kuzu_manager
 
-# Lightweight health/introspection blueprint to validate DB without side effects
+from app.services import book_service, user_service
 
-db_health = Blueprint('db_health', __name__, url_prefix='/api/db')
+# Lightweight health/introspection blueprint to validate the configured store.
+db_health = Blueprint("db_health", __name__, url_prefix="/api/db")
 
-@db_health.get('/integrity')
+
+@db_health.get("/integrity")
 def db_integrity():
-    """Return basic integrity info: user/book counts and corruption flags (if any)."""
-    mgr = get_safe_kuzu_manager()
-    info = {
-        'database_path': getattr(mgr, 'database_path', 'unknown'),
-        'initialized': getattr(mgr, '_is_initialized', False),
-    }
-    user_count = 0
-    book_count = 0
+    """Return basic integrity info: user/book counts and backend readiness."""
+    info = {"initialized": False, "backend": "unknown"}
     try:
-        from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
-        uc = safe_execute_kuzu_query("MATCH (u:User) RETURN COUNT(u) as c")
-        bc = safe_execute_kuzu_query("MATCH (b:Book) RETURN COUNT(b) as c")
-        def _extract(res):
-            if not res: return 0
-            if hasattr(res, 'has_next') and res.has_next():
-                row = res.get_next()
-                if isinstance(row, (list, tuple)) and row: return int(row[0])
-            if isinstance(res, list) and res:
-                first = res[0]
-                if isinstance(first, dict):
-                    for k in ('c','count','col_0'): 
-                        if k in first:
-                            try: return int(first[k])
-                            except Exception: pass
-                elif isinstance(first, (list, tuple)) and first:
-                    try: return int(first[0])
-                    except Exception: pass
-            return 0
-        user_count = _extract(uc)
-        book_count = _extract(bc)
-    except Exception as e:
-        info['query_error'] = str(e)
-    info['user_count'] = user_count
-    info['book_count'] = book_count
-    info['empty_database'] = (user_count == 0 and book_count == 0)
+        facade = getattr(book_service, "_service", None)
+        if facade is None:
+            # Resolve the lazy service and keep the health check consistent
+            # with normal application traffic.
+            from app.services import _get_book_service
+            facade = _get_book_service()
+        info["backend"] = "postgres" if hasattr(facade, "store") else "kuzu"
+        user_count = int(user_service.get_user_count_sync())
+        book_count = int(book_service.get_total_book_count_sync())
+        info.update(
+            initialized=True,
+            user_count=user_count,
+            book_count=book_count,
+            empty_database=(user_count == 0 and book_count == 0),
+        )
+    except Exception as exc:
+        info.update(query_error=str(exc), user_count=0, book_count=0, empty_database=True)
     return jsonify(info)

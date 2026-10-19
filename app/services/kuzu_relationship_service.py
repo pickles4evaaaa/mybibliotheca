@@ -294,9 +294,9 @@ class KuzuRelationshipService:
                 location_name = location_id  # Default fallback
                 try:
                     from app.utils.safe_kuzu_manager import safe_get_connection
-                    from app.location_service import LocationService
+                    from app.services import get_location_service
                     
-                    location_service = LocationService()
+                    location_service = get_location_service()
                     location = location_service.get_location(location_id)
                     if location:
                         location_name = location.name

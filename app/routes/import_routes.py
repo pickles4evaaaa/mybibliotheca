@@ -318,8 +318,8 @@ async def _ensure_unassigned_reading_log_book(user_id: str,
 
     try:
         if location_service is None:
-            from app.location_service import LocationService  # Lazy import to avoid circulars
-            location_service = LocationService()
+            from app.services import get_location_service  # Lazy import to avoid circulars
+            location_service = get_location_service()
             default_location = location_service.get_default_location()
             default_location_id = getattr(default_location, 'id', None) if default_location else None
         if location_service and default_location_id:
@@ -2493,10 +2493,8 @@ async def process_simple_import(import_config):
                             duplicate_existing_id = getattr(add_ex, 'book_id', None)
                             try:
                                 # Merge logic: fill empty fields and append metadata
-                                from app.services.kuzu_book_service import KuzuBookService
-                                from app.services.kuzu_custom_field_service import KuzuCustomFieldService
                                 from app.services.personal_metadata_service import personal_metadata_service
-                                kbs = KuzuBookService(user_id=user_id)
+                                kbs = book_service
                                 existing = await kbs.get_book_by_id(duplicate_existing_id) if duplicate_existing_id else None
                                 updates = {}
 
@@ -2511,7 +2509,7 @@ async def process_simple_import(import_config):
                                     if existing and _needs(getattr(existing, field_name, None)):
                                         updates[field_name] = new_val
                                 if updates and duplicate_existing_id:
-                                    await kbs.update_book(duplicate_existing_id, updates)
+                                    await kbs.update_book(duplicate_existing_id, updates, user_id)
                                     merged_applied = True
 
                                 # Repair duplicate books that were imported
@@ -2520,7 +2518,7 @@ async def process_simple_import(import_config):
                                 # a later import. The operation is idempotent.
                                 if duplicate_existing_id and getattr(simplified_book, 'series', None):
                                     try:
-                                        from app.services.kuzu_series_service import get_series_service
+                                        from app.services import get_series_service
 
                                         series_linked = await get_series_service().ensure_book_series_async(
                                             book_id=duplicate_existing_id,
@@ -2533,7 +2531,7 @@ async def process_simple_import(import_config):
                                     except Exception as series_ex:
                                         print(f"⚠️ [MERGE] Series relationship repair failed: {series_ex}")
                                 try:
-                                    cfs = KuzuCustomFieldService()
+                                    cfs = custom_field_service
                                     gmeta = simplified_book.global_custom_metadata or {}
                                     pmeta = getattr(simplified_book, 'personal_custom_metadata', None) or {}
                                     if gmeta or pmeta:
@@ -3690,10 +3688,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
     Returns:
         Tuple of (success: bool, custom_fields_created: dict)
     """
-    from app.services.kuzu_custom_field_service import KuzuCustomFieldService
-    
-    
-    custom_field_service = KuzuCustomFieldService()
+    from app.services import custom_field_service
     custom_fields_to_create = []
     
     try:
@@ -4612,8 +4607,8 @@ async def _process_final_reading_history_import(task_id, job_data, book_resoluti
     from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
     # Lazy import location service only if needed
     try:
-        from app.location_service import LocationService
-        location_service = LocationService()
+        from app.services import get_location_service
+        location_service = get_location_service()
         default_location_obj = location_service.get_default_location()
         default_location_id = getattr(default_location_obj, 'id', None) if default_location_obj else None
     except Exception:

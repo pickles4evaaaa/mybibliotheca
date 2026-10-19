@@ -174,9 +174,77 @@ class SimplifiedBookService:
     """
     
     def __init__(self):
-        # Use global safe connection management instead of separate instance
-        self.custom_field_service = KuzuCustomFieldService()
+        # Avoid constructing the Kuzu custom-field adapter after PostgreSQL
+        # has been selected. Legacy installs still use their existing adapter.
+        try:
+            from app.infrastructure.persistence_state import get_active_backend
+            if get_active_backend() == "postgres":
+                from app.services import _get_book_service
+                self.custom_field_service = _get_book_service().custom_field_service
+            else:
+                self.custom_field_service = KuzuCustomFieldService()
+        except Exception:
+            self.custom_field_service = KuzuCustomFieldService()
         # Using global safe_execute_kuzu_query for thread-safe database access
+
+    @staticmethod
+    def _is_postgres_backend() -> bool:
+        from app.infrastructure.persistence_state import get_active_backend
+        return get_active_backend() == "postgres"
+
+    def _to_domain_book(self, book_data: SimplifiedBook) -> Book:
+        """Convert CSV/API import data into the shared bibliographic model."""
+        contributor_specs = (
+            (getattr(book_data, "author", None), ContributionType.AUTHORED),
+            (getattr(book_data, "additional_authors", None), ContributionType.CO_AUTHORED),
+            (getattr(book_data, "narrator", None), ContributionType.NARRATED),
+            (getattr(book_data, "editor", None), ContributionType.EDITED),
+            (getattr(book_data, "translator", None), ContributionType.TRANSLATED),
+            (getattr(book_data, "illustrator", None), ContributionType.ILLUSTRATED),
+        )
+        contributors = []
+        seen = set()
+        for raw_names, role in contributor_specs:
+            if not raw_names:
+                continue
+            names = raw_names if isinstance(raw_names, (list, tuple)) else re.split(r"[,;|]", str(raw_names))
+            for name in names:
+                name = str(name or "").strip()
+                key = (name.casefold(), role.value)
+                if name and key not in seen:
+                    seen.add(key)
+                    person = Person(name=name)
+                    contributors.append(BookContribution(
+                        person_id="", contribution_type=role, order=len(contributors), person=person,
+                    ))
+        categories = [
+            value if isinstance(value, Category) else Category(name=str(value).strip())
+            for value in (getattr(book_data, "categories", None) or [])
+            if str(getattr(value, "name", value) or "").strip()
+        ]
+        series_name = str(getattr(book_data, "series", None) or "").strip()
+        publisher_name = str(getattr(book_data, "publisher", None) or "").strip()
+        return Book(
+            title=str(getattr(book_data, "title", "") or "").strip(),
+            subtitle=getattr(book_data, "subtitle", None),
+            isbn13=getattr(book_data, "isbn13", None), isbn10=getattr(book_data, "isbn10", None),
+            asin=getattr(book_data, "asin", None), description=getattr(book_data, "description", None),
+            published_date=self._convert_to_date(getattr(book_data, "published_date", None)),
+            page_count=getattr(book_data, "page_count", None), language=getattr(book_data, "language", None) or "en",
+            cover_url=getattr(book_data, "cover_url", None), google_books_id=getattr(book_data, "google_books_id", None),
+            openlibrary_id=getattr(book_data, "openlibrary_id", None), average_rating=getattr(book_data, "average_rating", None),
+            rating_count=getattr(book_data, "rating_count", None),
+            custom_metadata=dict(getattr(book_data, "global_custom_metadata", None) or {}),
+            contributors=contributors,
+            publisher=Publisher(name=publisher_name) if publisher_name else None,
+            series=Series(name=series_name) if series_name else None,
+            series_volume=getattr(book_data, "series_volume", None),
+            series_order=getattr(book_data, "series_order", None),
+            categories=categories,
+            raw_categories=getattr(book_data, "raw_categories", None),
+            media_type=getattr(book_data, "media_type", None),
+            quantity=getattr(book_data, "quantity", 1) or 1,
+        )
     
     def _convert_to_date(self, date_value):
         """Convert various date formats to a format suitable for KuzuDB DATE type."""
@@ -250,6 +318,10 @@ class SimplifiedBookService:
         Create a book as a standalone global entity.
         Returns book_id if successful, None if failed.
         """
+        if self._is_postgres_backend():
+            from app.services import _get_book_service
+            created = _get_book_service().create_book_sync(self._to_domain_book(book_data), "")
+            return str(created.id) if created and created.id else None
         try:
             book_id = str(uuid.uuid4())
             
@@ -936,6 +1008,53 @@ class SimplifiedBookService:
         In universal library: Books are shared, but users can have personal annotations.
         Returns True if successful, False if failed.
         """
+        if self._is_postgres_backend():
+            try:
+                if annotation.date_added is None:
+                    annotation.date_added = datetime.now(timezone.utc)
+                from app.services import _get_book_service
+
+                facade = _get_book_service()
+                metadata = dict(annotation.custom_metadata or {})
+                existing = facade.library_service.get_user_book_sync(
+                    str(annotation.user_id), str(annotation.book_id),
+                )
+                if existing is None:
+                    facade.add_book_to_user_library_sync(
+                        str(annotation.user_id), str(annotation.book_id),
+                        reading_status=annotation.reading_status or "",
+                        ownership_status="",
+                        custom_metadata=metadata,
+                    )
+                    existing = facade.library_service.get_user_book_sync(
+                        str(annotation.user_id), str(annotation.book_id),
+                    )
+                if existing is None:
+                    return False
+
+                updates = {
+                    "reading_status": annotation.reading_status or "",
+                    "date_added": annotation.date_added,
+                    "user_rating": annotation.user_rating,
+                    "personal_notes": annotation.personal_notes,
+                    "custom_metadata": metadata,
+                }
+                facade.library_service.update_user_book_sync(
+                    str(annotation.user_id), str(annotation.book_id), updates,
+                )
+                if metadata:
+                    fields_ready = facade.custom_field_service.ensure_custom_fields_exist(
+                        str(annotation.user_id), {}, metadata,
+                    )
+                    if not fields_ready or not facade.custom_field_service.save_custom_metadata_sync(
+                        str(annotation.book_id), str(annotation.user_id), metadata,
+                    ):
+                        return False
+                return True
+            except Exception as e:
+                print(f"Error creating PostgreSQL user annotation: {e}")
+                return False
+
         try:
             # Ensure date_added is set
             if annotation.date_added is None:
@@ -1003,6 +1122,11 @@ class SimplifiedBookService:
     
     def find_book_by_isbn(self, isbn: str) -> Optional[str]:
         """Find existing book by ISBN. Returns book_id if found."""
+        if self._is_postgres_backend():
+            from app.services import _get_book_service
+            normalized_isbn = ''.join(c for c in str(isbn).strip().upper() if c.isdigit() or c == 'X')
+            book = _get_book_service().get_book_by_isbn_sync(normalized_isbn)
+            return str(book.id) if book and book.id else None
         try:
             # Normalize ISBN: keep digits and the letter X (uppercase)
             normalized_isbn = ''.join(c for c in str(isbn).strip().upper() if c.isdigit() or c == 'X')
@@ -1030,6 +1154,11 @@ class SimplifiedBookService:
 
     def find_book_by_title_author(self, title: str, author: str) -> Optional[str]:
         """Find existing book by exact title and author match. Returns book_id if found."""
+        if self._is_postgres_backend():
+            from app.services import _get_book_service
+            facade = _get_book_service()
+            book = facade.get_book_by_title_author_sync(title, author)
+            return str(book.id) if book and book.id else None
         try:
             # Normalize title and author for comparison
             normalized_title = title.lower().strip()
@@ -1515,6 +1644,49 @@ class SimplifiedBookService:
         This is the main entry point for the simplified architecture.
         Raises BookAlreadyExistsError if book already exists in communal library.
         """
+        if self._is_postgres_backend():
+            if not media_type:
+                media_type = get_default_book_format()
+            else:
+                try:
+                    media_type = MediaType(media_type).value
+                except Exception:
+                    media_type = get_default_book_format()
+            book_data.media_type = media_type
+            book_id = await self.find_or_create_book(book_data)
+            if not book_id:
+                return False
+            from app.services import _get_book_service
+            facade = _get_book_service()
+            custom_values = dict(getattr(book_data, "personal_custom_metadata", None) or {})
+            custom_values.update(custom_metadata or {})
+            updates: dict[str, Any] = {
+                "reading_status": reading_status or getattr(book_data, "reading_status", None) or "",
+                "ownership_status": ownership_status or "owned",
+                "media_type": media_type,
+                "user_rating": user_rating if user_rating is not None else getattr(book_data, "user_rating", None),
+                "personal_notes": personal_notes if personal_notes is not None else getattr(book_data, "personal_notes", None),
+                "custom_metadata": custom_values,
+            }
+            start_date_value = custom_values.pop("start_date", getattr(book_data, "date_started", None))
+            finish_date_value = custom_values.pop("finish_date", getattr(book_data, "date_read", None))
+            updates["custom_metadata"] = custom_values
+            start_date = self._convert_to_date(start_date_value)
+            finish_date = self._convert_to_date(finish_date_value)
+            if start_date:
+                updates["start_date"] = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
+            if finish_date:
+                updates["finish_date"] = datetime.combine(finish_date, datetime.min.time(), tzinfo=timezone.utc)
+            if location_id:
+                updates["location_id"] = location_id
+            inserted = facade.add_book_to_user_library_sync(
+                str(user_id), str(book_id), updates["reading_status"], updates["ownership_status"],
+                [str(location_id)] if location_id else None, custom_values,
+            )
+            if not inserted and facade.get_user_book_sync(str(user_id), str(book_id)) is None:
+                return False
+            facade.update_book_sync(str(book_id), str(user_id), **updates)
+            return True
         try:
             # Validate and set media_type on book_data BEFORE creating the book
             if not media_type:
@@ -1545,10 +1717,10 @@ class SimplifiedBookService:
             # Step 3: Handle location assignment (NEW)
             if location_id:
                 try:
-                    from app.location_service import LocationService
+                    from app.services import get_location_service
                     from app.utils.safe_kuzu_manager import safe_get_connection
                     
-                    location_service = LocationService()
+                    location_service = get_location_service()
                     location_success = location_service.add_book_to_location(book_id, location_id, user_id)
                     if location_success:
                         print(f"✅ [LOCATION_SERVICE] Successfully added book {book_id} to location {location_id}")
@@ -1561,10 +1733,10 @@ class SimplifiedBookService:
                     traceback.print_exc()
             else:
                 try:
-                    from app.location_service import LocationService
+                    from app.services import get_location_service
                     from app.utils.safe_kuzu_manager import safe_get_connection
                     
-                    location_service = LocationService()
+                    location_service = get_location_service()
                     
                     # Get or create default location (universal)
                     default_location = location_service.get_default_location()

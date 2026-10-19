@@ -51,7 +51,7 @@ def _dprint(*args, **kwargs):
 
 # Redirect module print to conditional debug print
 print = _dprint
-from .location_service import LocationService
+from .services import get_location_service
 from .forms import SetupForm
 from .debug_utils import debug_route
 from .utils.safe_kuzu_manager import SafeKuzuManager
@@ -1434,7 +1434,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
         if location_name:
             try:
                 # Initialize location service
-                location_service = LocationService()
+                location_service = get_location_service()
                 
                 # Create the location
                 location = location_service.create_location(
@@ -1762,10 +1762,6 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 print(f"🏠 [SETUP] Site config: {site_config}")
                 logger.info(f"Creating location: {location_name}")
                 
-                # Initialize location service with safe Kuzu connection
-                print(f"🏠 [SETUP] Getting safe Kuzu connection...")
-                from app.utils.safe_kuzu_manager import safe_get_connection
-                
                 # Create location service
                 admin_user_id = getattr(admin_user, 'id', None)
                 print(f"🏠 [SETUP] Admin user ID for location creation: {admin_user_id}")
@@ -1774,7 +1770,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                     raise Exception("Admin user has no ID")
                 
                 print(f"🏠 [SETUP] Creating LocationService...")
-                location_service = LocationService()
+                location_service = get_location_service()
                 print(f"🏠 [SETUP] LocationService created: {location_service}")
                 
                 # Create the location
@@ -2033,19 +2029,6 @@ def handle_onboarding_completion(onboarding_data: Dict):
         admin_username = admin_data.get('username', 'UNKNOWN')
         print(f"🎉 [COMPLETION] Looking for admin user: {admin_username}")
         print(f"🎉 [COMPLETION] Admin data: {admin_data}")
-        
-        # Add debugging: let's see what users actually exist
-        try:
-            from .kuzu_integration import KuzuIntegrationService
-            kuzu_service = KuzuIntegrationService()
-            kuzu_service.initialize()
-            if kuzu_service.db is not None:
-                all_users = kuzu_service.db.query("MATCH (u:User) RETURN u.username, u.id, u.email LIMIT 10")
-                logger.info(f"All users in database: {all_users}")
-            else:
-                logger.warning("Database connection is None during completion")
-        except Exception as debug_error:
-            logger.error(f"Could not query users during completion: {debug_error}")
         
         admin_user = user_service.get_user_by_username_sync(admin_username)
         

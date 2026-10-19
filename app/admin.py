@@ -16,7 +16,11 @@ import pytz
 import os
 import re
 import logging
-from app.utils.safe_kuzu_manager import SafeKuzuManager, get_safe_kuzu_manager
+import signal
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from app.domain.models import MediaType
 from app.utils.password_policy import (
     ENV_PASSWORD_MIN_LENGTH_KEY,
@@ -28,6 +32,12 @@ from app.utils.password_policy import (
 )
 
 admin = Blueprint('admin', __name__, url_prefix='/admin')
+
+_PERSISTENCE_MIGRATION_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="postgres-cutover")
+_PERSISTENCE_MIGRATION_LOCK = threading.RLock()
+_PERSISTENCE_MIGRATION_JOB: dict[str, object] = {"status": "idle"}
+_CUTOVER_RESTART_LOCK = threading.Lock()
+_CUTOVER_RESTART_PID: int | None = None
 
 _MEDIA_TYPE_VALUES = {mt.value for mt in MediaType}
 _FRIENDLY_MEDIA_TYPE_LABELS = {
@@ -947,7 +957,6 @@ def delete_user(user_id):
 @admin_required
 def settings():
     """Admin settings page"""
-    safe_manager = get_safe_kuzu_manager()
     existing_config = load_system_config()
     
     if request.method == 'POST':
@@ -1140,18 +1149,13 @@ def api_delete_user(user_id):
             _log('info', f"[USER_DELETE_DEBUG_API] service.delete returned {deleted}")
         except Exception as de:
             _log('error', f"[USER_DELETE_DEBUG_API] service.delete exception {de}")
-        exists_flag = True
+        exists_after = True
         try:
-            repo = getattr(user_service, 'user_repo', None)
-            if repo and hasattr(repo, 'safe_manager'):
-                res = repo.safe_manager.execute_query("MATCH (u:User {id: $uid}) RETURN COUNT(u) as c", {"uid": user_id})
-                from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
-                data = _cvt(res)
-                exists_flag = bool(data and int(data[0].get('c',0))>0)
-            _log('info', f"[USER_DELETE_DEBUG_API] exists_after={exists_flag}")
+            exists_after = user_service.get_user_by_id_sync(user_id) is not None
+            _log('info', f"[USER_DELETE_DEBUG_API] exists_after={exists_after}")
         except Exception as ce:
             _log('error', f"[USER_DELETE_DEBUG_API] existence check exception {ce}")
-        return jsonify({'ok': deleted and not exists_flag, 'deleted': deleted, 'exists_after': exists_flag})
+        return jsonify({'ok': deleted, 'deleted': deleted, 'exists_after': exists_after})
     except Exception as e:
         _log('error', f"[USER_DELETE_DEBUG_API] fatal error {e}")
         return jsonify({'ok': False, 'error': 'server error'}), 500
@@ -1710,48 +1714,313 @@ def unlock_user_account(user_id):
         flash('Error unlocking user account.', 'danger')
         return redirect(url_for('admin.user_detail', user_id=user_id))
 
-@admin.route('/migration')
+def _persistence_migration_snapshot() -> dict[str, object]:
+    from .infrastructure.persistence_state import get_persistence_state
+    from .infrastructure.persistence_upgrade import get_verified_kuzu_backup
+    from .infrastructure.postgres_migration import (
+        APPLICATION_CUTOVER_BLOCKERS,
+        _result_rows,
+        discover_kuzu_schema,
+    )
+    from .infrastructure.postgres_store import get_postgres_store
+
+    state = get_persistence_state()
+    # Read the in-process job before touching Kuzu. The worker intentionally
+    # holds the Kuzu write gate during snapshot/projection; trying to refresh
+    # source counts from this page while it runs would wait on that same gate.
+    with _PERSISTENCE_MIGRATION_LOCK:
+        job = dict(_PERSISTENCE_MIGRATION_JOB)
+    snapshot: dict[str, object] = {
+        'backend': state['backend'],
+        'migration_run_id': state.get('migration_run_id'),
+        'postgres': {'ok': False, 'message': 'PostgreSQL is not configured or unavailable'},
+        'source': {'nodes': [], 'relationships': [], 'total_nodes': 0, 'total_relationships': 0},
+        'cutover_blockers': list(APPLICATION_CUTOVER_BLOCKERS),
+    }
+    backup_record = get_verified_kuzu_backup()
+    snapshot['kuzu_backup'] = {
+        'verified': bool(backup_record),
+        'backup_id': backup_record.get('backup_id') if backup_record else None,
+        'size_bytes': backup_record.get('size_bytes') if backup_record else None,
+        'path_name': Path(backup_record['path']).name if backup_record else None,
+    }
+    try:
+        postgres_store = get_postgres_store()
+        health = postgres_store.health_check()
+        snapshot['postgres'] = {
+            'ok': True,
+            'message': f"Connected to PostgreSQL database {health['database']}",
+        }
+        if state['backend'] == 'kuzu':
+            try:
+                postgres_store.initialize_schema()
+                postgres_store.assert_migration_target_empty()
+            except Exception as target_exc:
+                snapshot['postgres_target_error'] = str(target_exc)
+                snapshot['cutover_blockers'].append(str(target_exc))
+    except Exception as exc:
+        snapshot['postgres'] = {'ok': False, 'message': f"PostgreSQL connection failed: {exc}"}
+
+    if state['backend'] == 'kuzu' and job.get('status') not in ('queued', 'running'):
+        try:
+            from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
+            manager = get_safe_kuzu_manager()
+            node_counts = []
+            relationship_counts = []
+            with manager.get_connection(operation='postgres_migration_preview') as connection:
+                labels, relationships = discover_kuzu_schema(connection)
+                for label in labels:
+                    rows = list(_result_rows(connection.execute(f"MATCH (n:{label}) RETURN COUNT(n)")))
+                    node_counts.append({'name': label, 'count': int(rows[0][0]) if rows else 0})
+                for rel_type, (source, target) in sorted(relationships.items()):
+                    rows = list(_result_rows(connection.execute(
+                        f"MATCH (a:{source})-[r:{rel_type}]->(b:{target}) RETURN COUNT(r)"
+                    )))
+                    relationship_counts.append({'name': rel_type, 'count': int(rows[0][0]) if rows else 0})
+            snapshot['source'] = {
+                'nodes': node_counts,
+                'relationships': relationship_counts,
+                'total_nodes': sum(item['count'] for item in node_counts),
+                'total_relationships': sum(item['count'] for item in relationship_counts),
+            }
+        except Exception as exc:
+            snapshot['source_error'] = str(exc)
+    elif state.get('migration_run_id') and state.get('migration_run_id') != 'native-postgres-install':
+        try:
+            store = get_postgres_store()
+            with store.connection() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status, verified_at FROM bibliotheca_migration_runs WHERE run_id=%s",
+                    (state['migration_run_id'],),
+                )
+                row = cursor.fetchone()
+            snapshot['completed_run'] = {
+                'status': row[0] if row else 'missing',
+                'verified_at': row[1].isoformat() if row and row[1] else None,
+            }
+        except Exception as exc:
+            snapshot['completed_run_error'] = str(exc)
+
+    snapshot['job'] = job
+    if state['backend'] == 'kuzu' and job.get('status') in ('queued', 'running'):
+        snapshot['source_inventory_paused'] = True
+    snapshot['can_start'] = bool(
+        state['backend'] == 'kuzu'
+        and snapshot['postgres'].get('ok')
+        and not snapshot.get('postgres_target_error')
+        and not snapshot.get('source_error')
+        and bool(snapshot['kuzu_backup']['verified'])
+        and not snapshot['cutover_blockers']
+        and job.get('status') not in ('queued', 'running')
+    )
+    return snapshot
+
+
+def _schedule_cutover_worker_restart(flask_app) -> bool:
+    """Ask the Gunicorn master to replace this worker after verified cutover.
+
+    The durable backend marker has already switched and the Kuzu write gate is
+    retained at this point. Gunicorn adds workers to its target count, then
+    replaces this Kuzu worker with one that builds its service registry from
+    PostgreSQL, without requiring an administrator to restart the container.
+    """
+    global _CUTOVER_RESTART_PID
+    worker_pid = os.getpid()
+    with _CUTOVER_RESTART_LOCK:
+        if _CUTOVER_RESTART_PID == worker_pid:
+            return True
+        try:
+            parent_command = Path(f"/proc/{os.getppid()}/cmdline").read_bytes().lower()
+        except OSError:
+            parent_command = b""
+        if b"gunicorn" not in parent_command:
+            flask_app.logger.warning(
+                "PostgreSQL cutover is verified, but no Gunicorn master was detected; "
+                "the application process must be restarted to load the new backend"
+            )
+            return False
+
+        try:
+            delay_seconds = max(1.0, float(os.getenv("POSTGRES_CUTOVER_RESTART_DELAY_SECONDS", "2")))
+        except (TypeError, ValueError):
+            delay_seconds = 2.0
+        try:
+            target_workers = max(1, min(32, int(os.getenv("POSTGRES_WORKERS", os.getenv("WORKERS", "6")))))
+        except (TypeError, ValueError):
+            target_workers = 6
+        master_pid = os.getppid()
+        _CUTOVER_RESTART_PID = worker_pid
+
+        def terminate_worker() -> None:
+            time.sleep(delay_seconds)
+            try:
+                # Kuzu always starts with one worker. Pace TTIN signals so
+                # POSIX signal coalescing cannot drop worker-count increments.
+                for _ in range(max(0, target_workers - 1)):
+                    os.kill(master_pid, signal.SIGTTIN)
+                    time.sleep(0.25)
+                os.kill(worker_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                flask_app.logger.exception("Could not request Gunicorn worker restart after PostgreSQL cutover")
+
+        threading.Thread(
+            target=terminate_worker,
+            name="postgres-cutover-worker-restart",
+            daemon=True,
+        ).start()
+    flask_app.logger.info(
+        "PostgreSQL cutover verified; Gunicorn will restart the Kuzu worker and scale to %s PostgreSQL workers",
+        target_workers,
+    )
+    return True
+
+
+def _run_postgres_migration_job(flask_app, job_id: str) -> None:
+    with flask_app.app_context():
+        try:
+            with _PERSISTENCE_MIGRATION_LOCK:
+                _PERSISTENCE_MIGRATION_JOB.update({'status': 'running', 'job_id': job_id, 'started_at': datetime.now(timezone.utc).isoformat()})
+            from .infrastructure.persistence_state import set_active_backend
+            from .infrastructure.postgres_migration import migrate_kuzu_manager_to_postgres
+            from .infrastructure.postgres_store import get_postgres_store
+            from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
+
+            manager = get_safe_kuzu_manager()
+
+            def activate_verified_run(result):
+                # Keep the source write gate closed before changing the durable
+                # backend marker. Any failure leaves the pending-cutover record
+                # in place for startup recovery.
+                manager.retain_quiesce_for_postgres_cutover()
+                set_active_backend('postgres', migration_run_id=result['run_id'])
+
+            timeout = float(os.getenv('POSTGRES_MIGRATION_QUIESCE_TIMEOUT_SECONDS', '240'))
+            result = migrate_kuzu_manager_to_postgres(
+                manager,
+                get_postgres_store(),
+                quiesce_timeout_seconds=timeout,
+                on_verified=activate_verified_run,
+                require_cutover_ready=True,
+            )
+            with _PERSISTENCE_MIGRATION_LOCK:
+                _PERSISTENCE_MIGRATION_JOB.update({
+                    'status': 'complete', 'job_id': job_id, 'run_id': result['run_id'],
+                    'restart_required': True, 'restart_scheduled': False,
+                    'finished_at': datetime.now(timezone.utc).isoformat(),
+                    'audit': result.get('audit'),
+                })
+            restart_scheduled = _schedule_cutover_worker_restart(flask_app)
+            with _PERSISTENCE_MIGRATION_LOCK:
+                _PERSISTENCE_MIGRATION_JOB.update({
+                    'restart_required': not restart_scheduled,
+                    'restart_scheduled': restart_scheduled,
+                })
+        except Exception as exc:
+            from .infrastructure.postgres_migration import MigrationNotReady
+            with _PERSISTENCE_MIGRATION_LOCK:
+                _PERSISTENCE_MIGRATION_JOB.update({
+                    'status': 'blocked' if isinstance(exc, MigrationNotReady) else 'failed',
+                    'job_id': job_id,
+                    'message': str(exc),
+                    'audit': getattr(exc, 'audit', None),
+                    'finished_at': datetime.now(timezone.utc).isoformat(),
+                })
+            flask_app.logger.exception('PostgreSQL migration job %s failed', job_id)
+
+
+@admin.route('/migration', methods=['GET'])
 @login_required
 @admin_required
 def migration_management():
-    """Migration management page for admins"""
+    """First-upgrade Kuzu to PostgreSQL migration wizard and readiness report."""
     try:
-        from .migration_detector import MigrationDetector
-        detector = MigrationDetector()
-        databases = detector.find_sqlite_databases()
-        
-        migration_info = {
-            'databases_found': len(databases),
-            'migration_available': len(databases) > 0,
-            'databases': []
-        }
-        
-        for db_path in databases:
-            info = detector.analyze_database(db_path)
-            migration_info['databases'].append({
-                'path': db_path,
-                'filename': os.path.basename(db_path),
-                'version': info.get('version', 'unknown'),
-                'books': info.get('total_books', 0),
-                'users': info.get('total_users', 0),
-                'reading_logs': info.get('total_reading_logs', 0),
-                'size_mb': round(os.path.getsize(db_path) / (1024 * 1024), 2) if os.path.exists(db_path) else 0
-            })
-        
-        return render_template('admin/migration.html',
-                             title='Database Migration',
-                             migration_info=migration_info)
-    
-    except Exception as e:
-        _log('error', f"Error loading migration info: {e}")
-        flash('Error loading migration information.', 'danger')
-        return render_template('admin/migration.html',
-                             title='Database Migration',
-                             migration_info={
-                                 'databases_found': 0,
-                                 'migration_available': False,
-                                 'databases': []
-                             })
+        migration_info = _persistence_migration_snapshot()
+        return render_template('admin/migration.html', title='Database Migration', migration_info=migration_info)
+    except Exception as exc:
+        current_app.logger.exception('Error loading persistence migration status')
+        flash('Could not load migration status. Check the application logs.', 'danger')
+        return render_template('admin/migration.html', title='Database Migration', migration_info={
+            'backend': 'unknown', 'postgres': {'ok': False, 'message': str(exc)},
+            'kuzu_backup': {'verified': False, 'backup_id': None, 'size_bytes': None, 'path_name': None},
+            'source': {'nodes': [], 'relationships': [], 'total_nodes': 0, 'total_relationships': 0},
+            'source_error': str(exc), 'source_inventory_paused': False,
+            'job': {'status': 'idle', 'run_id': None, 'message': None},
+            'migration_run_id': None, 'completed_run': None,
+            'cutover_blockers': ['Persistence status could not be verified.'], 'can_start': False,
+        }), 503
+
+
+@admin.route('/migration/start', methods=['POST'])
+@login_required
+@admin_required
+def start_postgres_migration():
+    """Queue a verified cutover only when source, target, and app audits allow it."""
+    global _PERSISTENCE_MIGRATION_JOB
+    if request.form.get('confirm_cutover') != 'yes':
+        flash('Confirm the maintenance window before starting the migration.', 'warning')
+        return redirect(url_for('admin.migration_management'))
+    snapshot = _persistence_migration_snapshot()
+    if not snapshot.get('can_start'):
+        if not snapshot.get('kuzu_backup', {}).get('verified'):
+            flash('Create and verify the Kuzu backup in step 1 before starting the migration.', 'warning')
+        else:
+            flash('Migration is blocked until PostgreSQL is reachable and every cutover blocker is resolved.', 'warning')
+        return redirect(url_for('admin.migration_management'))
+    from .infrastructure.persistence_upgrade import get_verified_kuzu_backup
+    if not get_verified_kuzu_backup(verify_hash=True):
+        flash('The Kuzu backup is missing or failed its integrity check. Create a new backup before migrating.', 'danger')
+        return redirect(url_for('admin.migration_management'))
+    job_id = str(uuid.uuid4())
+    with _PERSISTENCE_MIGRATION_LOCK:
+        if _PERSISTENCE_MIGRATION_JOB.get('status') in ('queued', 'running'):
+            flash('A PostgreSQL migration is already running.', 'info')
+            return redirect(url_for('admin.migration_management'))
+        _PERSISTENCE_MIGRATION_JOB = {'status': 'queued', 'job_id': job_id, 'queued_at': datetime.now(timezone.utc).isoformat()}
+    _PERSISTENCE_MIGRATION_EXECUTOR.submit(_run_postgres_migration_job, current_app._get_current_object(), job_id)
+    flash('Migration started. Library writes are paused while the snapshot and verification run.', 'info')
+    return redirect(url_for('admin.migration_management'))
+
+
+@admin.route('/migration/backup', methods=['POST'])
+@login_required
+@admin_required
+def create_postgres_migration_backup():
+    """Create and verify the required Kuzu backup before enabling cutover."""
+    from .infrastructure.persistence_state import get_active_backend
+    if get_active_backend() != 'kuzu':
+        flash('A Kuzu source backup is only available before PostgreSQL cutover.', 'warning')
+        return redirect(url_for('admin.migration_management'))
+    try:
+        from .infrastructure.persistence_upgrade import record_verified_kuzu_backup
+        from .services.simple_backup_service import get_simple_backup_service
+
+        backup = get_simple_backup_service().create_backup(
+            name='pre_postgres_migration',
+            description='Verified Kuzu source backup created before PostgreSQL migration',
+            reason='pre_postgres_migration',
+        )
+        if backup is None:
+            raise RuntimeError('The backup service did not produce a backup archive')
+        record = record_verified_kuzu_backup(backup.id, backup.file_path)
+        flash(
+            f"Kuzu backup verified ({record['size_bytes'] / (1024 * 1024):.1f} MB). You can now review and start step 2.",
+            'success',
+        )
+    except Exception as exc:
+        _log('error', f"Failed to create pre-migration Kuzu backup: {exc}")
+        flash(f'Kuzu backup failed; migration remains disabled. {exc}', 'danger')
+    return redirect(url_for('admin.migration_management'))
+
+
+@admin.route('/migration/status', methods=['GET'])
+@login_required
+@admin_required
+def postgres_migration_status():
+    """Polling endpoint for the admin migration page."""
+    with _PERSISTENCE_MIGRATION_LOCK:
+        return jsonify(dict(_PERSISTENCE_MIGRATION_JOB))
 
 def get_system_stats():
     """Get system statistics for admin dashboard"""

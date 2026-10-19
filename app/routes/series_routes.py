@@ -10,7 +10,7 @@ from flask_login import login_required, current_user
 import logging
 import uuid, time, traceback
 
-from app.services.kuzu_series_service import get_series_service
+from app.services import get_series_service
 from app.utils.image_processing import process_image_from_filestorage, get_covers_dir
 from pathlib import Path
 
@@ -165,123 +165,44 @@ def upload_series_cover(series_id: str):
 @series_bp.route('/<series_id>/clear_cover', methods=['POST'])
 @login_required
 def clear_series_cover(series_id: str):
-    """Clear the custom (user uploaded) cover only.
-
-    New minimal logic: we simply NULL s.user_cover and set s.custom_cover FALSE.
-    We DO NOT modify any book nodes nor recompute anything. Frontend will fall back
-    to first-book cover on next fetch/detail view load.
-    """
+    """Remove the uploaded cover and reveal the first-book fallback cover."""
     trace_id = uuid.uuid4().hex[:8]
-    t0 = time.time()
-    logger.info(f"[SERIES][CLEAR_COVER][{trace_id}] START series_id=%s user_id=%s", series_id, getattr(current_user, 'id', 'anon'))
+    started = time.time()
     svc = get_series_service()
-    series_obj = None
-    try:
-        series_obj = svc.get_series(series_id)
-    except Exception:
-        logger.exception(f"[SERIES][CLEAR_COVER][{trace_id}] Exception fetching series")
-    if not series_obj:
-        logger.warning(f"[SERIES][CLEAR_COVER][{trace_id}] Series not found")
+    series = svc.get_series(series_id)
+    if not series:
         return jsonify({'success': False, 'error': 'Series not found', 'trace_id': trace_id}), 404
 
-    # Snapshot current state
-    try:
-        logger.debug(
-            f"[SERIES][CLEAR_COVER][{trace_id}] CurrentSeries id=%s name=%r user_cover=%r cover_url=%r custom_cover=%r generated_placeholder=%r",
-            getattr(series_obj, 'id', None),
-            getattr(series_obj, 'name', None),
-            getattr(series_obj, 'user_cover', None),
-            getattr(series_obj, 'cover_url', None),
-            getattr(series_obj, 'custom_cover', None),
-            getattr(series_obj, 'generated_placeholder', None),
-        )
-    except Exception:
-        logger.exception(f"[SERIES][CLEAR_COVER][{trace_id}] Failed logging series snapshot")
+    old_cover = getattr(series, 'user_cover', None) or ''
+    if not svc.update_series_cover(series_id, None, custom=False, generated_placeholder=False):
+        return jsonify({'success': False, 'error': 'Could not clear series cover', 'trace_id': trace_id}), 500
+    updated = svc.get_series(series_id)
+    fallback_cover = getattr(updated, 'cover_url', None) if updated else None
 
-    from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
-    # Updated query: clear user cover then derive fallback first-book cover in same round trip
-    q = (
-        "MATCH (s:Series {id:$id}) "
-        "SET s.user_cover=NULL, s.custom_cover=FALSE "
-        "WITH s "
-        "OPTIONAL MATCH (b:Book)-[:PART_OF_SERIES]->(s) "
-        "WITH s, MIN(CASE WHEN b.published_date IS NULL THEN date('9999-12-31') ELSE b.published_date END) AS firstPub "
-        "OPTIONAL MATCH (fb:Book)-[:PART_OF_SERIES]->(s) "
-        "WHERE (fb.published_date IS NOT NULL AND fb.published_date = firstPub) OR (firstPub = date('9999-12-31') AND fb.published_date IS NULL) "
-        "RETURN s.id, fb.cover_url AS fallback_cover"
-    )
-    params = {"id": series_id}
-    logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] Executing query=%s params=%s", q, params)
-    old_custom = getattr(series_obj, 'user_cover', None) or ''
-    res = None
-    row_count = 0
-    first_row = None
-    try:
-        res = safe_execute_kuzu_query(q, params)
-        logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] safe_execute_kuzu_query returned type=%s", type(res).__name__)
-        if res and hasattr(res, 'has_next'):
-            while True:
-                try:
-                    if not res.has_next():  # type: ignore[attr-defined]
-                        break
-                    row = res.get_next()  # type: ignore[attr-defined]
-                    if first_row is None:
-                        first_row = list(row) if not isinstance(row, (list, tuple)) else row
-                    row_count += 1
-                except Exception as iter_e:
-                    logger.error(f"[SERIES][CLEAR_COVER][{trace_id}] Iteration error: %s", iter_e)
-                    break
-        else:
-            logger.warning(f"[SERIES][CLEAR_COVER][{trace_id}] Result object has no has_next attribute or is None")
-    except Exception as qe:
-        logger.exception(f"[SERIES][CLEAR_COVER][{trace_id}] Query execution failed: {qe}")
-        return jsonify({'success': False, 'error': str(qe), 'trace_id': trace_id}), 500
-
-    logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] Query rows=%d first_row=%r", row_count, first_row)
-    ok = row_count > 0
-    fallback_cover = None
-    try:
-        if first_row and len(first_row) > 1:
-            fallback_cover = first_row[1]
-    except Exception:
-        logger.exception(f"[SERIES][CLEAR_COVER][{trace_id}] Failed extracting fallback_cover")
-
-    # Attempt to delete old file if local
     file_deleted = False
     file_delete_error = None
-    if old_custom and isinstance(old_custom, str) and old_custom.startswith('/covers/'):
+    if old_cover.startswith('/covers/'):
         try:
-            from app.utils.image_processing import get_covers_dir
-            p = get_covers_dir() / old_custom.split('/')[-1]
-            if p.exists():
-                p.unlink()
+            old_path = get_covers_dir() / old_cover.split('/')[-1]
+            if old_path.exists():
+                old_path.unlink()
                 file_deleted = True
-                logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] Deleted previous custom cover file path=%s", p)
-            else:
-                logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] Previous custom cover file not found path=%s", p)
-        except Exception as fe:
-            file_delete_error = str(fe)
-            logger.error(f"[SERIES][CLEAR_COVER][{trace_id}] Failed deleting old cover: %s", fe)
-            logger.debug("[SERIES][CLEAR_COVER][%s] Traceback:\n%s", trace_id, traceback.format_exc())
-    else:
-        logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] No old_custom file deletion needed value=%r", old_custom)
+        except Exception as exc:
+            file_delete_error = str(exc)
+            logger.exception('[SERIES][CLEAR_COVER][%s] Failed deleting old cover file', trace_id)
 
-    dt = (time.time() - t0) * 1000.0
-    logger.info(f"[SERIES][CLEAR_COVER][{trace_id}] END success=%s ms=%.2f rows=%d file_deleted=%s", ok, dt, row_count, file_deleted)
-    # If fallback_cover available set as new effective cover_url so client updates immediately
-    effective_cover = fallback_cover if fallback_cover else None
-    logger.debug(f"[SERIES][CLEAR_COVER][{trace_id}] effective_cover=%r", effective_cover)
+    elapsed_ms = (time.time() - started) * 1000.0
     return jsonify({
-        'success': ok,
-        'cover_url': effective_cover,
+        'success': True,
+        'cover_url': fallback_cover,
         'cleared': True,
         'trace_id': trace_id,
-        'rows': row_count,
+        'rows': 1,
         'file_deleted': file_deleted,
         'file_delete_error': file_delete_error,
-        'first_row': first_row,
+        'first_row': [series_id, fallback_cover],
         'fallback_cover': fallback_cover,
-        'elapsed_ms': dt
+        'elapsed_ms': elapsed_ms,
     })
 
 @series_bp.route('/<series_id>/delete', methods=['POST'])
@@ -295,12 +216,8 @@ def delete_series(series_id: str):
     if not svc.get_series(series_id):
         return jsonify({'success': False, 'error': 'Series not found'}), 404
     try:
-        from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
-        # Detach relations then delete series
-        q = (
-            "MATCH (s:Series {id:$id}) DETACH DELETE s"
-        )
-        safe_execute_kuzu_query(q, {"id": series_id})
+        if not svc.delete_series(series_id):
+            return jsonify({'success': False, 'error': 'Series could not be deleted'}), 500
         return jsonify({'success': True, 'redirect': url_for('series.list_series')})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

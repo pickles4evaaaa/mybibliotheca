@@ -896,13 +896,14 @@
                 <!-- Books Grid -->
                 <div class="row g-4" id="books-container">
                     {% for book in books %}
+                    {% set book_link_id = book.uid or book.id or book.book_id %}
                     <div class="col-lg-2 col-md-3 col-sm-4 col-6 book-item" 
                              data-reading-status="{{ book.normalized_reading_status if book.normalized_reading_status is not none else (book.reading_status or '') }}"
                         data-ownership-status="{{ book.normalized_ownership_status or book.ownership_status or 'owned' }}">
-                            <div class="card h-100 book-card shadow-sm position-relative" data-book-id="{{ book.uid or book.id }}">
+                            <div class="card h-100 book-card shadow-sm position-relative" data-book-id="{{ book_link_id or '' }}">
                                 <!-- Selection checkbox -->
                                 <div class="position-absolute top-0 end-0 p-2" style="z-index: 10; pointer-events: none;">
-                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book.uid or book.id }}" style="pointer-events: auto;">
+                                    <input type="checkbox" class="form-check-input book-checkbox" value="{{ book_link_id or '' }}" style="pointer-events: auto;">
                                 </div>
 
                                 <!-- Book Cover -->
@@ -967,7 +968,9 @@
                                         </div>
                                     {% endif %}
                                 </div>
-                                <a href="{{ url_for('book.view_book_enhanced', uid=(book.uid or book.id)) }}" class="stretched-link" aria-label="View book"></a>
+                                {% if book_link_id %}
+                                <a href="{{ url_for('book.view_book_enhanced', uid=book_link_id) }}" class="stretched-link" aria-label="View book"></a>
+                                {% endif %}
                             </div>
                         </div>
                     {% endfor %}

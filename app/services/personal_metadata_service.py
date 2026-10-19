@@ -106,6 +106,25 @@ class PersonalMetadataService:
     _migration_checked: bool = False
     _rel_schema_ensured: bool = False
 
+    @staticmethod
+    def _postgres_library_service():
+        from ..infrastructure.persistence_state import get_active_backend
+        if get_active_backend() != "postgres":
+            return None
+        from app.services import _get_book_service
+        return _get_book_service().library_service
+
+    @staticmethod
+    def _postgres_datetime(value: Any) -> Any:
+        if value is None or isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return value
+
     def _ensure_relationship_schema(self) -> None:
         """Ensure the HAS_PERSONAL_METADATA relationship table exists.
 
@@ -453,6 +472,17 @@ CREATE REL TABLE {self.REL_NAME}(
             return None
 
     def get_personal_metadata(self, user_id: str, book_id: str) -> Dict[str, Any]:
+        postgres_library = self._postgres_library_service()
+        if postgres_library is not None:
+            row = postgres_library.get_user_book_sync(str(user_id), str(book_id)) or {}
+            metadata = dict(row.get("custom_metadata") or {})
+            for key in (
+                "personal_notes", "user_review", "reading_status", "ownership_status",
+                "user_rating", "start_date", "finish_date", "current_page", "total_pages",
+            ):
+                if row.get(key) is not None:
+                    metadata[key] = row[key]
+            return metadata
         # Kuzu schema uses STRING ids; callers may pass ints.
         user_id = str(user_id)
         book_id = str(book_id)
@@ -497,6 +527,45 @@ CREATE REL TABLE {self.REL_NAME}(
             merge: if True, load existing JSON and merge; else overwrite JSON.
         Returns updated metadata dictionary.
         """
+        postgres_library = self._postgres_library_service()
+        if postgres_library is not None:
+            user_id, book_id = str(user_id), str(book_id)
+            existing = self.get_personal_metadata(user_id, book_id) if merge else {}
+            if personal_notes is not None:
+                existing["personal_notes"] = personal_notes
+            if user_review is not None:
+                existing["user_review"] = user_review
+            if start_date is not None:
+                existing["start_date"] = start_date
+            if finish_date is not None:
+                existing["finish_date"] = finish_date
+            if custom_updates:
+                existing.update(custom_updates)
+            core_fields = {
+                "reading_status", "ownership_status", "user_rating", "personal_notes",
+                "user_review", "start_date", "finish_date", "current_page", "total_pages",
+            }
+            updates = {
+                key: existing[key] for key in core_fields if key in existing
+            }
+            updates["start_date"] = self._postgres_datetime(existing.get("start_date"))
+            updates["finish_date"] = self._postgres_datetime(existing.get("finish_date"))
+            updates["review"] = existing.get("user_review")
+            updates["custom_metadata"] = {
+                key: value for key, value in existing.items() if key not in {"personal_notes", "user_review"}
+            }
+            row = postgres_library.get_user_book_sync(user_id, book_id)
+            if row is None:
+                from app.services import _get_book_service
+                facade = _get_book_service()
+                if not facade.get_book_by_id_sync(book_id):
+                    return {}
+                if not facade.add_book_to_user_library_sync(user_id, book_id):
+                    return {}
+            from app.services import _get_book_service
+            _get_book_service().update_book_sync(book_id, user_id, **updates)
+            return self.get_personal_metadata(user_id, book_id)
+
         # Kuzu schema uses STRING ids; callers may pass ints.
         user_id = str(user_id)
         book_id = str(book_id)

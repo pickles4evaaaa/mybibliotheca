@@ -1,14 +1,8 @@
-"""
-Kuzu Services Package
+"""Persistence service selectors and legacy Kuzu compatibility adapters.
 
-This package contains decomposed service classes for better maintainability:
-- KuzuAsyncHelper: Async/sync utilities
-- KuzuBookService: Core book operations
-- KuzuCategoryService: Category management
-- KuzuPersonService: Author/person management
-- KuzuRelationshipService: User-book relationships
-- KuzuSearchService: Search functionality
-- KuzuServiceFacade: Backward compatibility facade
+The durable backend marker selects either the PostgreSQL composition root or
+the existing Kuzu adapters. Keeping the selection here prevents application
+routes from opening a second database backend directly.
 """
 
 try:
@@ -19,7 +13,7 @@ try:
     from .kuzu_import_mapping_service import KuzuImportMappingService
     from .kuzu_person_service import KuzuPersonService
     from .kuzu_reading_log_service import KuzuReadingLogService
-    from .kuzu_series_service import get_series_service
+    from .kuzu_series_service import get_series_service as _get_kuzu_series_service
     from .opds_probe_service import OPDSProbeService
     from .opds_sync_service import OPDSSyncService
     from .opds_sync_runner import ensure_opds_sync_runner, get_opds_sync_runner
@@ -34,6 +28,7 @@ try:
     _import_mapping_service = None
     _person_service = None
     _reading_log_service = None
+    _postgres_facade = None
     _opds_probe_service = None
     _opds_sync_service = None
     
@@ -49,53 +44,102 @@ try:
                 pass
             _OWNS_MIGRATION_RAN = True
 
+    def _get_postgres_facade():
+        """Get the single PostgreSQL composition root after a verified cutover."""
+        global _postgres_facade
+        if _postgres_facade is None:
+            from .postgres_service_facade import PostgresServiceFacade
+            _postgres_facade = PostgresServiceFacade()
+            _postgres_facade.store.initialize_schema()
+        return _postgres_facade
+
+    def get_active_persistence_backend() -> str:
+        from ..infrastructure.persistence_state import get_active_backend
+        return get_active_backend()
+
     def _get_book_service():
         """Get book service instance with lazy initialization."""
         global _book_service
         if _book_service is None:
-            _run_migration_once()
-            _book_service = KuzuServiceFacade()
+            if get_active_persistence_backend() == "postgres":
+                _book_service = _get_postgres_facade()
+            else:
+                _run_migration_once()
+                _book_service = KuzuServiceFacade()
         return _book_service
     
     def _get_user_service():
         """Get user service instance with lazy initialization."""
         global _user_service
         if _user_service is None:
-            _run_migration_once()
-            _user_service = KuzuUserService()
+            if get_active_persistence_backend() == "postgres":
+                _user_service = _get_postgres_facade().user_service
+            else:
+                _run_migration_once()
+                _user_service = KuzuUserService()
         return _user_service
     
     def _get_custom_field_service():
         """Get custom field service instance with lazy initialization."""
         global _custom_field_service
         if _custom_field_service is None:
-            _run_migration_once()
-            _custom_field_service = KuzuCustomFieldService()
+            if get_active_persistence_backend() == "postgres":
+                _custom_field_service = _get_postgres_facade().custom_field_service
+            else:
+                _run_migration_once()
+                _custom_field_service = KuzuCustomFieldService()
         return _custom_field_service
     
     def _get_import_mapping_service():
         """Get import mapping service instance with lazy initialization."""
         global _import_mapping_service
         if _import_mapping_service is None:
-            _run_migration_once()
-            _import_mapping_service = KuzuImportMappingService()
+            if get_active_persistence_backend() == "postgres":
+                _import_mapping_service = _get_postgres_facade().import_mapping_service
+            else:
+                _run_migration_once()
+                _import_mapping_service = KuzuImportMappingService()
         return _import_mapping_service
     
     def _get_person_service():
         """Get person service instance with lazy initialization."""
         global _person_service
         if _person_service is None:
-            _run_migration_once()
-            _person_service = KuzuPersonService()
+            if get_active_persistence_backend() == "postgres":
+                _person_service = _get_postgres_facade().catalog_service
+            else:
+                _run_migration_once()
+                _person_service = KuzuPersonService()
         return _person_service
     
     def _get_reading_log_service():
         """Get reading log service instance with lazy initialization."""
         global _reading_log_service
         if _reading_log_service is None:
-            _run_migration_once()
-            _reading_log_service = KuzuReadingLogService()
+            if get_active_persistence_backend() == "postgres":
+                _reading_log_service = _get_postgres_facade().reading_log_service
+            else:
+                _run_migration_once()
+                _reading_log_service = KuzuReadingLogService()
         return _reading_log_service
+
+    def get_series_service():
+        if get_active_persistence_backend() == "postgres":
+            return _get_postgres_facade().series_service
+        return _get_kuzu_series_service()
+
+    def get_location_service():
+        """Get location persistence from the active book-service facade.
+
+        Location links participate in library persistence, so they must use
+        the same backend as books. The verified persistence marker selects
+        the PostgreSQL or Kuzu implementation.
+        """
+        facade = _get_book_service()
+        if hasattr(facade, "location_service"):
+            return facade.location_service
+        from ..location_service import LocationService
+        return LocationService()
 
     def _get_opds_probe_service():
         """Lazy OPDS probe service."""
@@ -144,6 +188,7 @@ try:
         global _book_service, _user_service, _custom_field_service
         global _import_mapping_service, _person_service, _reading_log_service
         global _opds_probe_service, _opds_sync_service
+        global _postgres_facade
         global book_service, user_service, custom_field_service
         global import_mapping_service, person_service, reading_log_service
         global opds_probe_service, opds_sync_service
@@ -155,6 +200,7 @@ try:
         _import_mapping_service = None
         _person_service = None
         _reading_log_service = None
+        _postgres_facade = None
         _opds_probe_service = None
         _opds_sync_service = None
 
@@ -213,6 +259,8 @@ try:
         'direct_import_service',
         'job_service',
         'get_series_service',
+        'get_location_service',
+        'get_active_persistence_backend',
         'opds_probe_service',
         'opds_sync_service',
         'ensure_opds_sync_runner',

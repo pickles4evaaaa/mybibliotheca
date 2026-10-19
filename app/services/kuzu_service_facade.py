@@ -11,6 +11,7 @@ and delegates method calls to the appropriate service.
 """
 
 import traceback
+import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, date
 
@@ -544,11 +545,201 @@ class KuzuServiceFacade:
     def get_person_by_id_sync(self, person_id: str) -> Optional[Dict[str, Any]]:
         """Get a person by ID."""
         return self.person_service.get_person_by_id_sync(person_id)
+
+    def get_total_person_count_sync(self) -> int:
+        try:
+            rows = _convert_query_result_to_list(safe_execute_kuzu_query("MATCH (p:Person) RETURN COUNT(p)"))
+            return int(rows[0].get("col_0") or rows[0].get("result") or 0) if rows else 0
+        except Exception:
+            return 0
+
+    def get_total_reading_log_count_sync(self) -> int:
+        try:
+            result = safe_execute_kuzu_query("MATCH (rl:ReadingLog) RETURN COUNT(rl)")
+            rows = _convert_query_result_to_list(result)
+            return int(rows[0].get("col_0") or rows[0].get("result") or 0) if rows else 0
+        except Exception:
+            return 0
+
+    def backfill_missing_media_type_sync(self, media_type: str) -> int:
+        try:
+            rows = _convert_query_result_to_list(safe_execute_kuzu_query(
+                "MATCH (b:Book) WHERE b.media_type IS NULL OR b.media_type='' "
+                "SET b.media_type=$media_type RETURN COUNT(b) AS updated",
+                {"media_type": media_type}, operation="repairs_backfill_media_type",
+            ))
+            return int((rows[0].get("updated") or rows[0].get("col_0") or 0)) if rows else 0
+        except Exception:
+            return 0
+
+    def get_repair_overview_sync(self) -> Dict[str, Any]:
+        query_specs = {
+            "missing_media_type": "WHERE b.media_type IS NULL OR b.media_type=''",
+            "missing_authors": "WHERE NOT (b)-[:AUTHORED]->(:Person) AND NOT (b)-[:WRITTEN_BY]->(:Person)",
+            "missing_locations": "WHERE NOT (b)-[:STORED_AT]->(:Location)",
+            "missing_isbn": "WHERE (b.isbn13 IS NULL OR b.isbn13='') AND (b.isbn10 IS NULL OR b.isbn10='')",
+            "missing_covers": "WHERE b.cover_url IS NULL OR b.cover_url=''",
+        }
+        overview: Dict[str, Any] = {"total_books": self.get_total_book_count_sync(), "issue_stats": {}, "issue_samples": {}}
+        for key, predicate in query_specs.items():
+            try:
+                count_rows = _convert_query_result_to_list(safe_execute_kuzu_query(
+                    f"MATCH (b:Book) {predicate} RETURN COUNT(b) AS total", operation=f"repairs_{key}_count",
+                ))
+                overview["issue_stats"][key] = int((count_rows[0].get("total") or count_rows[0].get("col_0") or 0)) if count_rows else 0
+                sample_rows = _convert_query_result_to_list(safe_execute_kuzu_query(
+                    f"MATCH (b:Book) {predicate} RETURN b.id AS id,b.title AS title,b.updated_at AS updated_at "
+                    "ORDER BY b.updated_at DESC LIMIT 6", operation=f"repairs_{key}_sample",
+                ))
+                overview["issue_samples"][key] = sample_rows
+            except Exception:
+                overview["issue_stats"][key] = 0
+                overview["issue_samples"][key] = []
+        return overview
+
+    def assign_all_books_without_location_sync(self, location_id: str) -> int:
+        try:
+            from app.services import get_location_service
+            return get_location_service().assign_all_books_without_location(location_id)
+        except Exception:
+            return 0
+
+    def set_book_publisher_sync(self, book_id: str, publisher_name: str | None, user_id: str | None = None) -> bool:
+        if not book_id:
+            return False
+        name = str(publisher_name or "").strip()
+        try:
+            safe_execute_kuzu_query(
+                "MATCH (b:Book {id:$book_id})-[r:PUBLISHED_BY]->() DELETE r",
+                {"book_id": book_id},
+                user_id=str(user_id) if user_id else None,
+                operation="set_book_publisher",
+            )
+            if not name:
+                return True
+            rows = _convert_query_result_to_list(safe_execute_kuzu_query(
+                "MATCH (p:Publisher) WHERE toLower(p.name)=toLower($name) RETURN p.id AS id LIMIT 1",
+                {"name": name}, operation="set_book_publisher",
+            ))
+            publisher_id = str(rows[0].get("id") or rows[0].get("col_0") or "") if rows else ""
+            if not publisher_id:
+                publisher_id = str(uuid.uuid4())
+                now = datetime.now(timezone.utc)
+                safe_execute_kuzu_query(
+                    "CREATE (p:Publisher {id:$id,name:$name,normalized_name:$normalized,created_at:$now,updated_at:$now})",
+                    {"id": publisher_id, "name": name, "normalized": name.lower(), "now": now},
+                    operation="set_book_publisher",
+                )
+            safe_execute_kuzu_query(
+                "MATCH (b:Book {id:$book_id}), (p:Publisher {id:$publisher_id}) CREATE (b)-[:PUBLISHED_BY]->(p)",
+                {"book_id": book_id, "publisher_id": publisher_id}, operation="set_book_publisher",
+            )
+            return True
+        except Exception:
+            return False
+
+    def get_raw_book_graph_sync(self, book_id: str, user_id: str) -> Dict[str, Any]:
+        query = """
+        MATCH (b:Book {id:$book_id})
+        OPTIONAL MATCH (b)-[rel_out]->(target_out)
+        WITH b,COLLECT(DISTINCT CASE WHEN target_out IS NULL THEN NULL ELSE {
+            direction:'OUT',relationship:rel_out,target:target_out} END) AS outgoing_rels_raw
+        OPTIONAL MATCH (source_in)-[rel_in]->(b)
+        WITH b,outgoing_rels_raw,COLLECT(DISTINCT CASE WHEN source_in IS NULL THEN NULL ELSE {
+            direction:'IN',relationship:rel_in,source:source_in} END) AS incoming_rels_raw
+        OPTIONAL MATCH (u:User {id:$user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
+        RETURN b AS book_node,labels(b) AS book_labels,outgoing_rels_raw,incoming_rels_raw,
+            CASE WHEN pm IS NULL THEN NULL ELSE pm END AS personal_metadata
+        """
+        rows = _convert_query_result_to_list(safe_execute_kuzu_query(
+            query, {"book_id": str(book_id), "user_id": str(user_id)}, operation="get_raw_book_graph",
+        ))
+        return rows[0] if rows else {}
+
+    def get_person_by_name_sync(self, name: str) -> Optional[Dict[str, Any]]:
+        normalized = str(name or "").strip().lower()
+        if not normalized:
+            return None
+        for person in self.person_service.list_all_persons_sync():
+            if (str(person.get("normalized_name") or person.get("name") or "").strip().lower() == normalized
+                    or str(person.get("name") or "").strip().lower() == normalized):
+                return person
+        return None
+
+    def get_book_series_relationship_sync(self, book_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            result = safe_execute_kuzu_query(
+                "MATCH (b:Book {id:$id})-[rel:PART_OF_SERIES]->(s:Series) "
+                "RETURN s.id AS id,s.name AS name,rel.volume_number AS volume_number, "
+                "rel.volume_number_double AS volume_number_double,rel.series_order AS series_order LIMIT 1",
+                {"id": book_id},
+            )
+            rows = _convert_query_result_to_list(result)
+            return rows[0] if rows else None
+        except Exception:
+            return None
+
+    def create_person_sync(self, person_data: Any) -> Optional[Dict[str, Any]]:
+        return self.person_service.create_person_sync(person_data)
+
+    def update_person_sync(self, person_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return self.person_service.update_person_sync(person_id, updates)
+
+    def delete_person_sync(self, person_id: str, *, force: bool = False) -> bool:
+        if force:
+            for relationship in ("AUTHORED", "EDITED", "NARRATED", "ILLUSTRATED", "TRANSLATED", "WRITTEN_BY"):
+                try:
+                    safe_execute_kuzu_query(
+                        f"MATCH (p:Person {{id: $person_id}})-[r:{relationship}]->(b:Book) DELETE r",
+                        {"person_id": person_id},
+                    )
+                    safe_execute_kuzu_query(
+                        f"MATCH (b:Book)-[r:{relationship}]->(p:Person {{id: $person_id}}) DELETE r",
+                        {"person_id": person_id},
+                    )
+                except Exception:
+                    continue
+        return self.person_service.delete_person_sync(person_id)
+
+    def merge_persons_sync(self, primary_person_id: str, merge_person_ids: list[str]) -> int:
+        merged = 0
+        for merge_person_id in dict.fromkeys(str(value) for value in merge_person_ids):
+            if merge_person_id == str(primary_person_id):
+                continue
+            if not self.get_person_by_id_sync(merge_person_id) or not self.get_person_by_id_sync(primary_person_id):
+                continue
+            try:
+                for relationship in ("AUTHORED", "EDITED", "NARRATED", "ILLUSTRATED", "TRANSLATED"):
+                    query = f"""
+                    MATCH (source:Person {{id:$source_id}})-[old:{relationship}]->(book:Book)
+                    MATCH (target:Person {{id:$target_id}})
+                    CREATE (target)-[new:{relationship}]->(book)
+                    SET new.contribution_type=old.contribution_type,new.role=old.role,
+                        new.order_index=old.order_index,new.created_at=old.created_at
+                    DELETE old
+                    """
+                    safe_execute_kuzu_query(query, {"source_id": merge_person_id, "target_id": primary_person_id})
+                safe_execute_kuzu_query(
+                    "MATCH (person:Person {id:$person_id}) DETACH DELETE person",
+                    {"person_id": merge_person_id},
+                )
+                merged += 1
+            except Exception:
+                continue
+        return merged
+
+    def get_books_by_person_for_user_sync(self, person_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        return self.get_books_by_person_sync(person_id, user_id)
+
+    def get_contribution_type_counts_sync(self) -> Dict[str, int]:
+        return self.person_service.get_contribution_type_counts_sync()
     
-    def get_books_by_person_sync(self, person_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+    def get_books_by_person_sync(self, person_id: str, user_id: Optional[str] = None) -> Any:
         """Get books associated with a person organized by contribution type."""
         # Get all books by this person
         all_books = self.person_service.get_books_by_person_sync(person_id)
+        if user_id is None:
+            return all_books
         
         # Filter books to only include those in the user's library
         user_books = self.get_all_books_with_user_overlay_sync(user_id)

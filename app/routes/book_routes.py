@@ -21,13 +21,12 @@ from io import BytesIO
 from typing import Optional, Any, Dict, List
 from collections import OrderedDict
 
-from app.services import book_service, reading_log_service, custom_field_service, user_service
+from app.services import book_service, reading_log_service, custom_field_service, user_service, get_series_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.utils import fetch_book_data, get_google_books_cover, fetch_author_data, generate_month_review_image
 from app.utils.book_utils import get_best_cover_for_book
 from app.utils.author_sorting import author_first_sort_key_for_book, author_last_sort_key_for_book
 from app.utils.image_processing import process_image_from_url, process_image_from_filestorage, get_covers_dir
-from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
 from app.domain.models import Book as DomainBook, MediaType, ReadingStatus
 from app.utils.user_settings import get_default_book_format, get_library_view_defaults
 from .book_route_helpers import (
@@ -145,71 +144,11 @@ def _get_changed_fields(user_book, form):
 
 
 def _set_publisher_relationship(book_id: str, publisher_name: Optional[str], user_id: str) -> None:
-    """Set (or clear) the PUBLISHED_BY relationship for a book.
-
-    Publisher is modeled as a relationship, not a Book node property.
-    """
-    from app.utils.safe_kuzu_manager import safe_get_connection
-
+    """Set or clear a book publisher through the active persistence facade."""
     if not book_id:
         return
-
-    name = (publisher_name or '').strip()
-    normalized = name.lower().strip() if name else ''
-
-    with safe_get_connection(user_id=str(user_id), operation="set_book_publisher") as conn:
-        # Always clear existing publisher relationship if publisher field was posted.
-        try:
-            conn.execute(
-                "MATCH (b:Book {id: $book_id})-[r:PUBLISHED_BY]->() DELETE r",
-                {"book_id": book_id},
-            )
-        except Exception:
-            # Clearing is best-effort; continue.
-            pass
-
-        if not name:
-            return
-
-        # Find existing publisher (case-insensitive)
-        try:
-            res = conn.execute(
-                "MATCH (p:Publisher) WHERE toLower(p.name) = toLower($name) RETURN p.id LIMIT 1",
-                {"name": name},
-            )
-            rows = _convert_query_result_to_list(res)
-        except Exception:
-            rows = []
-
-        publisher_id = None
-        if rows:
-            row0 = rows[0]
-            try:
-                publisher_id = row0[0]
-            except Exception:
-                publisher_id = None
-
-        if not publisher_id:
-            publisher_id = str(uuid.uuid4())
-            now = datetime.now(timezone.utc)
-            conn.execute(
-                """
-                CREATE (p:Publisher {
-                    id: $id,
-                    name: $name,
-                    normalized_name: $normalized_name,
-                    created_at: $now,
-                    updated_at: $now
-                })
-                """,
-                {"id": publisher_id, "name": name, "normalized_name": normalized, "now": now},
-            )
-
-        # Create relationship
-        conn.execute(
-            "MATCH (b:Book {id: $book_id}), (p:Publisher {id: $pub_id}) CREATE (b)-[:PUBLISHED_BY]->(p)",
-            {"book_id": book_id, "pub_id": publisher_id},
-        )
+    if not book_service.set_book_publisher_sync(book_id, publisher_name, user_id):
+        raise RuntimeError(f"Could not update publisher relationship for book {book_id}")
 
 def _handle_personal_only(uid, form):
     update_data = {}
@@ -1909,78 +1848,7 @@ def view_book_raw(uid: str):
     if not book_exists:
         abort(404)
 
-    from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
-
-    raw_query = """
-    MATCH (b:Book {id: $book_id})
-    OPTIONAL MATCH (b)-[rel_out]->(target_out)
-    WITH b,
-         COLLECT(DISTINCT CASE
-             WHEN target_out IS NULL THEN NULL
-             ELSE {
-                 direction: 'OUT',
-                 relationship: rel_out,
-                 target: target_out
-             }
-         END) AS outgoing_rels_raw
-    OPTIONAL MATCH (source_in)-[rel_in]->(b)
-    WITH b,
-         outgoing_rels_raw,
-         COLLECT(DISTINCT CASE
-             WHEN source_in IS NULL THEN NULL
-             ELSE {
-                 direction: 'IN',
-                 relationship: rel_in,
-                 source: source_in
-             }
-         END) AS incoming_rels_raw
-    OPTIONAL MATCH (u:User {id: $user_id})-[pm:HAS_PERSONAL_METADATA]->(b)
-    RETURN b AS book_node,
-        labels(b) AS book_labels,
-           outgoing_rels_raw,
-           incoming_rels_raw,
-        CASE WHEN pm IS NULL THEN NULL ELSE pm END AS personal_metadata
-    """
-
-    raw_result = safe_execute_kuzu_query(raw_query, {
-        "book_id": uid,
-        "user_id": user_id
-    })
-
-    raw_payload: Dict[str, Any] = {}
-    if raw_result:
-        try:
-            column_names: List[str] = []
-            get_column_names = getattr(raw_result, 'get_column_names', None)
-            if callable(get_column_names):
-                try:
-                    column_names = list(get_column_names())  # type: ignore[call-arg]
-                except TypeError:
-                    column_names = list(get_column_names) if isinstance(get_column_names, (list, tuple)) else []
-
-            rows: List[Any] = []
-            has_next = getattr(raw_result, 'has_next', None)
-            get_next = getattr(raw_result, 'get_next', None)
-
-            if callable(has_next) and callable(get_next):
-                while has_next():  # type: ignore[misc]
-                    row = get_next()
-                    if column_names and isinstance(row, (list, tuple)):
-                        rows.append({column_names[i]: row[i] for i in range(min(len(column_names), len(row)))})
-                    else:
-                        rows.append(row)
-            else:
-                rows = list(raw_result)  # type: ignore[arg-type]
-
-            if rows:
-                first_row = rows[0]
-                if isinstance(first_row, dict):
-                    raw_payload = first_row
-                elif column_names and isinstance(first_row, (list, tuple)):
-                    raw_payload = {column_names[i]: first_row[i] for i in range(min(len(column_names), len(first_row)))}
-        except Exception as conversion_error:
-            current_app.logger.error("Failed to convert raw book payload: %s", conversion_error)
-            raw_payload = {}
+    raw_payload = book_service.get_raw_book_graph_sync(uid, user_id)
 
     # Provide a minimal enriched snapshot for quick comparison (dict only)
     enriched_snapshot = book_exists if isinstance(book_exists, dict) else {}
@@ -2149,126 +2017,36 @@ def edit_book(uid):
                 person_name = contrib['name']
                 
                 try:
-                    # Always use find_or_create approach - the most reliable method
-                    
-                    # Use SafeKuzuManager for all database operations
-                    safe_manager = get_safe_kuzu_manager()
-                    
-                    # Search for existing person by name (same as repository method)
-                    normalized_name = person_name.strip().lower()
-                    
-                    # Query for existing person by normalized name
-                    find_person_query = """
-                    MATCH (p:Person)
-                    WHERE toLower(p.name) = $normalized_name OR toLower(p.normalized_name) = $normalized_name
-                    RETURN p.id as id, p.name as name, p.normalized_name as normalized_name,
-                           p.birth_year as birth_year, p.death_year as death_year,
-                           p.birth_place as birth_place, p.bio as bio, p.website as website
-                    LIMIT 1
-                    """
-                    
-                    person_result = safe_manager.execute_query(find_person_query, {'normalized_name': normalized_name})
-                    person_data_list = _convert_query_result_to_list(person_result)
-                    
-                    person = None
-                    if person_data_list:
-                        raw_person_data = person_data_list[0]
-                        # Some query result conversions produce col_0..col_N keys instead of aliases
-                        # Query column order (see find_person_query): id, name, normalized_name, birth_year, death_year, birth_place, bio, website
-                        if 'id' not in raw_person_data and 'col_0' in raw_person_data:
-                            person_data = {
-                                'id': raw_person_data.get('col_0'),
-                                'name': raw_person_data.get('col_1'),
-                                'normalized_name': raw_person_data.get('col_2'),
-                                'birth_year': raw_person_data.get('col_3'),
-                                'death_year': raw_person_data.get('col_4'),
-                                'birth_place': raw_person_data.get('col_5'),
-                                'bio': raw_person_data.get('col_6'),
-                                'website': raw_person_data.get('col_7'),
-                            }
-                        else:
-                            person_data = raw_person_data
-
-                        # Defensive: some Kuzu result rows may be returned as list/tuple rather than dict
-                        if isinstance(person_data, (list, tuple)):
-                            # Expected column order from query: id, name, normalized_name, birth_year, death_year, birth_place, bio, website
-                            # Build dict safely with length checks
-                            cols = list(person_data)
-                            person_data = {
-                                'id': cols[0] if len(cols) > 0 else None,
-                                'name': cols[1] if len(cols) > 1 else None,
-                                'normalized_name': cols[2] if len(cols) > 2 else None,
-                                'birth_year': cols[3] if len(cols) > 3 else None,
-                                'death_year': cols[4] if len(cols) > 4 else None,
-                                'birth_place': cols[5] if len(cols) > 5 else None,
-                                'bio': cols[6] if len(cols) > 6 else None,
-                                'website': cols[7] if len(cols) > 7 else None,
-                            }
-
-                        # Convert back to Person object using normalized mapping
-                        person = Person(
-                            id=person_data.get('id'),
-                            name=person_data.get('name', '') or '',
-                            normalized_name=(person_data.get('normalized_name') or '').strip().lower(),
-                            birth_year=person_data.get('birth_year'),
-                            death_year=person_data.get('death_year'),
-                            birth_place=person_data.get('birth_place'),
-                            bio=person_data.get('bio'),
-                            website=person_data.get('website'),
-                            created_at=datetime.now(),  # Set defaults for dates
-                            updated_at=datetime.now()
-                        )
-                    
-                    # If not found, create new person using clean repository (with auto-fetch)
-                    if not person:
-                        from app.infrastructure.kuzu_repositories import KuzuPersonRepository
-                        from app.utils.safe_kuzu_manager import safe_get_connection
-                        
-                        try:
-                            # Use clean repository with auto-fetch capability
-                            with safe_get_connection(user_id=str(current_user.id), operation="create_contributor") as kuzu_connection:
-                                person_repo = KuzuPersonRepository()
-                                
-                                # Create person using repository (will auto-fetch OpenLibrary metadata)
-                                person_dict = {
-                                    'id': str(uuid.uuid4()),
-                                    'name': person_name,
-                                    'normalized_name': normalized_name,
-                                    'created_at': datetime.now().isoformat(),
-                                    'updated_at': datetime.now().isoformat()
-                                }
-                            
-                            created_person = person_repo.create(person_dict)
-                            if created_person:
-                                # Convert back to Person object for the rest of the workflow
-                                person = Person(
-                                    id=created_person.get('id'),
-                                    name=created_person.get('name', ''),
-                                    normalized_name=created_person.get('normalized_name', ''),
-                                    birth_year=created_person.get('birth_year'),
-                                    death_year=created_person.get('death_year'),
-                                    birth_place=created_person.get('birth_place'),
-                                    bio=created_person.get('bio'),
-                                    website=created_person.get('website'),
-                                    openlibrary_id=created_person.get('openlibrary_id'),
-                                    image_url=created_person.get('image_url'),
-                                    created_at=datetime.now(),
-                                    updated_at=datetime.now()
-                                )
-                            else:
-                                continue
-                        except Exception as repo_error:
-                            continue
-                    
-                    # Validate person has valid ID
-                    if not person or not person.id:
+                    normalized_name = Person._normalize_name(person_name)
+                    person_data = book_service.get_person_by_name_sync(person_name)
+                    if not person_data:
+                        person_data = book_service.create_person_sync({
+                            "id": str(uuid.uuid4()),
+                            "name": person_name.strip(),
+                            "normalized_name": normalized_name,
+                            "created_at": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat(),
+                        })
+                    if not person_data or not person_data.get("id"):
                         continue
-                    
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
+                    person = Person(
+                        id=str(person_data.get("id")),
+                        name=person_data.get("name") or person_name,
+                        normalized_name=person_data.get("normalized_name") or normalized_name,
+                        birth_year=person_data.get("birth_year"),
+                        death_year=person_data.get("death_year"),
+                        birth_place=person_data.get("birth_place"),
+                        bio=person_data.get("bio"),
+                        website=person_data.get("website"),
+                        openlibrary_id=person_data.get("openlibrary_id"),
+                        image_url=person_data.get("image_url"),
+                        created_at=person_data.get("created_at") or datetime.now(),
+                        updated_at=person_data.get("updated_at") or datetime.now(),
+                    )
+                except Exception as person_error:
+                    current_app.logger.warning("Unable to resolve contributor %r: %s", person_name, person_error)
                     continue
-                
+
                 # Map contribution type
                 contrib_type_map = {
                     'authored': ContributionType.AUTHORED,
@@ -2366,7 +2144,6 @@ def edit_book(uid):
             series_id = request.form.get('series_id', '').strip()
             series_name = request.form.get('series', '').strip()
             if series_id:
-                from app.services.kuzu_series_service import get_series_service
                 # Attempt attach (volume/order optional)
                 vol = request.form.get('series_volume', '').strip() or None
                 order_raw = request.form.get('series_order', '').strip()
@@ -2383,9 +2160,9 @@ def edit_book(uid):
         if location_id is not None:  # Allow empty string to clear location
             # Use the location service to update the book location
             try:
-                from app.location_service import LocationService
+                from app.services import get_location_service
                 
-                location_service = LocationService()
+                location_service = get_location_service()
                 
                 # Convert empty string to None for clearing location
                 location_success = location_service.set_book_location(
@@ -2574,9 +2351,9 @@ def view_book_enhanced(uid):
                 location_id = getattr(self, 'location_id', None)
                 if hasattr(self, 'location_id') and location_id and (not hasattr(self, 'locations') or not getattr(self, 'locations', None)):
                     try:
-                        from app.location_service import LocationService
+                        from app.services import get_location_service
                         
-                        location_service = LocationService()
+                        location_service = get_location_service()
                         
                         # Get all available locations (universal, no user dependency)
                         all_locations = location_service.get_all_locations()
@@ -2653,100 +2430,24 @@ def view_book_enhanced(uid):
         if not hasattr(user_book, 'isbn'):
             user_book.isbn = isbn13 or isbn10  # Fallback for any other template expectations
 
-    # Load series relationship for hyperlink
+    # Relationship details are loaded through the active persistence facade.
     try:
-        book_id_rel = getattr(user_book, 'id', None)
-        if book_id_rel:
-            from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
-            rel_res = safe_execute_kuzu_query(
-                "MATCH (b:Book {id:$id})-[rel:PART_OF_SERIES]->(s:Series) RETURN s.id, s.name, rel.volume_number, rel.volume_number_double LIMIT 1",
-                {"id": book_id_rel}
-            )
-            if rel_res and hasattr(rel_res, 'has_next') and rel_res.has_next():  # type: ignore[attr-defined]
-                row = rel_res.get_next()  # type: ignore[attr-defined]
-                if row:
-                    sid = row[0] if len(row) > 0 else None  # type: ignore[index]
-                    sname = row[1] if len(row) > 1 else None  # type: ignore[index]
-                    if sid and sname:
-                        class SeriesObj:
-                            def __init__(self, i, n):
-                                self.id = i
-                                self.name = n
-                        user_book.series = SeriesObj(sid, sname)  # type: ignore[attr-defined]
-                    if len(row) > 2 and row[2] is not None:  # type: ignore[index]
-                        user_book.series_volume = row[2]  # type: ignore[index,attr-defined]
-                    if len(row) > 3 and row[3] is not None:  # type: ignore[index]
-                        try:
-                            dblv = float(row[3])  # type: ignore[index]
-                            if abs(dblv - round(dblv)) < 1e-9:
-                                user_book.series_order = int(round(dblv))  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
-    except Exception as e:
-        current_app.logger.error(f"Series fetch error for book {uid}: {e}")
-
-    # Get book authors
-    try:
-        book_id = getattr(user_book, 'id', None)
-        if book_id and (hasattr(user_book, 'contributors') and not user_book.contributors):
-            # Fetch authors from database using the same pattern as categories
-            from app.utils.safe_kuzu_manager import safe_get_connection
-            from app.domain.models import BookContribution, Person, ContributionType
-            
-            with safe_get_connection(user_id=str(current_user.id), operation="fetch_book_authors") as kuzu_connection:
-                
-                query = """
-                MATCH (p:Person)-[rel:AUTHORED]->(b:Book {id: $book_id})
-                RETURN p.name as name, p.id as id, rel.role as role, rel.order_index as order_index
-                ORDER BY rel.order_index ASC
-                """
-                
-                results = kuzu_connection.execute(query, {"book_id": book_id})
-                
-                # Handle both single QueryResult and list[QueryResult]
-                if isinstance(results, list):
-                    result = results[0] if results else None
-                else:
-                    result = results
-                
-                contributors = []
-                if result:
-                    result_list = _convert_query_result_to_list(result)
-                    for row_data in result_list:
-                        person_name = row_data.get('name', '')
-                        person_id = row_data.get('id', '')
-                        order_index = row_data.get('order_index', 0)
-                        
-                        if person_name and person_id:  # Ensure both name and id exist
-                            person = Person(
-                                id=person_id,
-                                name=person_name,
-                                normalized_name=person_name.lower()
-                            )
-                            
-                            contribution = BookContribution(
-                                person_id=person_id,
-                                book_id=book_id,
-                                contribution_type=ContributionType.AUTHORED,
-                                order=order_index,
-                                person=person
-                            )
-                            
-                            contributors.append(contribution)
-            
-            # Update the book object with the fetched contributors
-            user_book.contributors = contributors
-            
-            # Authors property is automatically derived from contributors
-            # No need to set it manually since it's a read-only property
-                    
-        else:
-            # Even if contributors exist, make sure they have the proper structure
-            # Authors property is automatically derived from contributors
-            if hasattr(user_book, 'contributors') and user_book.contributors:
-                pass
-    except Exception as e:
-        current_app.logger.error(f"Error loading book authors: {e}")
+        relationship = book_service.get_book_series_relationship_sync(str(getattr(user_book, 'id', '') or ''))
+        if relationship:
+            from app.domain.models import Series
+            user_book.series = Series(id=relationship.get('id'), name=relationship.get('name') or '')
+            if relationship.get('volume_number') is not None:
+                user_book.series_volume = relationship['volume_number']
+            double_volume = relationship.get('volume_number_double')
+            if double_volume is not None:
+                try:
+                    user_book.series_order = int(double_volume) if float(double_volume).is_integer() else float(double_volume)
+                except (TypeError, ValueError):
+                    pass
+            elif relationship.get('series_order') is not None:
+                user_book.series_order = relationship['series_order']
+    except Exception as relationship_error:
+        current_app.logger.debug("Unable to load series edge for book %s: %s", uid, relationship_error)
 
     # Get book categories
     book_categories = []
@@ -2821,9 +2522,9 @@ def view_book_enhanced(uid):
     # Get user locations for the location dropdown and debug info
     user_locations = []
     try:
-        from app.location_service import LocationService
+        from app.services import get_location_service
         
-        location_service = LocationService()
+        location_service = get_location_service()
         # Get all available locations, not just those with books
         user_locations = location_service.get_all_locations()
     except Exception as e:
@@ -2930,9 +2631,9 @@ def update_book_details(uid):
         if location_id is not None:  # Allow empty string to clear location
             # Use the location service to update the book location
             try:
-                from app.location_service import LocationService
+                from app.services import get_location_service
                 
-                location_service = LocationService()
+                location_service = get_location_service()
                 
                 # Convert empty string to None for clearing location
                 location_success = location_service.set_book_location(
@@ -3430,7 +3131,7 @@ def download_db():
       - books.csv
       - authors.csv
       - reading_history.csv
-    Admin users additionally receive the full Kuzu database directory under kuzu/.
+    Admin users on the legacy backend additionally receive the Kuzu data directory.
     """
     try:
         # Get all user books with global visibility
@@ -3682,7 +3383,9 @@ def download_db():
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         # Admin: include Kuzu DB directory in the zip
-        include_db = bool(getattr(current_user, 'is_admin', False))
+        from app.infrastructure.persistence_state import get_active_backend
+        active_backend = get_active_backend()
+        include_db = bool(getattr(current_user, 'is_admin', False) and active_backend == 'kuzu')
         kuzu_root: Optional[Path] = None
         if include_db:
             kuzu_root = Path(_os_for_verbose.getenv('KUZU_DB_PATH', 'data/kuzu'))
@@ -3706,6 +3409,7 @@ def download_db():
         manager = None
         if include_db:
             try:
+                from app.utils.safe_kuzu_manager import get_safe_kuzu_manager
                 manager = get_safe_kuzu_manager()
             except Exception:
                 manager = None
@@ -3716,6 +3420,16 @@ def download_db():
                 zipf.writestr('books.csv', books_csv_bytes)
                 zipf.writestr('authors.csv', authors_csv_bytes)
                 zipf.writestr('reading_history.csv', reading_csv_bytes)
+                if getattr(current_user, 'is_admin', False) and active_backend == 'postgres':
+                    zipf.writestr(
+                        'export_manifest.json',
+                        json.dumps({
+                            'format_version': 1,
+                            'persistence_backend': 'postgres',
+                            'included': ['books.csv', 'authors.csv', 'reading_history.csv'],
+                            'full_system_database_backup_included': False,
+                        }, sort_keys=True, indent=2),
+                    )
 
                 if include_db and kuzu_root is not None:
                     for file_path in kuzu_root.rglob('*'):
@@ -3985,9 +3699,9 @@ def bulk_update_book_location():
     else:
         location_id = raw_location
 
-    from app.location_service import LocationService
+    from app.services import get_location_service
 
-    location_service = LocationService()
+    location_service = get_location_service()
     location_label = 'Cleared location'
     if location_id:
         location = location_service.get_location(location_id)
@@ -4656,7 +4370,6 @@ def add_book_manual():
 
     if created and series_id:
         try:
-            from app.services.kuzu_series_service import get_series_service
             bid = getattr(created,'id',None) or getattr(created,'uid',None)
             if bid:
                 get_series_service().attach_book(bid, series_id, volume=series_volume)
@@ -4744,15 +4457,6 @@ def resolve_duplicate():
                 return jsonify({'success': False, 'message': 'Book ID is required for increment'}), 400
             
             try:
-                # Ensure legacy databases have the quantity column before updating
-                try:
-                    from app.utils.safe_kuzu_manager import safe_execute_query
-                    safe_execute_query("ALTER TABLE Book ADD quantity INT64", {}, user_id=str(current_user.id), operation="ensure_quantity_column")
-                except Exception as _alter_e:
-                    # Ignore if column already exists; log other errors for diagnostics
-                    if 'already exists' not in str(_alter_e):
-                        current_app.logger.debug(f"Quantity column check: {_alter_e}")
-                
                 # Get current book to read quantity
                 existing_book = book_service.get_book_by_uid_sync(book_id, str(current_user.id))
                 if not existing_book:
@@ -5332,11 +5036,9 @@ def resolve_duplicate():
         # Determine location to use: form-selected location takes priority, then default location
         final_locations = []
         try:
-            from app.location_service import LocationService
-            from app.utils.safe_kuzu_manager import safe_get_connection
-            from config import Config
+            from app.services import get_location_service
             
-            location_service = LocationService()
+            location_service = get_location_service()
             
             # Check if user selected a location in the form
             if location_id:

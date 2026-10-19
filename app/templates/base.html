@@ -1406,6 +1406,35 @@
     color: var(--text-muted);
   }
 
+  .persistence-backend-marker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.35rem;
+    padding: 0.3rem 0.65rem;
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    background: var(--surface-elevated);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+
+  .persistence-backend-marker::before {
+    content: "";
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: #8a94a6;
+  }
+
+  .persistence-backend-marker[data-backend="postgres"]::before {
+    background: #23966b;
+  }
+
+  .persistence-backend-marker[data-backend="kuzu"]::before {
+    background: #4778d0;
+  }
+
   [data-theme="dark"] .container {
     background: rgba(4,7,15,0.92);
     border-color: rgba(148,163,184,0.18);
@@ -1805,6 +1834,9 @@
         </div>
       </div>
       <p class="footer-version-text">{{ site_name }} v2.2.2 · Remember to back up your database regularly.</p>
+      <span class="persistence-backend-marker" data-backend="{{ active_persistence_backend }}" aria-label="Active database backend: {{ active_persistence_backend|title }}">
+        Database backend: <strong>{{ {'postgres': 'PostgreSQL', 'kuzu': 'KuzuDB'}.get(active_persistence_backend, 'Unknown') }}</strong>
+      </span>
     </footer>
   </div>
   <!-- Bootstrap JS (local file) -->

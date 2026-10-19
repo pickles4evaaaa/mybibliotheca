@@ -70,6 +70,41 @@ class AudiobookshelfListeningSync:
     def _find_book_id_by_abs_item(self, item: Dict[str, Any]) -> Optional[str]:
         """Resolve local Book.id by ABS identifiers: prefer audiobookshelf_id then ISBN then title/author."""
         abs_id = item.get('id') or item.get('_id') or item.get('itemId')
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            from app.services import _get_book_service
+            facade = _get_book_service()
+            if abs_id:
+                book = facade.get_book_by_audiobookshelf_id_sync(str(abs_id))
+                if book and book.id:
+                    return str(book.id)
+            minimal = bool(abs_id) and not any(k in (item or {}) for k in ('media', 'metadata', 'title'))
+            if minimal:
+                try:
+                    response = self.client.get_item(str(abs_id))
+                    if response.get('ok') and isinstance(response.get('item'), dict):
+                        item = response['item']
+                except Exception:
+                    pass
+            metadata = (item.get('media') or {}).get('metadata') or {}
+            for key in ('isbn13', 'isbn', 'isbn10'):
+                isbn = metadata.get(key)
+                if isbn:
+                    book = facade.get_book_by_isbn_sync(str(isbn))
+                    if book and book.id:
+                        return str(book.id)
+            title = metadata.get('title') or item.get('title')
+            authors = metadata.get('authors') or []
+            author = None
+            if isinstance(authors, list) and authors:
+                first = authors[0]
+                author = (first.get('name') or first.get('title')) if isinstance(first, dict) else str(first)
+            if title:
+                book = facade.get_book_by_title_author_sync(str(title), str(author or ""))
+                if book and book.id:
+                    return str(book.id)
+            self._dbg("No PostgreSQL book match for Audiobookshelf item", {"abs_id": abs_id, "title": title, "author": author})
+            return None
         if abs_id:
             try:
                 if self.debug:
@@ -316,8 +351,13 @@ class AudiobookshelfListeningSync:
             if not minutes or minutes <= 0:
                 return
             from app.domain.models import ReadingLog
-            from app.services.kuzu_reading_log_service import KuzuReadingLogService
-            svc = KuzuReadingLogService()
+            from app.infrastructure.persistence_state import get_active_backend
+            if get_active_backend() == "postgres":
+                from app.services import _get_reading_log_service
+                svc = _get_reading_log_service()
+            else:
+                from app.services.kuzu_reading_log_service import KuzuReadingLogService
+                svc = KuzuReadingLogService()
             d = (when or datetime.now(timezone.utc)).date()
             rl = ReadingLog(
                 id=None,
@@ -335,6 +375,32 @@ class AudiobookshelfListeningSync:
         except Exception:
             # Non-critical
             pass
+
+    def _get_book_numeric_field(self, book_id: str, field: str) -> Optional[int]:
+        """Read the selected book field through its active backend facade."""
+        if field not in {"audio_duration_ms", "page_count"}:
+            raise ValueError("Unsupported Audiobookshelf book field")
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            from app.services import _get_book_service
+            value = _get_book_service().book_service.get_book_field_sync(str(book_id), field)
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+        query = f"MATCH (b:Book) WHERE b.id = $id RETURN b.{field} LIMIT 1"
+        try:
+            result = safe_execute_kuzu_query(query, {"id": book_id})
+            if isinstance(result, list) and result:
+                row = result[0]
+                value = row.get("result") or row.get(f"b.{field}") or row.get("col_0") if isinstance(row, dict) else row[0] if row else None
+                return int(value) if value is not None else None
+            if hasattr(result, "has_next") and result.has_next():
+                row = result.get_next()
+                return int(row[0]) if row and row[0] is not None else None
+        except Exception:
+            return None
+        return None
 
     def sync(self, page_size: int = 100, seed_item_ids: Optional[List[str]] = None, progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         """Run an incremental listening sync for the user. Returns small summary dict."""
@@ -549,18 +615,7 @@ class AudiobookshelfListeningSync:
                     # Fallback to Book.audio_duration_ms if still unknown
                     if duration_ms is None:
                         if book_id not in duration_ms_cache:
-                            try:
-                                qr = safe_execute_kuzu_query("MATCH (b:Book) WHERE b.id = $id RETURN b.audio_duration_ms LIMIT 1", {"id": book_id})
-                                val = None
-                                if isinstance(qr, list) and qr:
-                                    first = qr[0]
-                                    if isinstance(first, dict):
-                                        val = first.get('result') or first.get('b.audio_duration_ms') or first.get('col_0')
-                                    elif isinstance(first, (list, tuple)) and first:
-                                        val = first[0]
-                                duration_ms_cache[book_id] = int(val) if isinstance(val, (int, float)) else None
-                            except Exception:
-                                duration_ms_cache[book_id] = None
+                            duration_ms_cache[book_id] = self._get_book_numeric_field(book_id, "audio_duration_ms")
                         duration_ms = duration_ms_cache.get(book_id)
                     # Merge finished flag with session payload
                     try:
@@ -615,18 +670,7 @@ class AudiobookshelfListeningSync:
                         if (minutes_from_session and minutes_from_session > 0) and isinstance(duration_ms, int) and duration_ms > 0:
                             # Fetch cached page_count for this book
                             if book_id not in page_count_cache:
-                                try:
-                                    qr = safe_execute_kuzu_query("MATCH (b:Book) WHERE b.id = $id RETURN b.page_count LIMIT 1", {"id": book_id})
-                                    pc = None
-                                    if isinstance(qr, list) and qr:
-                                        first = qr[0]
-                                        if isinstance(first, dict):
-                                            pc = first.get('result') or first.get('b.page_count') or first.get('col_0')
-                                        elif isinstance(first, (list, tuple)) and first:
-                                            pc = first[0]
-                                    page_count_cache[book_id] = int(pc) if isinstance(pc, (int, float)) else None
-                                except Exception:
-                                    page_count_cache[book_id] = None
+                                page_count_cache[book_id] = self._get_book_numeric_field(book_id, "page_count")
                             pcache = page_count_cache.get(book_id)
                             if isinstance(pcache, int) and pcache > 0:
                                 total_min = max(1, int(duration_ms // 60000))

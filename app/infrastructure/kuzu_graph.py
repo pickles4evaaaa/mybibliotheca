@@ -18,8 +18,28 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _observe_kuzu_connection(connection: Any) -> Any:
+    """Ensure legacy graph-storage writes invalidate Redis query entries."""
+    try:
+        from app.utils.safe_kuzu_manager import _ObservedKuzuConnection
+
+        return _ObservedKuzuConnection(connection)
+    except Exception:
+        # Initialization remains usable in isolated migration tools where the
+        # application cache manager is intentionally not imported.
+        return connection
+
+
 class KuzuGraphDB:
     """Simplified Kuzu graph database with clean schema design."""
+
+    @staticmethod
+    def _require_kuzu_active() -> None:
+        """Reject legacy direct connections once PostgreSQL owns app data."""
+        from .persistence_state import get_active_backend
+
+        if get_active_backend() != "kuzu":
+            raise RuntimeError("Direct Kuzu access is disabled while PostgreSQL is active")
     
     def __init__(self, database_path: Optional[str] = None):
         if database_path:
@@ -34,6 +54,7 @@ class KuzuGraphDB:
     
     def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
         """Execute a query and normalize the result to always return a QueryResult."""
+        self._require_kuzu_active()
         if self._connection is None:
             raise Exception("Connection not established")
         
@@ -46,6 +67,7 @@ class KuzuGraphDB:
         
     def connect(self) -> kuzu.Connection:
         """Establish connection and initialize schema."""
+        self._require_kuzu_active()
         if self._connection is None:
             try:
                 
@@ -64,7 +86,7 @@ class KuzuGraphDB:
                 
                 Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
                 self._database = kuzu.Database(self.database_path)
-                self._connection = kuzu.Connection(self._database)
+                self._connection = _observe_kuzu_connection(kuzu.Connection(self._database))
                 logger.info("Database connection established, initializing schema...")
                 self._initialize_schema()
                 logger.info(f"Kuzu connected at {self.database_path}")
@@ -125,7 +147,7 @@ class KuzuGraphDB:
                         # Create parent and reinitialize
                         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
                         self._database = kuzu.Database(self.database_path)
-                        self._connection = kuzu.Connection(self._database)
+                        self._connection = _observe_kuzu_connection(kuzu.Connection(self._database))
                         logger.info("Database connection established, initializing schema...")
                         self._initialize_schema()
                         logger.info(f"Kuzu connected at {self.database_path} (recovered)")
@@ -849,6 +871,7 @@ class KuzuGraphDB:
     @property
     def connection(self) -> kuzu.Connection:
         """Get Kuzu connection, connecting if needed."""
+        self._require_kuzu_active()
         if self._connection is None:
             return self.connect()
         return self._connection
@@ -967,6 +990,7 @@ class KuzuGraphStorage:
     
     def _execute_query(self, query: str, params: Optional[Dict[str, Any]] = None):
         """Execute a query and normalize the result to always return a QueryResult."""
+        self.connection._require_kuzu_active()
         result = self.kuzu_conn.execute(query, params or {})  # type: ignore
         
         # Handle both single QueryResult and list[QueryResult]

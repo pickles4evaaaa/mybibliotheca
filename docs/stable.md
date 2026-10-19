@@ -105,7 +105,7 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - SECURITY_PASSWORD_SALT=${SECURITY_PASSWORD_SALT}
       - TIMEZONE=${TIMEZONE:-UTC}
-      - WORKERS=${WORKERS:-4}
+      - WORKERS=${WORKERS:-6}
     restart: unless-stopped
 
 volumes:

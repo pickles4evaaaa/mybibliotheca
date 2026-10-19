@@ -1,154 +1,161 @@
 {% extends "base.html" %}
 
-{% block title %}Database Migration{% endblock %}
+{% block title %}Kuzu to PostgreSQL Upgrade{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Database Migration</h1>
+<div class="d-flex justify-content-between align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <div>
+        <h1 class="h2 mb-1">Database upgrade</h1>
+        <p class="text-muted mb-0">Complete these two steps in order: back up Kuzu, then migrate the library to PostgreSQL.</p>
+    </div>
+    <a href="{{ url_for('admin.dashboard') }}" class="btn btn-outline-secondary">Admin dashboard</a>
 </div>
 
-<div class="row">
-    <div class="col-lg-8">
-        {% if migration_info.migration_available %}
-        <div class="card border-warning">
-            <div class="card-header bg-warning text-dark">
-                <h4 class="mb-0">
-                    <i class="fas fa-database me-2"></i>
-                    SQLite Databases Detected
-                </h4>
-            </div>
+{% if migration_info.job and migration_info.job.status in ['queued', 'running'] %}
+<div class="alert alert-info" role="status">
+    <strong>Migration {{ migration_info.job.status }}.</strong>
+    Library writes are paused while the source is copied and verified. Keep this page open to view completion status.
+    <div class="progress mt-3" style="height: 8px"><div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%"></div></div>
+</div>
+{% elif migration_info.job and migration_info.job.status == 'complete' %}
+<div class="alert alert-success" role="status">
+    <strong>PostgreSQL migration verified.</strong>
+    {% if migration_info.job.restart_scheduled %}
+    MyBibliotheca is switching to PostgreSQL automatically. Keep this page open while the app reconnects.
+    {% else %}
+    PostgreSQL is selected. Restart the MyBibliotheca app to finish switching to the new backend.
+    {% endif %}
+    <div class="small mt-2">Migration run: <code>{{ migration_info.job.run_id }}</code></div>
+</div>
+{% elif migration_info.job and migration_info.job.status in ['blocked', 'failed'] %}
+<div class="alert alert-danger" role="alert">
+    <strong>Migration did not switch the application.</strong>
+    {{ migration_info.job.message or 'Review the migration report and resolve the listed issues.' }}
+    <div class="mt-2">The Kuzu database remains the active source.</div>
+</div>
+{% endif %}
+
+<div class="row g-3">
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-header"><strong>Current storage</strong></div>
             <div class="card-body">
-                <p class="lead">We found {{ migration_info.databases_found }} SQLite database(s) that can be migrated to Redis.</p>
-                
-                <div class="table-responsive">
-                    <table class="table table-striped">
-                        <thead>
-                            <tr>
-                                <th>Database</th>
-                                <th>Version</th>
-                                <th>Books</th>
-                                <th>Users</th>
-                                <th>Reading Logs</th>
-                                <th>Size</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for db in migration_info.databases %}
-                            <tr>
-                                <td>
-                                    <strong>{{ db.filename }}</strong>
-                                    <br><small class="text-muted">{{ db.path }}</small>
-                                </td>
-                                <td>
-                                    <span class="badge bg-{{ 'primary' if db.version == 'v2' else 'secondary' }}">
-                                        {{ db.version|title }}
-                                    </span>
-                                </td>
-                                <td>{{ db.books }}</td>
-                                <td>{{ db.users }}</td>
-                                <td>{{ db.reading_logs }}</td>
-                                <td>{{ db.size_mb }} MB</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                
-                <div class="d-flex gap-2 mt-3">
-                    <a href="{{ url_for('migration.migration_wizard') }}" class="btn btn-warning">
-                        <i class="fas fa-magic me-2"></i>Start Migration Wizard
-                    </a>
-                    <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#manualMigrationModal">
-                        <i class="fas fa-terminal me-2"></i>Manual Migration Instructions
-                    </button>
-                </div>
+                <p>Application backend: <span class="badge {{ 'bg-primary' if migration_info.backend == 'postgres' else 'bg-warning text-dark' }}">{{ migration_info.backend|title }}</span></p>
+                {% if migration_info.backend == 'kuzu' %}
+                    {% if migration_info.source_inventory_paused %}
+                    <p class="text-muted">Source inventory is paused while the migration holds the database write gate.</p>
+                    {% elif migration_info.source_error %}
+                    <div class="alert alert-danger">Could not safely inspect the Kuzu source: {{ migration_info.source_error }}</div>
+                    {% else %}
+                    <p class="mb-2">Read-only source inventory:</p>
+                    <div class="row text-center mb-3">
+                        <div class="col"><div class="border rounded p-2"><strong>{{ migration_info.source.total_nodes }}</strong><div class="small text-muted">nodes</div></div></div>
+                        <div class="col"><div class="border rounded p-2"><strong>{{ migration_info.source.total_relationships }}</strong><div class="small text-muted">relationships</div></div></div>
+                    </div>
+                    <details>
+                        <summary>Show source tables</summary>
+                        <div class="row mt-2">
+                            <div class="col-md-6">
+                                <h6>Node tables</h6>
+                                <ul class="small">{% for item in migration_info.source.nodes %}<li>{{ item.name }}: {{ item.count }}</li>{% endfor %}</ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Relationship tables</h6>
+                                <ul class="small">{% for item in migration_info.source.relationships %}<li>{{ item.name }}: {{ item.count }}</li>{% endfor %}</ul>
+                            </div>
+                        </div>
+                    </details>
+                    {% endif %}
+                {% else %}
+                    <p class="mb-1">PostgreSQL is the active backend.</p>
+                    {% if migration_info.migration_run_id == 'native-postgres-install' %}
+                    <p class="small text-muted mb-0">This is a fresh PostgreSQL installation; no Kuzu migration was needed.</p>
+                    {% elif migration_info.migration_run_id %}
+                    <p class="small text-muted mb-0">Verified migration run: <code>{{ migration_info.migration_run_id }}</code></p>
+                    {% endif %}
+                    {% if migration_info.completed_run %}<p class="small text-muted">Run status: {{ migration_info.completed_run.status }}{% if migration_info.completed_run.verified_at %} · {{ migration_info.completed_run.verified_at }}{% endif %}</p>{% endif %}
+                {% endif %}
             </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header"><strong>PostgreSQL target</strong></div>
+            <div class="card-body">
+                <p class="mb-0"><span class="badge {{ 'bg-success' if migration_info.postgres.ok else 'bg-danger' }}">{{ 'Connected' if migration_info.postgres.ok else 'Unavailable' }}</span></p>
+                <p class="small mt-2">{{ migration_info.postgres.message }}</p>
+                <p class="small text-muted mb-0">Connection details come from the container environment. Passwords are never shown here.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if migration_info.backend == 'kuzu' %}
+<div class="card mt-3">
+    <div class="card-header"><strong>Step 1 — Back up the Kuzu library</strong></div>
+    <div class="card-body">
+        {% if migration_info.kuzu_backup.verified %}
+        <div class="alert alert-success mb-3">
+            <strong>Kuzu backup verified.</strong>
+            {{ migration_info.kuzu_backup.path_name }}
+            ({{ '%.1f'|format(migration_info.kuzu_backup.size_bytes / (1024 * 1024)) }} MB)
+            <a class="alert-link ms-2" href="{{ url_for('simple_backup.download_backup', backup_id=migration_info.kuzu_backup.backup_id) }}">Download backup</a>
         </div>
         {% else %}
-        <div class="card border-success">
-            <div class="card-header bg-success text-white">
-                <h4 class="mb-0">
-                    <i class="fas fa-check-circle me-2"></i>
-                    No Migration Needed
-                </h4>
-            </div>
-            <div class="card-body">
-                <p class="mb-0">No SQLite databases were found that need migration. Your system is running on Redis.</p>
-            </div>
-        </div>
+        <p>Create a quiesced archive of the Kuzu database, covers, uploads, and settings. The app checks the archive before enabling migration.</p>
+        <form method="post" action="{{ url_for('admin.create_postgres_migration_backup') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline-primary">Create and verify Kuzu backup</button>
+        </form>
         {% endif %}
     </div>
-    
-    <div class="col-lg-4">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">Migration Information</h5>
-            </div>
-            <div class="card-body">
-                <h6>What gets migrated:</h6>
-                <ul class="mb-3">
-                    <li><i class="fas fa-book text-primary me-1"></i> All books with metadata</li>
-                    <li><i class="fas fa-users text-success me-1"></i> User accounts and preferences</li>
-                    <li><i class="fas fa-chart-line text-info me-1"></i> Reading logs and progress</li>
-                    <li><i class="fas fa-star text-warning me-1"></i> Ratings and reviews</li>
-                    <li><i class="fas fa-tags text-secondary me-1"></i> Categories and tags</li>
-                </ul>
-                
-                <h6>Migration Process:</h6>
-                <ol class="mb-3">
-                    <li>Backup original databases</li>
-                    <li>Analyze and validate data</li>
-                    <li>Transfer to Redis format</li>
-                    <li>Verify migration success</li>
-                    <li>Optional cleanup</li>
-                </ol>
-                
-                <div class="alert alert-info small">
-                    <i class="fas fa-info-circle me-1"></i>
-                    Migration is safe and non-destructive. Original databases are preserved unless you choose to delete them.
-                </div>
-            </div>
-        </div>
-    </div>
 </div>
 
-<!-- Manual Migration Instructions Modal -->
-<div class="modal fade" id="manualMigrationModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Manual Migration Instructions</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p>If you prefer to run migration from the command line:</p>
-                
-                <h6>Docker Users:</h6>
-                <pre class="bg-light p-3 rounded"><code># Check migration status
-docker exec -it bibliotheca-bibliotheca-1 python3 scripts/detect_migration.py
-
-# Run migration (replace 'admin' with your user ID)
-docker exec -it bibliotheca-bibliotheca-1 python3 scripts/quick_migrate.py --user-id admin
-
-# Or use the helper script
-./migrate.sh</code></pre>
-                
-                <h6>Local Installation:</h6>
-                <pre class="bg-light p-3 rounded"><code># Check migration status
-python3 scripts/detect_migration.py
-
-# Run migration
-python3 scripts/quick_migrate.py --user-id admin</code></pre>
-                
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle me-1"></i>
-                    Replace <code>admin</code> with your actual user ID for single-user (v1) database migrations.
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            </div>
+<div class="card mt-3">
+    <div class="card-header"><strong>Step 2 — Migrate to PostgreSQL</strong></div>
+    <div class="card-body">
+        {% if not migration_info.kuzu_backup.verified %}
+        <div class="alert alert-info">Complete step 1 before migration is enabled.</div>
+        {% endif %}
+        <p>The migration pauses library writes, preserves every node and relationship property in PostgreSQL, projects supported data into relational tables, and verifies counts and content hashes before activation. The Kuzu source is retained.</p>
+        {% if migration_info.cutover_blockers %}
+        <div class="alert alert-warning">
+            <strong>Cutover is not available in this build.</strong>
+            <p class="mb-2">The following production-readiness items must be completed before this library can switch databases:</p>
+            <ul class="mb-0">{% for blocker in migration_info.cutover_blockers %}<li>{{ blocker }}</li>{% endfor %}</ul>
         </div>
+        {% endif %}
+        {% if migration_info.can_start %}
+        <form method="post" action="{{ url_for('admin.start_postgres_migration') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="confirmCutover" name="confirm_cutover" value="yes" required>
+                <label class="form-check-label" for="confirmCutover">I have scheduled maintenance; the library will pause writes during migration.</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Start verified migration</button>
+        </form>
+        {% else %}
+        <button type="button" class="btn btn-secondary" disabled>Start verified migration</button>
+        {% endif %}
     </div>
 </div>
+{% endif %}
+
+<script>
+(() => {
+    const status = {{ migration_info.get('job', {}).get('status', 'idle')|tojson }};
+    if (status !== 'queued' && status !== 'running') return;
+    const poll = async () => {
+        try {
+            const response = await fetch({{ url_for('admin.postgres_migration_status')|tojson }}, {headers: {'Accept': 'application/json'}});
+            if (response.ok) {
+                const job = await response.json();
+                if (job.status !== 'queued' && job.status !== 'running') window.location.reload();
+            }
+        } catch (_) {}
+        window.setTimeout(poll, 3000);
+    };
+    window.setTimeout(poll, 2000);
+})();
+</script>
 {% endblock %}

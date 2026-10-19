@@ -119,8 +119,8 @@ class AdvancedMigrationSystem:
         self.user_service = user_service
         
         # Initialize location service
-        from app.location_service import LocationService
-        self.location_service = LocationService()
+        from app.services import get_location_service
+        self.location_service = get_location_service()
         
         # Migration state
         self.current_status = MigrationStatus.NOT_STARTED

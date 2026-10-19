@@ -778,3 +778,17 @@ class LocationService:
             import traceback
             traceback.print_exc()
             return 0
+
+    def assign_all_books_without_location(self, location_id: str) -> int:
+        """Assign one location to books that currently have no STORED_AT edge."""
+        try:
+            result = safe_execute_kuzu_query(
+                "MATCH (loc:Location {id:$location_id}) WITH loc MATCH (b:Book) "
+                "WHERE NOT (b)-[:STORED_AT]->(:Location) MERGE (b)-[:STORED_AT]->(loc) "
+                "RETURN COUNT(b) AS updated",
+                {"location_id": location_id}, operation="assign_missing_book_locations",
+            )
+            rows = _convert_query_result_to_list(result)
+            return int((rows[0].get("updated") or rows[0].get("col_0") or 0)) if rows else 0
+        except Exception:
+            return 0

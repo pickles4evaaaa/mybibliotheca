@@ -15,12 +15,31 @@ from datetime import datetime, timezone
 from app.services.audiobookshelf_service import AudiobookShelfClient
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook, BookAlreadyExistsError
 from app.services.kuzu_book_service import KuzuBookService
+from app.domain.models import BookContribution, ContributionType, Person
 from app.utils.safe_import_manager import safe_create_import_job, safe_update_import_job, safe_get_import_job
 from app.utils.audiobookshelf_settings import load_abs_settings, save_abs_settings
 from app.services.audiobookshelf_listening_sync import AudiobookshelfListeningSync
 from pathlib import Path
 import os
 import requests  # type: ignore
+
+
+class _PostgresAudiobookshelfBookAdapter:
+    """Keep the legacy ABS importer call shape while routing writes to PostgreSQL."""
+
+    def __init__(self, user_id: str):
+        from app.services import _get_book_service
+        self.facade = _get_book_service()
+        self.user_id = str(user_id)
+
+    def get_book_by_isbn_sync(self, isbn: str):
+        return self.facade.get_book_by_isbn_sync(isbn)
+
+    def get_book_by_id_sync(self, book_id: str):
+        return self.facade.get_book_by_id_sync(str(book_id))
+
+    def update_book_sync(self, book_id: str, updates: Dict[str, Any]):
+        return self.facade.update_book_sync(str(book_id), self.user_id, **updates)
 
 
 class AudiobookshelfImportService:
@@ -30,7 +49,20 @@ class AudiobookshelfImportService:
         self.user_id = user_id
         self.client = client
         self.simple_books = SimplifiedBookService()
-        self.kuzu_book_service = KuzuBookService(user_id=user_id)
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            self.kuzu_book_service = _PostgresAudiobookshelfBookAdapter(user_id)
+        else:
+            self.kuzu_book_service = KuzuBookService(user_id=user_id)
+
+    def _update_user_book(self, book_id: str, **updates: Any):
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            return self.kuzu_book_service.facade.update_book_sync(
+                str(book_id), self.user_id, **updates,
+            )
+        from app.services.kuzu_service_facade import KuzuServiceFacade
+        return KuzuServiceFacade().update_book_sync(str(book_id), self.user_id, **updates)
 
     def _map_abs_item_to_simplified(self, item: Dict[str, Any]) -> SimplifiedBook:
         """Map ABS item JSON to SimplifiedBook structure (robust fields)."""
@@ -230,6 +262,16 @@ class AudiobookshelfImportService:
 
     def _resolve_book_id(self, book_data: SimplifiedBook) -> Optional[str]:
         """Best-effort resolve of created book's id using ISBN or title/author."""
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            from app.services import _get_book_service
+            facade = _get_book_service()
+            isbn13 = getattr(book_data, "isbn13", None)
+            isbn10 = getattr(book_data, "isbn10", None)
+            book = facade.get_book_by_isbn_sync(str(isbn13 or isbn10)) if (isbn13 or isbn10) else None
+            if not book and (book_data.title or book_data.author):
+                book = facade.get_book_by_title_author_sync(book_data.title or "", book_data.author or "")
+            return str(book.id) if book and book.id else None
         # Prefer ISBNs
         isbn13 = getattr(book_data, 'isbn13', None)
         if isinstance(isbn13, str) and isbn13.strip():
@@ -384,6 +426,18 @@ class AudiobookshelfImportService:
             duration_ms = int(float(duration) * 1000) if duration < 10_000_000 else int(duration)
         # Extract ABS updated timestamp if available
         abs_updated_iso = self._extract_abs_updated_at(abs_item)
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            updates: Dict[str, Any] = {
+                "media_type": "audiobook",
+                "audiobookshelf_id": abs_item.get("id") or abs_item.get("_id") or abs_item.get("itemId") or "",
+            }
+            if duration_ms is not None:
+                updates["audio_duration_ms"] = duration_ms
+            if abs_updated_iso:
+                updates["audiobookshelf_updated_at"] = abs_updated_iso
+            self.kuzu_book_service.update_book_sync(book_id, updates)
+            return
         updates: Dict[str, Any] = {
             'media_type': 'audiobook',
         }
@@ -448,6 +502,15 @@ class AudiobookshelfImportService:
     def _ensure_person_exists(self, name: str) -> Optional[str]:
         if not name or str(name).strip().lower() == 'unknown':
             return None
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            try:
+                facade = self.kuzu_book_service.facade
+                existing = facade.get_person_by_name_sync(str(name).strip())
+                person = existing or facade.create_person_sync({"name": str(name).strip()})
+                return str(person.get("id")) if person and person.get("id") else None
+            except Exception:
+                return None
         try:
             from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
             nm = str(name).strip()
@@ -488,6 +551,34 @@ class AudiobookshelfImportService:
     def _ensure_contributor(self, book_id: str, person_name: str, role: str, order_index: int = 0) -> None:
         pid = self._ensure_person_exists(person_name)
         if not pid:
+            return
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            try:
+                book_service = self.kuzu_book_service.facade.book_service
+                book = book_service.get_book_by_id_sync(str(book_id))
+                if not book:
+                    return
+                normalized_role = str(role or "authored").strip().lower().replace(" ", "_")
+                contribution_type = next(
+                    (value for value in ContributionType if value.value == normalized_role or value.name.lower() == normalized_role),
+                    ContributionType.AUTHORED,
+                )
+                contributions = list(getattr(book, "contributors", None) or [])
+                if any(
+                    str(getattr(item, "person_id", "")) == str(pid)
+                    and getattr(getattr(item, "contribution_type", None), "value", getattr(item, "contribution_type", None)) == contribution_type.value
+                    for item in contributions
+                ):
+                    return
+                person = Person(id=str(pid), name=str(person_name).strip())
+                contributions.append(BookContribution(
+                    person_id=str(pid), book_id=str(book_id), contribution_type=contribution_type,
+                    order=int(order_index), person=person,
+                ))
+                book_service.replace_contributors_sync(str(book_id), contributions)
+            except Exception:
+                return
             return
         try:
             from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
@@ -581,6 +672,14 @@ class AudiobookshelfImportService:
     def _get_local_abs_updated_at(self, abs_id: Optional[str]) -> Optional[str]:
         if not abs_id:
             return None
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            try:
+                book = self.kuzu_book_service.facade.get_book_by_audiobookshelf_id_sync(str(abs_id))
+                value = self.kuzu_book_service.facade.book_service.get_book_field_sync(str(book.id), "audiobookshelf_updated_at") if book and book.id else None
+                return str(value) if value not in (None, "") else None
+            except Exception:
+                return None
         try:
             from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
             from app.services.kuzu_service_facade import _convert_query_result_to_list
@@ -753,9 +852,7 @@ class AudiobookshelfImportService:
                         cats = self._extract_categories(item)
                         if cats:
                             try:
-                                from app.services.kuzu_service_facade import KuzuServiceFacade
-                                svc = KuzuServiceFacade()
-                                svc.update_book_sync(book_id, self.user_id, raw_categories=cats)
+                                self._update_user_book(book_id, raw_categories=cats)
                             except Exception:
                                 pass
 
@@ -996,9 +1093,7 @@ class AudiobookshelfImportService:
                                 cats = self._extract_categories(item)
                                 if cats:
                                     try:
-                                        from app.services.kuzu_service_facade import KuzuServiceFacade
-                                        svc = KuzuServiceFacade()
-                                        svc.update_book_sync(book_id, self.user_id, raw_categories=cats)
+                                        self._update_user_book(book_id, raw_categories=cats)
                                     except Exception:
                                         pass
                             processed += 1
@@ -1305,9 +1400,7 @@ class AudiobookshelfImportService:
                             cats = self._extract_categories(item)
                             if cats:
                                 try:
-                                    from app.services.kuzu_service_facade import KuzuServiceFacade
-                                    svc = KuzuServiceFacade()
-                                    svc.update_book_sync(book_id, self.user_id, raw_categories=cats)
+                                    self._update_user_book(book_id, raw_categories=cats)
                                 except Exception:
                                     pass
 
@@ -1632,9 +1725,7 @@ class AudiobookshelfImportService:
                                     cats = self._extract_categories(obj_item)
                                     if cats:
                                         try:
-                                            from app.services.kuzu_service_facade import KuzuServiceFacade
-                                            svc = KuzuServiceFacade()
-                                            svc.update_book_sync(book_id, self.user_id, raw_categories=cats)
+                                            self._update_user_book(book_id, raw_categories=cats)
                                         except Exception:
                                             pass
                                 processed += 1

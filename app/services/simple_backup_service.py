@@ -93,6 +93,7 @@ class SimpleBackupService:
         self.uploads_dir = self.data_dir / "uploads"
         self.env_file = self.base_dir / ".env"
         self.ai_config_file = self.data_dir / "ai_config.json"
+        self._postgres_backup_service = None
         
         # Ensure backup directory exists
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -284,6 +285,22 @@ class SimpleBackupService:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Failed to save backup index: {e}")
+
+    def _active_backend(self) -> str:
+        try:
+            from app.infrastructure.persistence_state import get_active_backend
+            return get_active_backend()
+        except Exception:
+            # An unreadable backend marker is not safe to reinterpret as Kuzu.
+            raise RuntimeError("Could not determine the active persistence backend")
+
+    def _get_postgres_backup_service(self):
+        if self._postgres_backup_service is None:
+            from app.services.postgres_backup_service import PostgresBackupService
+            self._postgres_backup_service = PostgresBackupService(
+                self.backup_dir, self.covers_dir, self.uploads_dir,
+            )
+        return self._postgres_backup_service
     
     def create_backup(self, name: Optional[str] = None, description: str = "", reason: str = 'manual') -> Optional[SimpleBackupInfo]:
         """
@@ -316,6 +333,24 @@ class SimpleBackupService:
             backup_path = self.backup_dir / backup_filename
             
             logger.info(f"Creating simple backup: {name}")
+
+            if self._active_backend() == "postgres":
+                backup_path, metadata = self._get_postgres_backup_service().create_backup(
+                    name=name, description=description, backup_id=backup_id,
+                    timestamp=timestamp, reason=reason,
+                )
+                backup_info = SimpleBackupInfo(
+                    id=backup_id, name=name, created_at=timestamp,
+                    file_path=str(backup_path), file_size=backup_path.stat().st_size,
+                    description=description, metadata=metadata,
+                )
+                self._backup_index[backup_id] = backup_info
+                self._save_backup_index()
+                try:
+                    self._apply_retention_policy()
+                except Exception as rp_err:
+                    logger.warning(f"Retention pruning failed: {rp_err}")
+                return backup_info
             
             # Check if KuzuDB exists
             if not self.kuzu_db_path.exists():
@@ -342,16 +377,31 @@ class SimpleBackupService:
             }
             
             # Optionally quiesce writes for consistent snapshot
-            quiesce_enabled = os.getenv('KUZU_BACKUP_QUIESCE', 'false').lower() in ('1','true','yes')
+            migration_backup = reason == 'pre_postgres_migration'
+            quiesce_enabled = migration_backup or os.getenv('KUZU_BACKUP_QUIESCE', 'false').lower() in ('1','true','yes')
             manager = None
             if quiesce_enabled:
                 try:
                     from app.utils.safe_kuzu_manager import get_safe_kuzu_manager as _gskm
                     manager = _gskm()
-                except Exception:
+                except Exception as exc:
+                    if migration_backup:
+                        raise RuntimeError(f"Could not safely pause Kuzu for migration backup: {exc}") from exc
                     manager = None
 
-            quiesce_ctx = manager.quiesce_for_backup(reason='simple_backup') if manager and quiesce_enabled else contextlib.nullcontext()
+            if migration_backup and manager is None:
+                raise RuntimeError("Could not acquire the Kuzu connection manager for migration backup")
+
+            quiesce_ctx = (
+                manager.quiesce_for_backup(
+                    reason='pre_postgres_migration_backup',
+                    timeout_seconds=float(os.getenv('POSTGRES_MIGRATION_QUIESCE_TIMEOUT_SECONDS', '240')),
+                )
+                if manager and migration_backup else
+                manager.quiesce_for_backup(reason='simple_backup')
+                if manager and quiesce_enabled else
+                contextlib.nullcontext()
+            )
             with quiesce_ctx:
                 with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     # Add metadata file
@@ -407,6 +457,19 @@ class SimpleBackupService:
                         logger.info(f"Included {settings_added} config/settings files in backup")
                     except Exception as se:
                         logger.warning(f"Failed adding settings files to backup: {se}")
+
+            if migration_backup:
+                with zipfile.ZipFile(backup_path, 'r') as archive:
+                    corrupt_member = archive.testzip()
+                    members = set(archive.namelist())
+                has_database = any(
+                    member == 'kuzu/bibliotheca.db' or member.startswith('kuzu/bibliotheca.db/')
+                    for member in members
+                )
+                if corrupt_member:
+                    raise RuntimeError(f"Kuzu migration backup failed CRC validation at {corrupt_member}")
+                if 'backup_metadata.json' not in members or not has_database:
+                    raise RuntimeError("Kuzu migration backup is missing its manifest or database files")
             
             # Get backup file size
             file_size = backup_path.stat().st_size
@@ -437,6 +500,11 @@ class SimpleBackupService:
             
         except Exception as e:
             logger.error(f"Failed to create simple backup: {e}")
+            try:
+                if 'backup_path' in locals():
+                    backup_path.unlink(missing_ok=True)
+            except OSError:
+                pass
             return None
         finally:
             try:
@@ -469,6 +537,43 @@ class SimpleBackupService:
             backup_path = Path(backup_info.file_path)
             if not backup_path.exists():
                 logger.error(f"Backup file not found: {backup_path}")
+                return False
+
+            # The backup type and active backend must agree. Never interpret a
+            # PostgreSQL archive as a Kuzu file tree (or vice versa).
+            active_backend = self._active_backend()
+            try:
+                with zipfile.ZipFile(backup_path, "r") as archive:
+                    archive_metadata = json.loads(archive.read("backup_metadata.json"))
+            except Exception as exc:
+                logger.error("Could not inspect backup metadata before restore: %s", exc)
+                return False
+            backup_backend = archive_metadata.get("backend", "kuzu")
+            if active_backend == "postgres":
+                if backup_backend != "postgres":
+                    logger.error("Refusing to restore a Kuzu backup while PostgreSQL is active")
+                    return False
+                try:
+                    # Preserve the current PostgreSQL database as a separate
+                    # archive before accepting the user-selected restore.
+                    safety_backup = self.create_backup(
+                        name=f"pre_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                        description=f"Automatic safety backup before restoring {backup_info.name}",
+                        reason="pre_restore",
+                    )
+                    if not safety_backup:
+                        raise RuntimeError("Could not create the pre-restore PostgreSQL safety backup")
+                    self._set_restore_flag(backup_info)
+                    self._get_postgres_backup_service().restore_backup(backup_path, backup_id=backup_id)
+                    self._set_restart_required_flag()
+                    self._clear_restore_flag()
+                    return True
+                except Exception as exc:
+                    logger.exception("PostgreSQL backup restore failed: %s", exc)
+                    self._clear_restore_flag()
+                    return False
+            if backup_backend == "postgres":
+                logger.error("Refusing to restore a PostgreSQL backup while Kuzu is active")
                 return False
             
             logger.info(f"Starting simple restore from backup: {backup_info.name}")

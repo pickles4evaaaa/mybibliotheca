@@ -6,8 +6,7 @@ from flask import Blueprint, render_template, request, flash, redirect, url_for,
 from flask_login import login_required, current_user
 import os
 
-from app.location_service import LocationService
-from app.utils.safe_kuzu_manager import safe_get_connection
+from app.services import get_location_service as get_active_location_service
 
 bp = Blueprint('locations', __name__, url_prefix='/locations')
 
@@ -17,7 +16,7 @@ def get_location_service():
     Uses current_user.id from Flask context.
     """
     from flask_login import current_user
-    return LocationService()
+    return get_active_location_service()
 
 
 @bp.route('/')

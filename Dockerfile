@@ -25,6 +25,7 @@ RUN set -eux; \
             libffi-dev \
             build-essential \
             pkg-config \
+            postgresql-client \
             tesseract-ocr \
             tesseract-ocr-eng \
             libtesseract-dev \
@@ -94,13 +95,12 @@ EXPOSE 5054
 # Use custom entrypoint that handles migration
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# Start the app with Gunicorn in production mode
-# CRITICAL: Use single worker and single thread for KuzuDB compatibility (no concurrent access)
-ENV WORKERS=1
+# PostgreSQL can use multiple workers; the entrypoint clamps Kuzu mode to one.
+ENV WORKERS=6
 # Set timeout to 300 seconds (5 minutes) to handle bulk imports with rate limiting
 # Disable sendfile to prevent occasional deadlocks on Docker for macOS/overlay FS
-# Use sync worker class and force single threaded operation for KuzuDB
+# Keep each worker single-threaded; Kuzu worker count is clamped by the entrypoint.
 # Preload application to avoid multiple KuzuDB initialization attempts
 ARG ACCESS_LOGS="false"
 # Default: disable access logs to keep container output quiet; errors still go to stderr
-CMD ["/bin/sh", "-c", "if [ \"$ACCESS_LOGS\" = \"true\" ]; then exec gunicorn --worker-class sync --no-sendfile -w 1 --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --access-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; else exec gunicorn --worker-class sync --no-sendfile -w 1 --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; fi"]
+CMD ["/bin/sh", "-c", "if [ \"$ACCESS_LOGS\" = \"true\" ]; then exec gunicorn --worker-class sync --no-sendfile -w \"${WORKERS:-6}\" --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --access-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; else exec gunicorn --worker-class sync --no-sendfile -w \"${WORKERS:-6}\" --threads 1 -b 0.0.0.0:5054 --timeout 300 --graceful-timeout 300 --error-logfile - --max-requests 1000 --max-requests-jitter 100 run:app; fi"]

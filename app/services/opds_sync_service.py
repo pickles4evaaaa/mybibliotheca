@@ -18,7 +18,7 @@ from .opds_probe_service import opds_probe_service, OPDSProbeService
 from ..infrastructure.kuzu_graph import safe_execute_kuzu_query
 from ..infrastructure.kuzu_repositories import KuzuBookRepository
 from ..domain.models import BookContribution, ContributionType, Person
-from ..location_service import LocationService
+
 from ..utils.image_processing import process_image_from_url
 from ..utils.safe_kuzu_manager import safe_get_connection
 from flask import current_app, has_app_context
@@ -416,7 +416,7 @@ class OPDSSyncService:
         self._probe_service = probe_service or opds_probe_service
         self._max_sync = self._parse_sync_limit(os.getenv("OPDS_SYNC_MAX_ENTRIES"))
         self._book_repo = KuzuBookRepository()
-        self._location_service: Optional[LocationService] = None
+        self._location_service: Optional[Any] = None
 
     async def quick_probe_sync(
         self,
@@ -501,9 +501,9 @@ class OPDSSyncService:
             limit = min(limit, self._max_sync) if limit is not None else self._max_sync
         return limit
 
-    def _get_location_service(self) -> LocationService:
+    def _get_location_service(self) -> Any:
         if self._location_service is None:
-            self._location_service = LocationService()
+            self._location_service = get_location_service()
         return self._location_service
 
     async def test_sync(
@@ -558,7 +558,7 @@ class OPDSSyncService:
         skipped = 0
         book_ids: List[str] = []
         now = datetime.now(timezone.utc)
-        location_service: Optional[LocationService] = None
+        location_service: Optional[Any] = None
         default_location_id: Optional[str] = None
         location_checked = False
         location_user_id = user_id or "__system__"
@@ -566,6 +566,19 @@ class OPDSSyncService:
         context_manager = flask_app.app_context() if flask_app is not None else nullcontext()
 
         with context_manager:
+            try:
+                from app.infrastructure.persistence_state import get_active_backend
+                if get_active_backend() == "postgres":
+                    return self._apply_entries_postgres(
+                        entries, user_id=user_id, cover_auth=cover_auth,
+                        cover_headers=cover_headers, now=now,
+                    )
+            except Exception:
+                # A valid active-backend marker is required before choosing a
+                # database. Do not silently send a PostgreSQL install to Kuzu.
+                from app.infrastructure.persistence_state import get_active_backend
+                if get_active_backend() != "kuzu":
+                    raise
             with safe_get_connection(operation="opds_sync") as conn:
                 for entry in entries:
                     entry["opds_source_entry_hash"] = _compute_entry_hash(entry)
@@ -632,6 +645,135 @@ class OPDSSyncService:
                             skipped += 1
         return SyncResult(created=created, updated=updated, skipped=skipped, entries=book_ids)
 
+    @staticmethod
+    def _postgres_facade():
+        from app.services import _get_book_service
+        facade = _get_book_service()
+        if not hasattr(facade, "book_service"):
+            raise RuntimeError("The active service facade does not provide PostgreSQL book persistence")
+        return facade
+
+    @staticmethod
+    def _postgres_contributions(entry: Dict[str, Any], book_id: str) -> List[BookContribution]:
+        result: List[BookContribution] = []
+        for index, raw in enumerate(entry.get("contributors") or []):
+            payload = raw if isinstance(raw, dict) else getattr(raw, "__dict__", {})
+            person_data = payload.get("person") or payload
+            if isinstance(person_data, Person):
+                person = person_data
+            elif isinstance(person_data, dict):
+                name = str(person_data.get("name") or payload.get("name") or "").strip()
+                if not name:
+                    continue
+                person = Person(id=person_data.get("id") or person_data.get("person_id"), name=name)
+            else:
+                continue
+            raw_role = payload.get("contribution_type") or payload.get("role") or "authored"
+            normalized_role = str(getattr(raw_role, "value", raw_role)).strip().lower().replace(" ", "_")
+            role = next((item for item in ContributionType if item.value == normalized_role or item.name.lower() == normalized_role), ContributionType.AUTHORED)
+            result.append(BookContribution(
+                person_id=str(person.id or ""), book_id=book_id,
+                contribution_type=role, order=_to_int(payload.get("order")) if payload.get("order") is not None else index,
+                person=person,
+            ))
+        return result
+
+    def _apply_entries_postgres(
+        self,
+        entries: List[Dict[str, Any]],
+        *,
+        user_id: Optional[str],
+        cover_auth: Optional[Tuple[str, str]],
+        cover_headers: Optional[Dict[str, str]],
+        now: datetime,
+    ) -> SyncResult:
+        from ..domain.models import Book, Category, Publisher, Series
+
+        facade = self._postgres_facade()
+        books = facade.book_service
+        created = updated = skipped = 0
+        book_ids: List[str] = []
+        for entry in entries:
+            entry["opds_source_entry_hash"] = _compute_entry_hash(entry)
+            entry["opds_source_updated_at"] = _normalize_timestamp(entry.get("updated") or entry.get("published"))
+            source_id = entry.get("opds_source_id")
+            if not source_id:
+                skipped += 1
+                continue
+            try:
+                existing = books.get_book_by_opds_source_id_sync(str(source_id))
+                book_id = str(existing.id) if existing and existing.id else None
+                if book_id:
+                    self._cache_cover_if_needed(entry, book_id, cover_auth=cover_auth, cover_headers=cover_headers)
+                    raw_categories = entry.get("raw_categories")
+                    normalized_categories = self._normalize_categories(raw_categories)
+                    if normalized_categories is None:
+                        normalized_categories = self._normalize_categories(entry.get("categories"))
+                    values = {
+                        "title": entry.get("title"), "subtitle": entry.get("subtitle"),
+                        "description": entry.get("description"), "language": self._normalize_language(entry.get("language")),
+                        "cover_url": entry.get("cover_url"), "opds_source_id": str(source_id),
+                        "opds_source_updated_at": entry.get("opds_source_updated_at"),
+                        "opds_source_entry_hash": entry.get("opds_source_entry_hash"),
+                        "media_type": entry.get("media_type"), "page_count": entry.get("page_count"),
+                        "series": entry.get("series"), "series_order": entry.get("series_order"),
+                        "average_rating": entry.get("average_rating"),
+                        "published_date": _to_kuzu_date(entry.get("published_date") or entry.get("published")),
+                        "raw_categories": normalized_categories or [],
+                    }
+                    if not books.update_book_sync(book_id, values):
+                        skipped += 1
+                        continue
+                    if raw_categories is not None or entry.get("categories") is not None:
+                        books.replace_categories_sync(book_id, [Category(name=name) for name in (normalized_categories or [])])
+                    if entry.get("publisher") is not None:
+                        books.replace_publisher_sync(book_id, self._normalize_publisher(entry.get("publisher")))
+                    books.replace_contributors_sync(book_id, self._postgres_contributions(entry, book_id))
+                    updated += 1
+                else:
+                    book_id = str(uuid.uuid4())
+                    self._cache_cover_if_needed(entry, book_id, cover_auth=cover_auth, cover_headers=cover_headers)
+                    raw_categories = self._normalize_categories(entry.get("raw_categories"))
+                    if raw_categories is None:
+                        raw_categories = self._normalize_categories(entry.get("categories")) or []
+                    series_name = entry.get("series")
+                    book = Book(
+                        id=book_id, title=str(entry.get("title") or ""),
+                        normalized_title=_normalize_title(entry.get("title")), subtitle=entry.get("subtitle"),
+                        description=entry.get("description"), language=self._normalize_language(entry.get("language")) or "en",
+                        cover_url=entry.get("cover_url"), opds_source_id=str(source_id),
+                        opds_source_updated_at=entry.get("opds_source_updated_at"),
+                        opds_source_entry_hash=entry.get("opds_source_entry_hash"),
+                        media_type=entry.get("media_type"), page_count=entry.get("page_count"),
+                        series=Series(name=str(series_name)) if series_name else None,
+                        series_order=entry.get("series_order"), average_rating=entry.get("average_rating"),
+                        published_date=_to_kuzu_date(entry.get("published_date") or entry.get("published")),
+                        raw_categories=raw_categories,
+                        categories=[Category(name=name) for name in raw_categories],
+                        publisher=Publisher(name=self._normalize_publisher(entry.get("publisher") or "")) if entry.get("publisher") else None,
+                        contributors=self._postgres_contributions(entry, book_id), created_at=now, updated_at=now,
+                    )
+                    books.create_book_sync(book, user_id=user_id, reading_status="", ownership_status="owned")
+                    created += 1
+
+                if book_id:
+                    book_ids.append(book_id)
+                    if user_id:
+                        try:
+                            location_service = facade.location_service
+                            location = location_service.get_default_location()
+                            if not location:
+                                locations = location_service.setup_default_locations()
+                                location = locations[0] if locations else None
+                            if location and location.id:
+                                location_service.add_book_to_location(book_id, location.id, user_id)
+                        except Exception:
+                            logger.exception("Failed to assign default location for PostgreSQL OPDS book %s", book_id)
+            except Exception:
+                skipped += 1
+                logger.exception("PostgreSQL OPDS upsert failed for source id %s", source_id)
+        return SyncResult(created=created, updated=updated, skipped=skipped, entries=book_ids)
+
     def _simulate_entries(self, entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         would_create = 0
         would_update = 0
@@ -650,17 +792,25 @@ class OPDSSyncService:
                     action = "skip"
                     reason = "missing_opds_source_id"
                 else:
-                    if conn is not None:
-                        try:
-                            existing_id = self._find_book_id(conn, oid)
-                        except Exception:
-                            existing_id = None
-                    if existing_id:
-                        would_update += 1
-                        action = "update"
+                    try:
+                        # _find_book_id dispatches to PostgreSQL when it is the
+                        # active backend and uses the supplied Kuzu connection
+                        # only for a legacy Kuzu installation. Always perform
+                        # the lookup: treating a failed/missing connection as
+                        # "not found" makes previews report duplicate creates.
+                        existing_id = self._find_book_id(conn, oid)
+                    except Exception:
+                        logger.exception("OPDS preview could not look up source id %s", oid)
+                        skipped += 1
+                        action = "skip"
+                        reason = "lookup_failed"
                     else:
-                        would_create += 1
-                        action = "create"
+                        if existing_id:
+                            would_update += 1
+                            action = "update"
+                        else:
+                            would_create += 1
+                            action = "create"
 
                 safe_entry = json.loads(json.dumps(entry, default=str))
                 row_payload = {
@@ -696,15 +846,24 @@ class OPDSSyncService:
                 preview.append(row_payload)
 
         try:
-            context = safe_get_connection(operation="opds_sync_preview")
+            from app.infrastructure.persistence_state import get_active_backend
+            context = (
+                safe_get_connection(operation="opds_sync_preview")
+                if get_active_backend() == "kuzu"
+                else nullcontext(None)
+            )
         except Exception:
+            # Persistence selection failures must not fall through to a Kuzu
+            # connection attempt or be presented as an empty library.
+            logger.exception("Could not determine the active backend for OPDS preview")
             context = nullcontext(None)
 
         try:
             with context as conn:  # type: ignore[arg-type]
                 _process(conn)
         except Exception:
-            _process(None)
+            logger.exception("OPDS preview could not open the active persistence backend")
+            raise
 
         return {
             "would_create": would_create,
@@ -743,6 +902,15 @@ class OPDSSyncService:
             entry["cover_url"] = cached_url
 
     def _find_book_id(self, conn, oid: str) -> Optional[str]:  # type: ignore[no-untyped-def]
+        try:
+            from app.infrastructure.persistence_state import get_active_backend
+            if get_active_backend() == "postgres":
+                book = self._postgres_facade().book_service.get_book_by_opds_source_id_sync(str(oid))
+                return str(book.id) if book and book.id else None
+        except Exception:
+            from app.infrastructure.persistence_state import get_active_backend
+            if get_active_backend() != "kuzu":
+                raise
         try:
             result = conn.execute(
                 "MATCH (b:Book {opds_source_id: $oid}) RETURN b.id AS id LIMIT 1",

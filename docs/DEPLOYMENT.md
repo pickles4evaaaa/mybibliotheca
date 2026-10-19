@@ -43,7 +43,12 @@ SECURITY_PASSWORD_SALT=your-generated-salt-here
 
 # Application Settings
 TIMEZONE=America/Chicago
-WORKERS=4  # Adjust based on CPU cores
+# PostgreSQL defaults to six workers. Kuzu is automatically clamped to one
+# until its verified migration to PostgreSQL completes.
+WORKERS=6
+
+# Required for the bundled PostgreSQL service
+POSTGRES_PASSWORD=use-a-unique-long-random-password
 
 # Optional Performance Tuning
 READING_STREAK_OFFSET=0
@@ -80,6 +85,53 @@ docker compose up -d
 docker compose ps
 docker compose logs bibliotheca
 ```
+
+The Compose stack starts PostgreSQL and Redis alongside MyBibliotheca. Keep
+the PostgreSQL data volume and the mounted `data/` directory in your backup
+plan. Existing installations with `data/kuzu/bibliotheca.db` continue using
+Kuzu until an administrator completes the migration below. New installations
+with PostgreSQL configured start on PostgreSQL.
+
+### Upgrade an existing Kuzu installation
+
+1. Make a separate copy of the complete application `data/` directory and
+   PostgreSQL volume before upgrading. Do not delete or move
+   `data/kuzu/bibliotheca.db` during this upgrade.
+2. Set a strong `POSTGRES_PASSWORD` in `.env`, then update and start the stack:
+
+   ```bash
+   docker compose pull
+   docker compose up -d
+   docker compose ps
+   ```
+
+3. Sign in as an administrator. On startup, the app routes the administrator
+   to **Admin → Database Migration** until cutover is complete. First click
+   **Create and verify Kuzu backup**. The app pauses Kuzu connections, archives
+   the database plus covers/uploads/settings, and checks the ZIP contents and
+   CRCs. Download the resulting backup and keep your separate `data/` copy.
+4. After step 1 is verified, the page enables step 2. It checks PostgreSQL
+   connectivity and inventories the Kuzu graph. The configured PostgreSQL
+   target must be empty; point the migration at a fresh database if it already
+   contains application rows. Do not truncate data to clear this check.
+5. Schedule a maintenance window and start the verified migration. The app
+   pauses Kuzu writes while it snapshots and imports the graph, then checks
+   preserved source data and normalized PostgreSQL projections. If a check
+   fails, Kuzu remains active and the migration report identifies the blocker.
+6. When the migration verifies, the app automatically increases Gunicorn to
+   the configured PostgreSQL worker count and replaces the Kuzu worker. Keep
+   the page open; it reloads when the PostgreSQL workers are ready. Confirm
+   **Admin → Database Migration** reports PostgreSQL as the active backend.
+   If the app is running outside Gunicorn, restart the app process when prompted.
+7. Keep the Kuzu database and both backups until you have verified
+   your users, books, reading data, covers, and integrations on PostgreSQL.
+   Redis remains enabled as the application cache after cutover.
+
+After PostgreSQL accepts new writes, changing the backend marker back to Kuzu
+is deliberately disabled because that would hide those writes. Recover by
+restoring a verified PostgreSQL application backup or by following the
+documented backup restore procedure. Do not treat the retained Kuzu snapshot
+as a current rollback copy after users have resumed writing.
 
 ### 4. Initial Admin Setup
 
@@ -174,11 +226,24 @@ docker system prune -f
 ```
 
 ### Backup Strategy
+
+Use **Admin → Backups** to create a full application backup. In PostgreSQL
+mode, this includes a validated PostgreSQL dump and the covers, uploads, and
+supported application settings. Keep a copy outside the Docker host and
+periodically restore it to a disposable staging environment; a successful
+backup creation alone does not prove that recovery works.
+
+Also back up the Compose PostgreSQL named volume and the application `data/`
+directory as part of host-level disaster recovery. Stop the application and
+database services, or use a storage snapshot with database consistency, when
+copying the live PostgreSQL volume. Never use the old Kuzu-only archive command
+below as a PostgreSQL backup.
+
 ```bash
-# Create backup script (backup.sh)
+# Legacy Kuzu-only example; do not use after PostgreSQL cutover.
 #!/bin/bash
 DATE=$(date +%Y%m%d_%H%M%S)
-docker run --rm -v bibliotheca_bibliotheca_data:/source:ro \
+docker run --rm -v "$(pwd)/data:/source:ro" \
   -v $(pwd)/backups:/backup alpine \
   tar czf /backup/bibliotheca_backup_$DATE.tar.gz -C /source .
 
@@ -213,7 +278,8 @@ docker compose up -d
 - Check that container user can write to mounted volumes
 
 **Performance issues:**
-- Increase WORKERS count based on CPU cores
+- PostgreSQL defaults to `WORKERS=6`; reduce this for a memory-constrained host
+- Kuzu always uses one worker for database safety
 - Monitor resource usage with `docker stats`
 - Consider resource limits in docker-compose.yml
 

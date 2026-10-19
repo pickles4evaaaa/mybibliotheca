@@ -20,9 +20,15 @@ if __name__ == '__main__':
     import os
     import sys
 
+    active_backend = app.config.get("ACTIVE_PERSISTENCE_BACKEND", "kuzu")
+    try:
+        configured_workers = max(1, min(32, int(os.getenv("WORKERS", "6"))))
+    except ValueError:
+        configured_workers = 6
+    workers = "1" if active_backend == "kuzu" else str(configured_workers)
     command = [
         "gunicorn",
-        "-w", "1",
+        "-w", workers,
         "-b", "0.0.0.0:5054",
         "run:app"
     ]

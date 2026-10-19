@@ -201,6 +201,10 @@ class BookRepairService:
         self.search = search
 
     def _query_books(self, kind: str) -> List[Dict[str, Any]]:
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            from app.services import _get_book_service
+            return _get_book_service().get_repair_candidates_sync(kind)
         if kind == "isbn":
             missing = "(b.isbn13 IS NULL OR b.isbn13 = '') AND (b.isbn10 IS NULL OR b.isbn10 = '')"
             operation = "repairs_find_missing_isbn"
@@ -246,6 +250,11 @@ class BookRepairService:
         if not updates:
             return False
         updates["updated_at"] = datetime.now(timezone.utc)
+        from app.infrastructure.persistence_state import get_active_backend
+        if get_active_backend() == "postgres":
+            from app.services import _get_book_service
+            facade = _get_book_service()
+            return facade.book_service.update_book_sync(book_id, updates) is not None
         set_clause = ", ".join(f"b.{key} = ${key}" for key in updates)
         result = safe_execute_kuzu_query(
             f"MATCH (b:Book {{id: $book_id}}) SET {set_clause} RETURN b.id",
@@ -257,6 +266,14 @@ class BookRepairService:
     def _invalidate_user_library_caches(self, book_id: str) -> None:
         """Make global metadata changes visible in cached user library views."""
         try:
+            from app.infrastructure.persistence_state import get_active_backend
+            if get_active_backend() == "postgres":
+                from app.infrastructure import redis_cache
+                from app.services import _get_book_service
+                facade = _get_book_service()
+                user_ids = facade.get_book_user_ids_sync(book_id)
+                redis_cache.invalidate_tags(*[f"postgres:user_books:{user_id}" for user_id in user_ids], "postgres:books")
+                return
             from app.utils.simple_cache import bump_user_library_version
 
             result = safe_execute_kuzu_query(
@@ -284,6 +301,18 @@ class BookRepairService:
         """
         try:
             from app.services.personal_metadata_service import personal_metadata_service
+
+            from app.infrastructure.persistence_state import get_active_backend
+            if get_active_backend() == "postgres":
+                from app.services import _get_book_service
+                facade = _get_book_service()
+                for user_id in facade.get_book_user_ids_sync(book_id):
+                    metadata = personal_metadata_service.get_personal_metadata(user_id, book_id)
+                    if metadata.get("needs_review"):
+                        personal_metadata_service.update_personal_metadata(
+                            user_id, book_id, custom_updates={"needs_review": None}, merge=True
+                        )
+                return
 
             result = safe_execute_kuzu_query(
                 """

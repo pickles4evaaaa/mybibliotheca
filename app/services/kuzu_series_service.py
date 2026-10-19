@@ -294,6 +294,18 @@ class KuzuSeriesService:
     def update_series_cover(self, series_id: str, cover_url: str, custom: bool = True, generated_placeholder: bool | None = None, user_uploaded: bool = True) -> bool:
         return run_async(self.update_series_cover_async(series_id, cover_url, custom, generated_placeholder, user_uploaded))
 
+    def delete_series(self, series_id: str) -> bool:
+        """Detach and delete a series while keeping all books intact."""
+        try:
+            result = safe_execute_kuzu_query(
+                "MATCH (s:Series {id:$id}) DETACH DELETE s RETURN $id",
+                {"id": series_id},
+            )
+            return bool(result and hasattr(result, "has_next") and result.has_next())
+        except Exception as exc:
+            logger.error("Failed to delete series %s: %s", series_id, exc)
+            return False
+
     # ---------------------- Utility ----------------------
     # New: lightweight search + create helpers used by typeahead UI
     async def search_series_async(self, query: str, limit: int = 15) -> List[Dict[str, Any]]:

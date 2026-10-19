@@ -31,9 +31,7 @@ from app.admin import (
     save_system_config,
 )
 from app.domain.models import MediaType
-from app.infrastructure.kuzu_graph import safe_execute_kuzu_query
 from app.services import user_service
-from app.services.kuzu_service_facade import _convert_query_result_to_list
 from app.utils.user_settings import get_default_book_format
 
 
@@ -214,15 +212,7 @@ def settings_server_partial(panel: str):
                                     else:
                                         # Diagnostic: check existence directly
                                         try:
-                                            repo = getattr(user_service, 'user_repo', None)
-                                            exists_flag = False
-                                            if repo and hasattr(repo, 'safe_manager'):
-                                                check_q = "MATCH (u:User {id: $uid}) RETURN COUNT(u) as c"
-                                                res = repo.safe_manager.execute_query(check_q, {"uid": target_user.id})
-                                                from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
-                                                data = _cvt(res)
-                                                if data and int(data[0].get('c',0))>0:
-                                                    exists_flag = True
+                                            exists_flag = user_service.get_user_by_id_sync(target_user.id) is not None
                                             current_app.logger.error(f"[USER_DELETE_DEBUG] delete admin failed exists_flag={exists_flag}")
                                             flash(f'Delete failed (diagnostic: exists={exists_flag}).', 'error')
                                         except Exception as de_diag:
@@ -237,15 +227,7 @@ def settings_server_partial(panel: str):
                                     flash('User deleted & backup created.', 'success')
                                 else:
                                     try:
-                                        repo = getattr(user_service, 'user_repo', None)
-                                        exists_flag = False
-                                        if repo and hasattr(repo, 'safe_manager'):
-                                            check_q = "MATCH (u:User {id: $uid}) RETURN COUNT(u) as c"
-                                            res = repo.safe_manager.execute_query(check_q, {"uid": target_user.id})
-                                            from app.services.kuzu_service_facade import _convert_query_result_to_list as _cvt
-                                            data = _cvt(res)
-                                            if data and int(data[0].get('c',0))>0:
-                                                exists_flag = True
+                                        exists_flag = user_service.get_user_by_id_sync(target_user.id) is not None
                                         current_app.logger.error(f"[USER_DELETE_DEBUG] delete non-admin failed exists_flag={exists_flag}")
                                         flash(f'Delete failed (diagnostic: exists={exists_flag}).', 'error')
                                     except Exception as de_diag:
@@ -1124,27 +1106,6 @@ def settings_server_partial(panel: str):
         if not current_user.is_admin:
             return '<div class="text-danger small">Not authorized.</div>'
 
-        def _run_query(rows_query: str, params: dict[str, Any] | None = None, op: str = "repairs") -> list[dict[str, Any]]:
-            try:
-                result = safe_execute_kuzu_query(rows_query, params or {}, operation=op)
-                rows = _convert_query_result_to_list(result)
-                # Normalize to plain dicts with string keys
-                normalized: list[dict[str, Any]] = []
-                for row in rows or []:
-                    if isinstance(row, dict):
-                        norm_row = {str(k): row[k] for k in row.keys()}
-                        # Provide col_0 fallback for single-column 'result' rows
-                        if 'result' in norm_row and 'col_0' not in norm_row:
-                            norm_row['col_0'] = norm_row['result']
-                        normalized.append(norm_row)
-                return normalized
-            except Exception as err:
-                try:
-                    current_app.logger.warning(f"Repairs query failed ({op}): {err}")
-                except Exception:
-                    pass
-                return []
-
         action_taken = (request.form.get('action') or '').strip().lower() if request.method == 'POST' else ''
         default_media = get_default_book_format()
 
@@ -1158,20 +1119,8 @@ def settings_server_partial(panel: str):
         if request.method == 'POST' and action_taken:
             if action_taken == 'backfill_media_type':
                 try:
-                    updated_rows = _run_query(
-                        """
-                        MATCH (b:Book)
-                        WHERE b.media_type IS NULL OR b.media_type = ''
-                        SET b.media_type = $media_type
-                        RETURN COUNT(b) AS updated
-                        """,
-                        {'media_type': default_media},
-                        op='repairs_backfill_media_type'
-                    )
-                    updated = 0
-                    if updated_rows:
-                        row = updated_rows[0]
-                        updated = int(row.get('updated') or row.get('col_0') or 0)
+                    from app.services import book_service
+                    updated = book_service.backfill_missing_media_type_sync(default_media)
                     if updated:
                         flash(f'Updated media type for {updated} book(s).', 'success')
                     else:
@@ -1181,8 +1130,8 @@ def settings_server_partial(panel: str):
                     flash('Failed to backfill media types. Check logs for details.', 'error')
             elif action_taken == 'assign_default_location':
                 try:
-                    from app.location_service import LocationService
-                    location_service = LocationService()
+                    from app.services import get_location_service
+                    location_service = get_location_service()
                     default_location = location_service.get_default_location()
                     if not default_location:
                         defaults = location_service.setup_default_locations()
@@ -1190,22 +1139,8 @@ def settings_server_partial(panel: str):
                     if not default_location or not getattr(default_location, 'id', None):
                         flash('No default location is available. Create a location first.', 'warning')
                     else:
-                        updated_rows = _run_query(
-                            """
-                            MATCH (loc:Location {id: $loc_id})
-                            WITH loc
-                            MATCH (b:Book)
-                            WHERE NOT (b)-[:STORED_AT]->(:Location)
-                            MERGE (b)-[:STORED_AT]->(loc)
-                            RETURN COUNT(b) AS updated
-                            """,
-                            {'loc_id': default_location.id},
-                            op='repairs_assign_default_location'
-                        )
-                        updated = 0
-                        if updated_rows:
-                            row = updated_rows[0]
-                            updated = int(row.get('updated') or row.get('col_0') or 0)
+                        from app.services import book_service
+                        updated = book_service.assign_all_books_without_location_sync(default_location.id)
                         if updated:
                             flash(f'Default location assigned to {updated} book(s).', 'success')
                         else:
@@ -1228,73 +1163,11 @@ def settings_server_partial(panel: str):
         issue_stats: dict[str, int | None] = {}
         issue_samples: dict[str, list[dict[str, Any]]] = {}
 
-        total_books_rows = _run_query(
-            "MATCH (b:Book) RETURN COUNT(b) AS total",
-            op='repairs_total_books'
-        )
-        total_books = 0
-        if total_books_rows:
-            total_books = int(
-                total_books_rows[0].get('total')
-                or total_books_rows[0].get('count')
-                or total_books_rows[0].get('result')
-                or total_books_rows[0].get('col_0')
-                or 0
-            )
-
-        stats_config = [
-            (
-                'missing_media_type',
-                "MATCH (b:Book) WHERE b.media_type IS NULL OR b.media_type = '' RETURN COUNT(b) AS total",
-                "MATCH (b:Book) WHERE b.media_type IS NULL OR b.media_type = '' RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
-            ),
-            (
-                'missing_authors',
-                "MATCH (b:Book) WHERE NOT (b)-[:AUTHORED]->(:Person) AND NOT (b)-[:WRITTEN_BY]->(:Person) RETURN COUNT(b) AS total",
-                "MATCH (b:Book) WHERE NOT (b)-[:AUTHORED]->(:Person) AND NOT (b)-[:WRITTEN_BY]->(:Person) RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
-            ),
-            (
-                'missing_locations',
-                "MATCH (b:Book) WHERE NOT (b)-[:STORED_AT]->(:Location) RETURN COUNT(b) AS total",
-                "MATCH (b:Book) WHERE NOT (b)-[:STORED_AT]->(:Location) RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
-            ),
-            (
-                'missing_isbn',
-                "MATCH (b:Book) WHERE (b.isbn13 IS NULL OR b.isbn13 = '') AND (b.isbn10 IS NULL OR b.isbn10 = '') RETURN COUNT(b) AS total",
-                "MATCH (b:Book) WHERE (b.isbn13 IS NULL OR b.isbn13 = '') AND (b.isbn10 IS NULL OR b.isbn10 = '') RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
-            ),
-            (
-                'missing_covers',
-                "MATCH (b:Book) WHERE b.cover_url IS NULL OR b.cover_url = '' RETURN COUNT(b) AS total",
-                "MATCH (b:Book) WHERE b.cover_url IS NULL OR b.cover_url = '' RETURN b.id AS id, b.title AS title, b.updated_at AS updated_at ORDER BY b.updated_at DESC LIMIT 6"
-            ),
-        ]
-
-        for key, count_query, sample_query in stats_config:
-            count_rows = _run_query(count_query, op=f'repairs_{key}_count')
-            count_val = 0
-            if count_rows:
-                row = count_rows[0]
-                try:
-                    count_val = int(
-                        row.get('total')
-                        or row.get('count')
-                        or row.get('result')
-                        or row.get('col_0')
-                        or 0
-                    )
-                except Exception:
-                    count_val = 0
-            issue_stats[key] = count_val
-            sample_rows = _run_query(sample_query, op=f'repairs_{key}_sample')
-            normalized_samples: list[dict[str, Any]] = []
-            for item in sample_rows:
-                normalized_samples.append({
-                    'id': item.get('id') or item.get('book_id') or item.get('col_0'),
-                    'title': item.get('title') or item.get('name') or item.get('col_1'),
-                    'updated_at': item.get('updated_at') or item.get('col_2') or item.get('result')
-                })
-            issue_samples[key] = normalized_samples
+        from app.services import book_service
+        overview = book_service.get_repair_overview_sync()
+        total_books = int(overview.get('total_books') or 0)
+        issue_stats = overview.get('issue_stats') or {}
+        issue_samples = overview.get('issue_samples') or {}
 
         try:
             total_issues = sum(int(issue_stats.get(k) or 0) for k in issue_stats.keys())

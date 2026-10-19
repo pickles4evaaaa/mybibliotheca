@@ -2,10 +2,23 @@
 # DO NOT USE IN PRODUCTION - Use docker-compose.yml instead
 
 services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   bibliotheca:
     build: .
     ports:
       - "5054:5054"
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - ./data:/app/data  # Bind mount for development (includes backups)
     environment:
@@ -17,14 +30,17 @@ services:
       # Database - KuzuDB as primary datastore
       - KUZU_DB_PATH=/app/data/kuzu
       - GRAPH_DATABASE_ENABLED=true
+      - CACHE_REDIS_URL=redis://redis:6379/1
+      - KUZU_REDIS_CACHE_ENABLED=true
+      - KUZU_REDIS_CACHE_TTL_SECONDS=10
       
       # Application settings
       - TIMEZONE=UTC
       - READING_STREAK_OFFSET=0
       - FLASK_DEBUG=true
       
-      # CRITICAL: Single worker for KuzuDB compatibility
-      - WORKERS=1
+      # PostgreSQL defaults to six workers; the entrypoint keeps Kuzu at one.
+      - WORKERS=${WORKERS:-6}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5054/"]
@@ -42,7 +58,8 @@ services:
     environment:
       - SECRET_KEY=test-secret-key
       - SECURITY_PASSWORD_SALT=test-salt
-      - REDIS_URL=redis://:dev-redis-password@redis-graph:6379/1
+      - CACHE_REDIS_URL=redis://redis:6379/1
+      - KUZU_REDIS_CACHE_ENABLED=true
       - GRAPH_DATABASE_ENABLED=true  # Enable for testing
       - FLASK_DEBUG=true
       # Test admin credentials
@@ -50,7 +67,7 @@ services:
       - DEV_ADMIN_PASSWORD=TestPassword123!
     command: python3 -m pytest tests/ -v
     depends_on:
-      redis-graph:
+      redis:
         condition: service_healthy
     profiles:
       - test

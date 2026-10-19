@@ -27,7 +27,7 @@ redis==8.1.0
 
 # Graph Database Dependencies
 kuzu==0.11.3
-psycopg[binary]==3.3.6
+psycopg[binary,pool]==3.3.6
 
 # Testing dependencies
 pytest==9.1.1

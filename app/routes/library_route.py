@@ -593,6 +593,13 @@ def library():
                 def __init__(self, data):
                     for key, value in data.items():
                         setattr(self, key, value)
+                    # PostgreSQL library overlays name the canonical books.id
+                    # value ``book_id``. The templates and book routes use the
+                    # legacy ``id``/``uid`` names, so normalize them here.
+                    book_id = data.get('uid') or data.get('id') or data.get('book_id')
+                    if book_id:
+                        self.id = str(book_id)
+                        self.uid = str(book_id)
                     # Ensure common attributes have defaults
                     # Note: authors property is derived from contributors, don't set directly
                     if not hasattr(self, 'contributors'):
@@ -799,9 +806,9 @@ def library():
 
     location_options: List[Dict[str, Any]] = []
     try:
-        from app.location_service import LocationService
+        from app.services import get_location_service
 
-        location_service = LocationService()
+        location_service = get_location_service()
         all_locations = location_service.get_all_locations(active_only=True)
         for location in all_locations or []:
             if isinstance(location, dict):

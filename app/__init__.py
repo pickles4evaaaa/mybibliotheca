@@ -60,10 +60,12 @@ _template_creation_last_attempt = None
 
 @login_manager.user_loader
 def load_user(user_id):
-    """Load user from Kuzu via the user service."""
-    from .services import user_service
+    """Load accounts from the currently selected persistence backend."""
     try:
-        user = user_service.get_user_by_id_sync(user_id)
+        from .infrastructure.persistence_state import get_active_backend
+        from .services import _get_postgres_facade, user_service
+        service = _get_postgres_facade().user_service if get_active_backend() == 'postgres' else user_service
+        user = service.get_user_by_id_sync(user_id)
         return user
     except Exception as e:
         print(f"Error loading user {user_id}: {e}")
@@ -359,11 +361,18 @@ def _initialize_default_templates():
 def create_app():
     import os
     import logging
-    # Ensure schema preflight executes (module import side-effect)
-    try:
-        from .startup import schema_preflight  # noqa: F401
-    except Exception as _spf_err:
-        print(f"[APP] Warning: schema_preflight import failed: {_spf_err}")
+    # Resolve an interrupted cutover before importing any module with Kuzu
+    # startup side effects. PostgreSQL mode never runs Kuzu schema preflight.
+    from .infrastructure.persistence_state import get_active_backend, recover_pending_cutover
+    recover_pending_cutover()
+    startup_backend = get_active_backend()
+    if startup_backend == 'kuzu':
+        try:
+            from .startup import schema_preflight  # noqa: F401
+        except Exception as _spf_err:
+            print(f"[APP] Warning: schema_preflight import failed: {_spf_err}")
+    else:
+        print("[APP] PostgreSQL backend selected; skipping Kuzu schema preflight")
     
     # Ensure static folder exists and is correctly configured
     static_folder = os.path.join(os.path.dirname(__file__), 'static')
@@ -406,39 +415,67 @@ def create_app():
         # Check for SQLite migration needs
         _check_for_sqlite_migration()
         
-        # At end of factory before returning app, ensure backup scheduler initialized
-        try:
-            from .services.simple_backup_service import get_simple_backup_service
-            backup_service = get_simple_backup_service()
-            # Scheduler auto-starts if enabled; force ensure here
-            backup_service.ensure_scheduler()
-            app.logger.info("Automatic backup scheduler ensured (daily backups)")
-        except Exception as e:
-            app.logger.warning(f"Failed to initialize backup scheduler: {e}")
+        from .infrastructure.persistence_state import get_active_backend
+        active_backend = get_active_backend()
+        app.config["ACTIVE_PERSISTENCE_BACKEND"] = active_backend
+        if active_backend == "kuzu":
+            # At end of factory before returning app, ensure backup scheduler initialized
+            try:
+                from .services.simple_backup_service import get_simple_backup_service
+                backup_service = get_simple_backup_service()
+                # Scheduler auto-starts if enabled; force ensure here
+                backup_service.ensure_scheduler()
+                app.logger.info("Automatic backup scheduler ensured (daily backups)")
+            except Exception as e:
+                app.logger.warning(f"Failed to initialize backup scheduler: {e}")
 
-        # Ensure Audiobookshelf sync runner is started (queue + scheduler)
-        try:
-            from .services.audiobookshelf_sync_runner import ensure_abs_sync_runner
-            ensure_abs_sync_runner()
-            app.logger.info("ABS sync runner ensured")
-        except Exception as e:
-            app.logger.warning(f"Failed to start ABS sync runner: {e}")
+            # Ensure Audiobookshelf sync runner is started (queue + scheduler)
+            try:
+                from .services.audiobookshelf_sync_runner import ensure_abs_sync_runner
+                ensure_abs_sync_runner()
+                app.logger.info("ABS sync runner ensured")
+            except Exception as e:
+                app.logger.warning(f"Failed to start ABS sync runner: {e}")
 
-        # Ensure OPDS sync runner is started for background jobs and scheduler
-        try:
-            from .services.opds_sync_runner import ensure_opds_sync_runner
-            ensure_opds_sync_runner()
-            app.logger.info("OPDS sync runner ensured")
-        except Exception as e:
-            app.logger.warning(f"Failed to start OPDS sync runner: {e}")
+            # Ensure OPDS sync runner is started for background jobs and scheduler
+            try:
+                from .services.opds_sync_runner import ensure_opds_sync_runner
+                ensure_opds_sync_runner()
+                app.logger.info("OPDS sync runner ensured")
+            except Exception as e:
+                app.logger.warning(f"Failed to start OPDS sync runner: {e}")
 
-        # Run series migration (idempotent)
-        try:
-            from .migrations.series_relationship_migration import run_series_migration
-            mig_summary = run_series_migration(verbose=os.getenv('MYBIBLIOTHECA_VERBOSE_INIT','false').lower()=='true')
-            app.logger.info(f"Series migration summary: {mig_summary}")
-        except Exception as e:
-            app.logger.warning(f"Series migration failed (continuing): {e}")
+            # Run series migration (idempotent)
+            try:
+                from .migrations.series_relationship_migration import run_series_migration
+                mig_summary = run_series_migration(verbose=os.getenv('MYBIBLIOTHECA_VERBOSE_INIT','false').lower()=='true')
+                app.logger.info(f"Series migration summary: {mig_summary}")
+            except Exception as e:
+                app.logger.warning(f"Series migration failed (continuing): {e}")
+
+        else:
+            # The backup manager dispatches to pg_dump/pg_restore when
+            # PostgreSQL is active, so scheduled protection remains enabled
+            # after migration while Kuzu-only import runners stay stopped.
+            try:
+                from .services.simple_backup_service import get_simple_backup_service
+                get_simple_backup_service().ensure_scheduler()
+                app.logger.info("PostgreSQL automatic backup scheduler ensured")
+            except Exception as e:
+                app.logger.error("Failed to initialize PostgreSQL backup scheduler: %s", e)
+            try:
+                from .services.opds_sync_runner import ensure_opds_sync_runner
+                ensure_opds_sync_runner()
+                app.logger.info("PostgreSQL OPDS sync runner ensured")
+            except Exception as e:
+                app.logger.error("Failed to start PostgreSQL OPDS sync runner: %s", e)
+            try:
+                from .services.audiobookshelf_sync_runner import ensure_abs_sync_runner
+                ensure_abs_sync_runner()
+                app.logger.info("PostgreSQL Audiobookshelf import/listening runner ensured")
+            except Exception as e:
+                app.logger.error("Failed to start PostgreSQL Audiobookshelf runner: %s", e)
+            app.logger.info("PostgreSQL selected; Kuzu-backed import paths remain disabled")
 
     # Initialize extensions (no SQLAlchemy)
     csrf.init_app(app)
@@ -469,6 +506,16 @@ def create_app():
         # For now, use a default site name since settings service methods don't exist yet
         site_name = 'MyBibliotheca'
         return dict(site_name=site_name)
+
+    @app.context_processor
+    def inject_active_persistence_backend():
+        """Show which database backend currently serves application data."""
+        try:
+            from .infrastructure.persistence_state import get_active_backend
+            backend = get_active_backend()
+        except Exception:
+            backend = 'unknown'
+        return {'active_persistence_backend': backend}
 
     @app.context_processor
     def inject_theme_preference():
@@ -569,54 +616,62 @@ def create_app():
     with app.app_context():
         # Use environment variable to control verbose logging across multiple workers
         verbose_init = os.getenv('MYBIBLIOTHECA_VERBOSE_INIT', 'false').lower() == 'true'
-        
+
         if verbose_init:
             print("🚀 Initializing Kuzu-based MyBibliotheca...")
-        
+
         # Test Kuzu connection (only if not in gunicorn worker spawn)
         # Skip KuzuDB connection test during import/fork to avoid lock conflicts
         kuzu_init_attempted = False
-        try:
-            from .utils.kuzu_migration_helper import safe_execute_query
-            # Simple connection test using safe method
-            test_result = safe_execute_query("RETURN 1 AS test", {})
-            kuzu_init_attempted = True
+        from .infrastructure.persistence_state import get_active_backend
+        active_backend = get_active_backend()
+        if active_backend == "postgres":
+            kuzu_init_attempted = False
             if verbose_init:
-                print("✅ Kuzu connection successful")
-                
-                # Log database state at app startup
-                try:
-                    user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
-                    book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
-                    # OWNS deprecated: omit counting legacy ownership edges (migration handles any residual)
-                    
-                    user_count = 0
-                    if user_result and user_result.has_next():
-                        row = user_result.get_next()
-                        user_count = row[0] if row else 0
-                    
-                    book_count = 0
-                    if book_result and book_result.has_next():
-                        row = book_result.get_next()
-                        book_count = row[0] if row else 0
-                    
+                print("🐘 PostgreSQL selected by the verified persistence state")
+        else:
+            try:
+                from .utils.kuzu_migration_helper import safe_execute_query
+                # Simple connection test using safe method
+                test_result = safe_execute_query("RETURN 1 AS test", {})
+                kuzu_init_attempted = True
+                if verbose_init:
+                    print("✅ Kuzu connection successful")
+
+                    # Log database state at app startup
+                    try:
+                        user_result = safe_execute_query("MATCH (u:User) RETURN COUNT(u) AS count", {})
+                        book_result = safe_execute_query("MATCH (b:Book) RETURN COUNT(b) AS count", {})
+                        # OWNS deprecated: omit counting legacy ownership edges (migration handles any residual)
+
+                        user_count = 0
+                        if user_result and user_result.has_next():
+                            row = user_result.get_next()
+                            user_count = row[0] if row else 0
+
+                        book_count = 0
+                        if book_result and book_result.has_next():
+                            row = book_result.get_next()
+                            book_count = row[0] if row else 0
+
+                        if verbose_init:
+                            print(f"📊 Database state: Users: {user_count}, Books: {book_count}")
+                    except Exception as count_e:
+                        if verbose_init:
+                            print(f"Error counting nodes: {count_e}")
+
+            except Exception as e:
+                if "Could not set lock on file" in str(e):
                     if verbose_init:
-                        print(f"📊 Database state: Users: {user_count}, Books: {book_count}")
-                except Exception as count_e:
+                        print("⏳ KuzuDB connection deferred - will initialize on first request")
+                    kuzu_init_attempted = False  # Mark as not attempted due to lock conflict
+                else:
+                    print("🔧 Make sure KuzuDB is running and accessible")
                     if verbose_init:
-                        print(f"Error counting nodes: {count_e}")
+                        import traceback
+                        traceback.print_exc()
             
-        except Exception as e:
-            if "Could not set lock on file" in str(e):
-                if verbose_init:
-                    print("⏳ KuzuDB connection deferred - will initialize on first request")
-                kuzu_init_attempted = False  # Mark as not attempted due to lock conflict
-            else:
-                print("🔧 Make sure KuzuDB is running and accessible")
-                if verbose_init:
-                    import traceback
-                    traceback.print_exc()
-        
+
         # Only initialize services if KuzuDB connection was successful
         if kuzu_init_attempted:
             # Initialize services and attach to app using Kuzu service instances
@@ -663,6 +718,19 @@ def create_app():
         else:
             if verbose_init:
                 print("⚠️ Services initialization deferred - will initialize on first request")
+
+        if active_backend == "postgres":
+            from .services import (
+                _get_book_service, book_service, user_service, reading_log_service,
+                custom_field_service, import_mapping_service, direct_import_service,
+            )
+            _get_book_service()  # Validate PostgreSQL availability; never fall back to Kuzu.
+            app.book_service = book_service  # type: ignore
+            app.user_service = user_service  # type: ignore
+            app.reading_log_service = reading_log_service  # type: ignore
+            app.custom_field_service = custom_field_service  # type: ignore
+            app.import_mapping_service = import_mapping_service  # type: ignore
+            app.direct_import_service = direct_import_service  # type: ignore
         
         # Development mode - skip auto admin creation, use setup page instead
         if verbose_init:
@@ -699,6 +767,65 @@ def create_app():
         
         # Run debug middleware if enabled
         debug_middleware()
+
+        # The migration wizard commits a durable backend marker while the old
+        # process is still serving its final response. Refuse subsequent
+        # traffic until the container restarts with the new service registry.
+        try:
+            from .infrastructure.persistence_state import get_active_backend
+            boot_backend = _flask_current_app.config.get("ACTIVE_PERSISTENCE_BACKEND", "kuzu")
+            selected_backend = get_active_backend()
+            migration_recovery_endpoints = {
+                'admin.migration_management',
+                'admin.postgres_migration_status',
+            }
+            if selected_backend != boot_backend:
+                try:
+                    from .admin import _schedule_cutover_worker_restart
+                    _schedule_cutover_worker_restart(_flask_current_app._get_current_object())
+                except Exception:
+                    _flask_current_app.logger.exception(
+                        "Could not schedule the automatic worker restart after database cutover"
+                    )
+                if request.endpoint not in migration_recovery_endpoints:
+                    response = jsonify({
+                        "error": "database_cutover_restarting",
+                        "message": "The database migration is complete. MyBibliotheca is reconnecting automatically; retry in a few seconds.",
+                        "active_backend": selected_backend,
+                    })
+                    response.status_code = 503
+                    response.headers['Retry-After'] = '3'
+                    return response
+
+            # Existing Kuzu installs are guided through a durable, ordered
+            # first-upgrade flow after an administrator signs in: verify a
+            # source backup, then complete the PostgreSQL cutover. Keep the
+            # wizard and the assets it needs reachable while redirecting the
+            # rest of the admin UI there.
+            from .infrastructure.persistence_upgrade import has_legacy_kuzu_database
+            migration_wizard_endpoints = {
+                'admin.migration_management',
+                'admin.create_postgres_migration_backup',
+                'admin.start_postgres_migration',
+                'admin.postgres_migration_status',
+                'auth.login',
+                'auth.logout',
+                'auth.forced_password_change',
+                'auth.setup',
+            }
+            if (
+                selected_backend == 'kuzu'
+                and has_legacy_kuzu_database()
+                and current_user.is_authenticated
+                and bool(getattr(current_user, 'is_admin', False))
+                and request.endpoint not in migration_wizard_endpoints
+                and not (request.endpoint and request.endpoint.startswith('static'))
+                and not request.path.startswith(('/static/', '/covers/', '/uploads/'))
+            ):
+                return redirect(url_for('admin.migration_management'))
+        except Exception as state_error:
+            _flask_current_app.logger.error("Persistence state validation failed: %s", state_error)
+            return jsonify({"error": "persistence_state_unavailable"}), 503
         
         # Special debugging for setup route
         if request.endpoint == 'auth.setup':
@@ -1055,11 +1182,19 @@ def create_app():
     from pathlib import Path
     
     def shutdown_handler():
-        """Log database state and properly close KuzuDB connection at application shutdown."""
+        """Log database state and close the active persistence backend cleanly."""
         try:
             print(f"🛑 [APP_SHUTDOWN] Application shutting down - Container: {os.getenv('HOSTNAME', 'unknown')}")
             print(f"🛑 [APP_SHUTDOWN] Process ID: {os.getpid()}")
             print(f"🛑 [APP_SHUTDOWN] Shutdown time: {datetime.now()}")
+
+            from .infrastructure.persistence_state import get_active_backend
+            active_backend = get_active_backend()
+            if active_backend == "postgres":
+                from .infrastructure.postgres_store import get_postgres_store
+                get_postgres_store().close()
+                print("🛑 [APP_SHUTDOWN] PostgreSQL connection pool closed")
+                return
             
             # Try to get final database state only if manager was initialized earlier
             try:
@@ -1182,34 +1317,47 @@ def create_app():
         if verbose_probe:
             print("[APP] before_first_request: starting readiness checks ...")
         try:
-            from .utils.safe_kuzu_manager import get_safe_kuzu_manager
-            if verbose_probe:
-                print("[APP] before_first_request: acquired get_safe_kuzu_manager")
-            mgr = get_safe_kuzu_manager()
-            if verbose_probe:
-                print("[APP] before_first_request: executing RETURN 1 as ok ...")
-            # Run the readiness query with a timeout so first request never hangs
-            import concurrent.futures
-            start_ts = time.time()
-            def _run_probe():
-                return mgr.execute_query("RETURN 1 as ok")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                future = _pool.submit(_run_probe)
+            from .infrastructure.persistence_state import get_active_backend
+            if get_active_backend() == "postgres":
+                from .infrastructure.postgres_store import get_postgres_store
+                with get_postgres_store().connection() as connection, connection.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                if verbose_probe:
+                    print("[APP] PostgreSQL readiness check passed")
+            else:
                 try:
-                    res = future.result(timeout=10)
+                    from .utils.safe_kuzu_manager import get_safe_kuzu_manager
                     if verbose_probe:
-                        print("[APP] before_first_request: query executed, parsing result ...")
-                    ok_val = None
-                    if res and hasattr(res, 'has_next') and res.has_next():
-                        row = res.get_next()
-                        ok_val = row[0] if isinstance(row, (list, tuple)) else list(row)[0]
-                    elapsed = time.time() - start_ts
+                        print("[APP] before_first_request: acquired get_safe_kuzu_manager")
+                    mgr = get_safe_kuzu_manager()
                     if verbose_probe:
-                        print(f"[APP] before_first_request: Readiness DB check returned: {ok_val} in {elapsed:.2f}s")
-                except concurrent.futures.TimeoutError:
-                    elapsed = time.time() - start_ts
+                        print("[APP] before_first_request: executing RETURN 1 as ok ...")
+                    # Run the readiness query with a timeout so first request never hangs
+                    import concurrent.futures
+                    start_ts = time.time()
+                    def _run_probe():
+                        return mgr.execute_query("RETURN 1 as ok")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                        future = _pool.submit(_run_probe)
+                        try:
+                            res = future.result(timeout=10)
+                            if verbose_probe:
+                                print("[APP] before_first_request: query executed, parsing result ...")
+                            ok_val = None
+                            if res and hasattr(res, 'has_next') and res.has_next():
+                                row = res.get_next()
+                                ok_val = row[0] if isinstance(row, (list, tuple)) else list(row)[0]
+                            elapsed = time.time() - start_ts
+                            if verbose_probe:
+                                print(f"[APP] before_first_request: Readiness DB check returned: {ok_val} in {elapsed:.2f}s")
+                        except concurrent.futures.TimeoutError:
+                            elapsed = time.time() - start_ts
+                            if verbose_probe:
+                                print(f"[APP] before_first_request: Readiness DB check timed out after {elapsed:.2f}s — continuing without blocking")
+                except Exception as e:
                     if verbose_probe:
-                        print(f"[APP] before_first_request: Readiness DB check timed out after {elapsed:.2f}s — continuing without blocking")
+                        print(f"[APP] Kuzu readiness check failed: {e}")
+
         except Exception as e:
             if verbose_probe:
                 print(f"[APP] before_first_request: Readiness DB check failed: {e}")

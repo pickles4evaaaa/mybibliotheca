@@ -17,6 +17,10 @@ from typing import Any, Dict, List, Optional
 
 # These accessors are patched in tests; provide simple defaults for runtime use
 def get_category_service():
+    from app.infrastructure.persistence_state import get_active_backend
+    if get_active_backend() == "postgres":
+        from app.services import _get_book_service
+        return _get_book_service().catalog_service
     from .kuzu_category_service import KuzuCategoryService
     return KuzuCategoryService()
 
