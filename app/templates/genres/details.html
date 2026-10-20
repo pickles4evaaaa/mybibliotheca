@@ -157,6 +157,7 @@
                 <div class="card-body">
                     <div class="row g-2">
                         {% for book in books %}
+                        {% set book_link_id = book.uid or book.id or book.book_id %}
                         <div class="col-md-6 col-lg-4 col-xl-3 mb-2">
                             <div class="card h-100 border-0 shadow-sm">
                                 <div class="row g-0 h-100">
@@ -176,10 +177,14 @@
                                     <div class="col-9">
                                         <div class="card-body p-2">
                                             <h6 class="card-title mb-1" style="font-size: 0.875rem; line-height: 1.2;">
-                                                <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" 
+                                                {% if book_link_id %}
+                                                <a href="{{ url_for('main.view_book_enhanced', uid=book_link_id) }}"
                                                    class="text-decoration-none">
                                                     {{ book.title[:40] }}{% if book.title|length > 40 %}...{% endif %}
                                                 </a>
+                                                {% else %}
+                                                {{ book.title[:40] }}{% if book.title|length > 40 %}...{% endif %}
+                                                {% endif %}
                                             </h6>
                                             
                                             {% if book.authors and book.authors|length > 0 %}
@@ -192,7 +197,7 @@
                                             
                                             <!-- Compact status badges -->
                                             <div class="mt-1">
-                                                {% if book.reading_status is defined %}
+                                                {% if book.reading_status %}
                                                 <span class="badge bg-{{ 'success' if book.reading_status == 'read' else 'warning' if book.reading_status == 'reading' else 'primary' if book.reading_status == 'currently-reading' else 'secondary' }} text-white" 
                                                       style="font-size: 0.6rem;">
                                                     {{ book.reading_status.replace('_', ' ').replace('-', ' ').title() }}

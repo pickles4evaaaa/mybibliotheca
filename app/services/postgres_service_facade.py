@@ -196,7 +196,7 @@ class PostgresServiceFacade:
         return await asyncio.to_thread(self.get_book_by_isbn_for_user_sync, isbn, user_id)
 
     def get_books_for_user(self, user_id: str, limit: int = 50, offset: int = 0) -> list[Book]:
-        return self._books_from_overlay(user_id, limit, offset)
+        return self._books_from_overlay(user_id, limit=limit, offset=offset)
 
     def get_user_books_sync(self, user_id: str, limit: int = 50, offset: int = 0) -> list[Book]:
         return self.get_books_for_user(user_id, limit, offset)

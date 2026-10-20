@@ -156,6 +156,19 @@ def test_full_kuzu_to_postgres_cutover_preserves_custom_field_values(monkeypatch
         migrated_book = facade.book_service.get_book_by_id_sync("book-1")
         assert migrated_book is not None
         assert migrated_book.title == "A preserved book"
+        with store.connection() as connection, connection.cursor() as cursor:
+            cursor.execute("INSERT INTO categories (id,name) VALUES ('genre-1','Fiction')")
+            cursor.execute("INSERT INTO books (id,title) VALUES ('unowned-book','Not in this library')")
+            cursor.execute(
+                "INSERT INTO book_categories (book_id,category_id) VALUES "
+                "('book-1','genre-1'),('unowned-book','genre-1')"
+            )
+        category_books = facade.get_books_by_category_sync("genre-1", "user-1")
+        assert [book["id"] for book in category_books] == ["book-1"]
+        assert category_books[0]["uid"] == "book-1"
+        assert [book["id"] for book in facade.get_books_by_category_sync("genre-1")] == [
+            "book-1", "unowned-book",
+        ]
         # Production restarts the worker after cutover. Drop any Kuzu service
         # instances created while the migration UI was running so this check
         # follows the same backend selection path as the restarted worker.

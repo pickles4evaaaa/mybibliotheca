@@ -182,6 +182,15 @@ class PostgresCatalogService:
     def get_books_by_category_sync(
         self, category_id: str, user_id: str | None = None, include_subcategories: bool = False,
     ) -> list[dict[str, Any]]:
+        if user_id is None:
+            user_join = "LEFT JOIN user_books ub ON ub.book_id = b.id"
+            params: tuple[Any, ...] = (category_id,)
+        else:
+            # Category membership is global bibliographic metadata, but this
+            # view links into a user's private library. Return only books that
+            # the viewer can open through the user-scoped book detail route.
+            user_join = "JOIN user_books ub ON ub.book_id = b.id AND ub.user_id = %s"
+            params = (category_id, user_id)
         with self.store.connection() as connection, connection.cursor() as cursor:
             if include_subcategories:
                 cursor.execute(
@@ -190,20 +199,24 @@ class PostgresCatalogService:
                     "SELECT DISTINCT b.id, b.title, b.subtitle, b.isbn13, b.isbn10, b.cover_url, "
                     "ub.reading_status, ub.ownership_status, ub.user_rating, b.created_at "
                     "FROM descendants d JOIN " + _CATEGORY_LINKS + " links ON links.category_id = d.id "
-                    "JOIN books b ON b.id = links.book_id LEFT JOIN user_books ub "
-                    "ON ub.book_id = b.id AND ub.user_id = %s ORDER BY b.title, b.id",
-                    (category_id, user_id),
+                    "JOIN books b ON b.id = links.book_id " + user_join + " ORDER BY b.title, b.id",
+                    params,
                 )
             else:
                 cursor.execute(
                     "SELECT DISTINCT b.id, b.title, b.subtitle, b.isbn13, b.isbn10, b.cover_url, "
                     "ub.reading_status, ub.ownership_status, ub.user_rating, b.created_at "
                     "FROM " + _CATEGORY_LINKS + " links JOIN books b ON b.id = links.book_id "
-                    "LEFT JOIN user_books ub ON ub.book_id = b.id AND ub.user_id = %s "
-                    "WHERE links.category_id = %s ORDER BY b.title, b.id",
-                    (user_id, category_id),
+                    + user_join + " WHERE links.category_id = %s ORDER BY b.title, b.id",
+                    (user_id, category_id) if user_id is not None else params,
                 )
-            return [dict(zip(("id", "title", "subtitle", "isbn13", "isbn10", "cover_url", "reading_status", "ownership_status", "user_rating", "created_at"), row)) for row in cursor.fetchall()]
+            records = []
+            for row in cursor.fetchall():
+                record = dict(zip(("id", "title", "subtitle", "isbn13", "isbn10", "cover_url", "reading_status", "ownership_status", "user_rating", "created_at"), row))
+                if record.get("id"):
+                    record["uid"] = str(record["id"])
+                records.append(record)
+            return records
 
     def create_category_sync(self, category_data: dict[str, Any] | Category) -> Category | None:
         values = category_data.__dict__ if isinstance(category_data, Category) else dict(category_data)
