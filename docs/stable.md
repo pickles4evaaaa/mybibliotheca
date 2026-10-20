@@ -46,76 +46,35 @@ MyBibliotheca is a comprehensive personal library management system that allows 
 
 ### Version Information
 
-- **Version:** 2.0.1 (Stable)
-- **Deprecated Version:** 1.1.1
-- **Database:** SQLite with SQLAlchemy ORM
+- **Version:** 3.0.0 (Stable)
+- **Database:** PostgreSQL for new installations; existing Kuzu installations can migrate with the in-app wizard
 - **Framework:** Flask with Flask-Login authentication
 - **Python:** Requires Python 3.13+
 - **Security:** CSRF protection, account lockout, password policies
-- **Docker Image:** `pickles4evaaaa/mybibliotheca:2.0.1`
+- **Docker Image:** `pickles4evaaaa/mybibliotheca:3.0.0`
 
 ## Quick Start
 
 ### Docker Installation (Recommended)
 
-#### Option 1: Docker Run Command
-
-```bash
-# Clone the repository for configuration files
-git clone https://github.com/pickles4evaaaa/mybibliotheca.git
-cd mybibliotheca
-
-# Run using Docker Hub image
-docker run -d \
-  --name mybibliotheca \
-  -p 5054:5054 \
-  -v $(pwd)/data:/app/data \
-  -e TIMEZONE=America/Chicago \
-  -e WORKERS=6 \
-  --restart unless-stopped \
-  pickles4evaaaa/mybibliotheca:2.0.1
-```
-
-#### Option 2: Docker Compose (Recommended)
+#### Docker Compose (Recommended)
 
 ```bash
 # Clone the repository
 git clone https://github.com/pickles4evaaaa/mybibliotheca.git
 cd mybibliotheca
 
-# Create .env file with required secrets
-cp .env.example .env
-# Edit .env and set SECRET_KEY and SECURITY_PASSWORD_SALT
+# Create .env and generate the required secure settings
+python3 scripts/setup_docker.py
 
-# Start with Docker Compose
+# Start MyBibliotheca, PostgreSQL, and Redis
 docker compose up -d
+docker compose ps
 ```
 
-**Docker Compose Configuration (docker-compose.yml):**
+The setup command creates `.env` from `.env.example`, generates the three required values (`SECRET_KEY`, `SECURITY_PASSWORD_SALT`, and `POSTGRES_PASSWORD`), and restricts access to the file. You do not need to edit it for a basic installation. Keep `.env` private and in the same folder as `docker-compose.yml`.
 
-```yaml
-services:
-  mybibliotheca:
-    image: pickles4evaaaa/mybibliotheca:2.0.1
-    ports:
-      - "5054:5054"
-    volumes:
-      - mybibliotheca_data:/app/data
-    environment:
-      - SECRET_KEY=${SECRET_KEY}
-      - SECURITY_PASSWORD_SALT=${SECURITY_PASSWORD_SALT}
-      - TIMEZONE=${TIMEZONE:-UTC}
-      - WORKERS=${WORKERS:-6}
-    restart: unless-stopped
-
-volumes:
-  mybibliotheca_data:
-    driver: local
-```
-
-**Note:** Pre-built Docker images are available on Docker Hub. Ensure all references to version 1.1.1 in documentation, examples, and Docker commands are updated to **2.0.1**.
-
-Access the application at `http://localhost:5054` and complete the first-time setup to create your admin account.
+Open `http://localhost:5054` and create the administrator account. New installations use PostgreSQL automatically. For an existing Kuzu installation, follow the [migration guide](MIGRATION.md) and complete the in-app migration wizard; do not replace its existing PostgreSQL password with a newly generated one.
 
 ## Features
 
