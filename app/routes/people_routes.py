@@ -145,9 +145,14 @@ def person_details(person_id):
                 for book in books:
                     # Convert book object to dictionary if needed
                     if hasattr(book, '__dict__'):
-                        book_dict = book.__dict__
+                        book_dict = dict(book.__dict__)
                     else:
-                        book_dict = book
+                        book_dict = dict(book) if isinstance(book, dict) else {}
+                    # Book detail routes use the stable book ID as their UID.
+                    # Some backends return ``id`` without the legacy ``uid`` alias.
+                    book_id = book_dict.get('uid') or book_dict.get('id') or book_dict.get('book_id')
+                    if book_id:
+                        book_dict['uid'] = str(book_id)
                     converted_books_by_type[contribution_type].append(book_dict)
         
         # Prepare template data

@@ -197,6 +197,7 @@
                         <div class="row">
                             {% for book in books %}
                             <div class="col-md-6 col-lg-4 mb-3">
+                                {% set book_link_id = book.uid or book.id or book.book_id %}
                                 <div class="card h-100">
                                     <div class="row g-0 h-100">
                                         <div class="col-4">
@@ -216,7 +217,7 @@
                                         <div class="col-8">
                                             <div class="card-body p-3">
                                                 <h6 class="card-title mb-2">
-                                                    <a href="{{ url_for('main.view_book_enhanced', uid=book.uid) }}" 
+                                                    <a href="{{ url_for('main.view_book_enhanced', uid=book_link_id) }}"
                                                        class="text-decoration-none">
                                                         {{ book.title }}
                                                     </a>

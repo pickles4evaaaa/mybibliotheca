@@ -29,6 +29,19 @@ _CATEGORY_LINKS = """(
 )"""
 
 
+def _person_book_record(row: tuple[Any, ...], *, user_scoped: bool) -> dict[str, Any]:
+    keys = (
+        ("id", "title", "subtitle", "isbn13", "isbn10", "cover_url", "contribution_type", "role")
+        if user_scoped else
+        ("id", "title", "subtitle", "isbn13", "isbn10", "cover_url", "relationship_type", "role")
+    )
+    record = dict(zip(keys, row))
+    book_id = record.get("uid") or record.get("id") or record.get("book_id")
+    if book_id:
+        record["uid"] = str(book_id)
+    return record
+
+
 def _category_from_row(row: Any) -> Category:
     return Category(
         id=row[0], name=row[1] or "", normalized_name=row[2] or "", parent_id=row[3],
@@ -524,12 +537,12 @@ class PostgresCatalogService:
             rows = cursor.fetchall()
         if user_id is None:
             return [
-                dict(zip(("id", "title", "subtitle", "isbn13", "isbn10", "cover_url", "relationship_type", "role"), row))
+                _person_book_record(row, user_scoped=False)
                 for row in rows
             ]
         grouped: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
-            record = dict(zip(("id", "title", "subtitle", "isbn13", "isbn10", "cover_url", "contribution_type", "role"), row))
+            record = _person_book_record(row, user_scoped=True)
             grouped.setdefault(str(row[6] or row[7] or "AUTHORED"), []).append(record)
         return grouped
 

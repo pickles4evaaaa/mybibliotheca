@@ -25,6 +25,7 @@ from app.infrastructure.postgres_migration import (
     migrate_kuzu_manager_to_postgres,
 )
 from app.services.postgres_custom_field_service import PostgresCustomFieldService
+import app.services.postgres_service_facade as postgres_facade_module
 from app.services.postgres_service_facade import PostgresServiceFacade
 from app.simplified_book_service import SimplifiedBookService, UserBookAnnotation
 
@@ -125,6 +126,7 @@ def test_full_kuzu_to_postgres_cutover_preserves_custom_field_values(monkeypatch
 
         monkeypatch.setenv("MYBIBLIOTHECA_PERSISTENCE_STATE_PATH", str(tmp_path / "persistence_state.json"))
         monkeypatch.setattr(postgres_store, "get_postgres_store", lambda: store)
+        monkeypatch.setattr(postgres_facade_module, "get_postgres_store", lambda: store)
         manager = _FixtureManager(source)
         result = migrate_kuzu_manager_to_postgres(
             manager,
@@ -154,6 +156,11 @@ def test_full_kuzu_to_postgres_cutover_preserves_custom_field_values(monkeypatch
         migrated_book = facade.book_service.get_book_by_id_sync("book-1")
         assert migrated_book is not None
         assert migrated_book.title == "A preserved book"
+        # Production restarts the worker after cutover. Drop any Kuzu service
+        # instances created while the migration UI was running so this check
+        # follows the same backend selection path as the restarted worker.
+        from app.services import reset_all_services
+        reset_all_services()
         migrated_overlay = facade.library_service.get_user_book_sync("user-1", "book-1")
         assert migrated_overlay is not None
         assert migrated_overlay["reading_status"] == "currently_reading"
