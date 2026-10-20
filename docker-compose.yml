@@ -27,10 +27,7 @@ services:
     restart: unless-stopped
 
   bibliotheca:
-    build: .
-    # For a pre-built release image, use the published image instead of building from source:
-    # image: pickles4evaaaa/mybibliotheca:latest
-    # See available tags at: https://hub.docker.com/repository/docker/pickles4evaaaa/mybibliotheca/tags
+    image: pickles4evaaaa/mybibliotheca:3.0.0
     ports:
       - "5054:5054"
     depends_on:
@@ -43,9 +40,6 @@ services:
       - ./data:/app/data
   # NOTE: Do NOT bind-mount the static directory on macOS.
   # Docker Desktop's osxfs can trigger EDEADLK (Resource deadlock avoided)
-  # when Gunicorn/Flask read static files via wsgi.file_wrapper.
-  # Static assets are copied into the image at build time; hot-reload of
-  # static files should be done with the dev compose file instead.
     environment:
       # Security - MUST be set via .env file or environment
       SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}

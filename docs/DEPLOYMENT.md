@@ -15,8 +15,8 @@ This guide covers deploying Bibliotheca in a production environment with securit
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/bibliotheca.git
-cd bibliotheca
+git clone https://github.com/pickles4evaaaa/mybibliotheca.git
+cd mybibliotheca
 
 # Create environment configuration
 cp .env.example .env
@@ -78,7 +78,8 @@ chmod 755 data
 ### 3. Deploy Application
 
 ```bash
-# Start services
+# Pull the pinned 3.0.0 image and start services
+docker compose pull
 docker compose up -d
 
 # Verify deployment
@@ -100,6 +101,7 @@ with PostgreSQL configured start on PostgreSQL.
 2. Set a strong `POSTGRES_PASSWORD` in `.env`, then update and start the stack:
 
    ```bash
+   # The Compose file pins pickles4evaaaa/mybibliotheca:3.0.0.
    docker compose pull
    docker compose up -d
    docker compose ps

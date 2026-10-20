@@ -27,18 +27,19 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 Use a different generated value for each setting. Then start MyBibliotheca:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 docker compose ps
 docker compose logs -f bibliotheca
 ```
 
 Open [http://localhost:5054](http://localhost:5054) and create the administrator account. Compose starts MyBibliotheca, PostgreSQL, and Redis. It stores uploaded files and other application data in `./data` and PostgreSQL data in the `postgres_data` Docker volume. Back up both locations.
 
-To update a source checkout later, pull the release and rebuild:
+The production Compose file uses the published `pickles4evaaaa/mybibliotheca:3.0.0` image. To update to a later release, pull the repository version that updates the image tag, then run:
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Read the [installation and upgrade guide](https://docs.mybibliotheca.org/stable/install/) before upgrading an existing installation.
