@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-bibliotheca}
       POSTGRES_USER: ${POSTGRES_USER:-bibliotheca}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Required setting is missing. Run: python3 scripts/setup_docker.py}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Required setting is missing. Run: python3 scripts/setup_docker.py}"
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -42,8 +42,8 @@ services:
   # Docker Desktop's osxfs can trigger EDEADLK (Resource deadlock avoided)
     environment:
       # Security - MUST be set via .env file or environment
-      SECRET_KEY: ${SECRET_KEY:?Required setting is missing. Run: python3 scripts/setup_docker.py}
-      SECURITY_PASSWORD_SALT: ${SECURITY_PASSWORD_SALT:?Required setting is missing. Run: python3 scripts/setup_docker.py}
+      SECRET_KEY: "${SECRET_KEY:?Required setting is missing. Run: python3 scripts/setup_docker.py}"
+      SECURITY_PASSWORD_SALT: "${SECURITY_PASSWORD_SALT:?Required setting is missing. Run: python3 scripts/setup_docker.py}"
 
       # New installs initialize on PostgreSQL. Existing Kuzu installs remain
       # on Kuzu until the administrator completes the migration wizard.
@@ -79,7 +79,7 @@ services:
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-bibliotheca}
       POSTGRES_USER: ${POSTGRES_USER:-bibliotheca}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Required setting is missing. Run: python3 scripts/setup_docker.py}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Required setting is missing. Run: python3 scripts/setup_docker.py}"
 
       # Migration settings (DISABLED for manual migration)
       AUTO_MIGRATE: "false"
