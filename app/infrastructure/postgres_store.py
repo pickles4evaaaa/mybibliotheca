@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import hashlib
+import json
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -771,6 +772,83 @@ class PostgresStore:
                 cursor.execute("SELECT current_database(), current_user, now()")
                 database, user, server_time = cursor.fetchone()
         return {"ok": True, "database": database, "user": user, "server_time": server_time.isoformat()}
+
+    def create_import_job(self, user_id: str, task_id: str, job_data: dict[str, Any]) -> bool:
+        """Persist an import job so every Gunicorn worker can see it."""
+        payload = json.dumps(job_data, ensure_ascii=False, default=str)
+        with self.transaction() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO import_jobs (id, task_id, user_id, status, extra, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s::jsonb, now(), now())
+                    ON CONFLICT (id) DO NOTHING
+                    RETURNING id
+                    """,
+                    (str(task_id), str(task_id), str(user_id), job_data.get("status", "pending"), payload),
+                )
+                return cursor.fetchone() is not None
+
+    def update_import_job(self, user_id: str, task_id: str, updates: dict[str, Any]) -> bool:
+        """Apply an import job patch atomically, scoped to its owning user."""
+        payload = json.dumps(updates, ensure_ascii=False, default=str)
+        with self.transaction() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE import_jobs
+                    SET extra = COALESCE(extra, '{}'::jsonb) || %s::jsonb,
+                        status = COALESCE(%s, status),
+                        updated_at = now()
+                    WHERE user_id = %s AND task_id = %s
+                    RETURNING id
+                    """,
+                    (payload, updates.get("status"), str(user_id), str(task_id)),
+                )
+                return cursor.fetchone() is not None
+
+    def get_import_job(self, user_id: str, task_id: str) -> dict[str, Any] | None:
+        """Read a user-owned import job from shared PostgreSQL storage."""
+        with self.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT extra FROM import_jobs WHERE user_id = %s AND task_id = %s",
+                    (str(user_id), str(task_id)),
+                )
+                row = cursor.fetchone()
+        if not row:
+            return None
+        payload = row[0]
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        return dict(payload) if isinstance(payload, dict) else None
+
+    def get_user_import_jobs(self, user_id: str) -> dict[str, dict[str, Any]]:
+        """List import jobs owned by one user."""
+        with self.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT task_id, extra FROM import_jobs WHERE user_id = %s ORDER BY created_at DESC",
+                    (str(user_id),),
+                )
+                rows = cursor.fetchall()
+        jobs: dict[str, dict[str, Any]] = {}
+        for task_id, payload in rows:
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            if task_id and isinstance(payload, dict):
+                jobs[str(task_id)] = dict(payload)
+        return jobs
+
+    def delete_import_job(self, user_id: str, task_id: str) -> bool:
+        """Delete a user-owned import job."""
+        with self.transaction() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM import_jobs WHERE user_id = %s AND task_id = %s RETURNING id",
+                    (str(user_id), str(task_id)),
+                )
+                return cursor.fetchone() is not None
 
     def assert_migration_target_empty(self, connection: Any | None = None, *, lock: bool = False) -> None:
         """Refuse Kuzu import into a PostgreSQL database with application rows.

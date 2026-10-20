@@ -365,27 +365,73 @@ class SafeImportJobManager:
 safe_import_manager = SafeImportJobManager()
 
 
+def _postgres_job_store():
+    """Return the shared store in PostgreSQL mode; keep Kuzu on its legacy path."""
+    from app.infrastructure.persistence_state import get_active_backend
+
+    if get_active_backend() != "postgres":
+        return None
+    from app.infrastructure.postgres_store import get_postgres_store
+
+    return get_postgres_store()
+
+
 # Compatibility functions for gradual migration
 def safe_create_import_job(user_id: str, task_id: str, job_data: dict) -> bool:
     """Create an import job safely with user isolation."""
+    try:
+        store = _postgres_job_store()
+        if store is not None:
+            return store.create_import_job(str(user_id), str(task_id), job_data)
+    except Exception:
+        logger.exception("Failed to persist PostgreSQL import job %s", task_id)
+        return False
     return safe_import_manager.create_job(str(user_id), task_id, job_data)
 
 
 def safe_update_import_job(user_id: str, task_id: str, updates: dict) -> bool:
     """Update an import job safely with user isolation."""
+    try:
+        store = _postgres_job_store()
+        if store is not None:
+            return store.update_import_job(str(user_id), str(task_id), updates)
+    except Exception:
+        logger.exception("Failed to update PostgreSQL import job %s", task_id)
+        return False
     return safe_import_manager.update_job(str(user_id), task_id, updates)
 
 
 def safe_get_import_job(user_id: str, task_id: str) -> Optional[dict]:
     """Get an import job safely with user isolation."""
+    try:
+        store = _postgres_job_store()
+        if store is not None:
+            return store.get_import_job(str(user_id), str(task_id))
+    except Exception:
+        logger.exception("Failed to read PostgreSQL import job %s", task_id)
+        return None
     return safe_import_manager.get_job(str(user_id), task_id)
 
 
 def safe_get_user_import_jobs(user_id: str) -> Dict[str, dict]:
     """Get all import jobs for a user safely."""
+    try:
+        store = _postgres_job_store()
+        if store is not None:
+            return store.get_user_import_jobs(str(user_id))
+    except Exception:
+        logger.exception("Failed to list PostgreSQL import jobs")
+        return {}
     return safe_import_manager.get_user_jobs(str(user_id))
 
 
 def safe_delete_import_job(user_id: str, task_id: str) -> bool:
     """Delete an import job safely with user isolation."""
+    try:
+        store = _postgres_job_store()
+        if store is not None:
+            return store.delete_import_job(str(user_id), str(task_id))
+    except Exception:
+        logger.exception("Failed to delete PostgreSQL import job %s", task_id)
+        return False
     return safe_import_manager.delete_job(str(user_id), task_id)
