@@ -18,37 +18,27 @@ This guide covers deploying Bibliotheca in a production environment with securit
 git clone https://github.com/pickles4evaaaa/mybibliotheca.git
 cd mybibliotheca
 
-# Create environment configuration
-cp .env.example .env
+# Create the local settings file and generate the required secrets
+python3 scripts/setup_docker.py
 ```
+
+`.env` is a plain text settings file that Docker Compose reads when it starts.
+The setup command creates it from `.env.example`, fills in the three required
+random values, and restricts access to the file. Keep it private and in the
+same folder as `docker-compose.yml`.
 
 ### 2. Security Configuration
 
-#### Generate Secure Keys
-```bash
-# Generate SECRET_KEY (32+ characters)
-python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))" >> .env
-
-# Generate SECURITY_PASSWORD_SALT (32+ characters) 
-python3 -c "import secrets; print('SECURITY_PASSWORD_SALT=' + secrets.token_urlsafe(32))" >> .env
-```
-
-#### Configure Environment Variables
-Edit `.env` with your settings:
+The setup command generates unique values for `SECRET_KEY`,
+`SECURITY_PASSWORD_SALT`, and `POSTGRES_PASSWORD`. For additional settings,
+edit `.env` with a text editor. For example:
 
 ```bash
-# Required Security Keys
-SECRET_KEY=your-generated-secret-key-here
-SECURITY_PASSWORD_SALT=your-generated-salt-here
-
 # Application Settings
 TIMEZONE=America/Chicago
 # PostgreSQL defaults to six workers. Kuzu is automatically clamped to one
 # until its verified migration to PostgreSQL completes.
 WORKERS=6
-
-# Required for the bundled PostgreSQL service
-POSTGRES_PASSWORD=use-a-unique-long-random-password
 
 # Optional Performance Tuning
 READING_STREAK_OFFSET=0
@@ -67,9 +57,6 @@ OPENLIBRARY_CONTACT_EMAIL=you@example.com
 
 #### Secure File Permissions
 ```bash
-# Protect environment file
-chmod 600 .env
-
 # Ensure data directory has correct permissions
 mkdir -p data
 chmod 755 data
