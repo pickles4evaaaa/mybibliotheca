@@ -48,11 +48,11 @@ services:
   # static files should be done with the dev compose file instead.
     environment:
       # Security - MUST be set via .env file or environment
-      SECRET_KEY: ${SECRET_KEY}
-      SECURITY_PASSWORD_SALT: ${SECURITY_PASSWORD_SALT}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      SECURITY_PASSWORD_SALT: ${SECURITY_PASSWORD_SALT:?Set SECURITY_PASSWORD_SALT in .env}
 
-      # Existing installs with a Kuzu database remain on it for the verified
-      # first-upgrade flow. Fresh installs initialize directly on PostgreSQL.
+      # New installs initialize on PostgreSQL. Existing Kuzu installs remain
+      # on Kuzu until the administrator completes the migration wizard.
       KUZU_DB_PATH: /app/data/kuzu
       GRAPH_DATABASE_ENABLED: "true"
 
@@ -79,17 +79,13 @@ services:
       KUZU_REDIS_CACHE_ENABLED: "true"
       KUZU_REDIS_CACHE_TTL_SECONDS: ${KUZU_REDIS_CACHE_TTL_SECONDS:-10}
 
-      # PostgreSQL migration target.
+      # Primary database for new installs and migration target for Kuzu upgrades.
       POSTGRES_DSN: ${POSTGRES_DSN:-}
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-bibliotheca}
       POSTGRES_USER: ${POSTGRES_USER:-bibliotheca}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-
-  # Kuzu recovery options (uncomment as needed)
-  # KUZU_AUTO_RECOVER_CLEAR: "true"   # Full backup + wipe on detected corruption
-  # KUZU_DISABLE_AUTO_RENAME_CORRUPT: "true"  # Disable soft auto-rename fallback
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
 
       # Migration settings (DISABLED for manual migration)
       AUTO_MIGRATE: "false"

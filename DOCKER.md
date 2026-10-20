@@ -1,124 +1,31 @@
-# Docker Deployment Guide for MyBibliotheca
+# Docker Compose installation
 
-## Quick Start
+MyBibliotheca 3.0.0 uses PostgreSQL as its primary database. The supplied Compose stack starts the app, PostgreSQL, and Redis. New installations initialize PostgreSQL automatically; existing Kuzu installations must complete the in-app migration wizard.
 
-1. **Clone and prepare environment:**
+## Install
+
 ```bash
-git clone <repository-url>
+git clone https://github.com/pickles4evaaaa/mybibliotheca.git
 cd mybibliotheca
-cp .env.docker.example .env
-# Edit .env with your secret keys
+cp .env.example .env
 ```
 
-2. **Generate secure keys:**
+Edit `.env` and set different unique random values for `SECRET_KEY`, `SECURITY_PASSWORD_SALT`, and `POSTGRES_PASSWORD`. Then run:
+
 ```bash
-python3 -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
-python3 -c "import secrets; print('SECURITY_PASSWORD_SALT=' + secrets.token_urlsafe(32))"
+docker compose up -d --build
+docker compose ps
+docker compose logs -f bibliotheca
 ```
 
-3. **Start the application:**
-```bash
-# Production
-docker-compose up -d
+Open `http://localhost:5054` and create the administrator account. The app files are stored under `./data`; PostgreSQL data uses the `postgres_data` named volume. Back up both.
 
-# Development (with debug enabled)
-docker-compose -f docker-compose.dev.yml up -d
-```
+## Upgrade a Kuzu installation
 
-4. **Access the application:**
-   - Open http://localhost:5054
-   - Complete the setup using the web interface
+An application upgrade alone does not move the database. Keep the existing `data/kuzu` directory in place, back up both the complete `data/` directory and PostgreSQL storage, then upgrade and start the stack. Sign in as an administrator, open **Admin → Database Migration**, and complete the backup, PostgreSQL check, migration, and verification steps in order. Keep the Kuzu database and backups until you confirm the migrated library. Read [docs/MIGRATION.md](docs/MIGRATION.md) first.
 
-## Important Notes
+## Configuration
 
-### KuzuDB Limitations
-- **Single Worker Only**: This application uses KuzuDB which doesn't support concurrent access
-- **No Scaling**: Do not increase WORKERS beyond 1
-- **Persistence**: KuzuDB data is stored in `./data/kuzu/` (mounted volume)
+The `.env.example` file documents the supported settings. Compose defaults connect the application to the bundled PostgreSQL service and Redis. For a memory-constrained host, lower `WORKERS`; PostgreSQL defaults to six workers. The app automatically uses one worker while Kuzu remains active during migration.
 
-### Docker Configuration
-
-#### Environment Variables
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SECRET_KEY` | **Required** | Flask secret key |
-| `SECURITY_PASSWORD_SALT` | **Required** | Password hashing salt |
-| `WORKERS` | `1` | **DO NOT CHANGE** - KuzuDB limitation |
-| `KUZU_DB_PATH` | `/app/data/kuzu` | KuzuDB storage path |
-| `GRAPH_DATABASE_ENABLED` | `true` | Enable KuzuDB |
-| `GOOGLE_BOOKS_API_KEY` | unset | Optional Google Books API key; recommended for reliable ISBN lookups/imports |
-| `OPENLIBRARY_CONTACT_EMAIL` | unset | Optional contact email included in OpenLibrary requests |
-
-#### Volume Mounts
-- `./data:/app/data` - Application data and KuzuDB storage
-- Data persists between container restarts
-
-#### Ports
-- `5054` - Web application port
-
-## Troubleshooting
-
-### Lock File Issues
-If you see "Could not set lock on file" errors:
-```bash
-# Stop containers
-docker-compose down
-
-# Remove lock files
-sudo rm -f ./data/kuzu/.lock
-
-# Restart
-docker-compose up -d
-```
-
-### Permission Issues
-```bash
-# Fix data directory permissions
-sudo chown -R 1000:1000 ./data/
-```
-
-### Reset Database
-```bash
-# CAUTION: This will delete all data
-docker-compose down
-sudo rm -rf ./data/kuzu/
-docker-compose up -d
-```
-
-## Production Deployment
-
-### Security Checklist
-- [ ] Set unique `SECRET_KEY` and `SECURITY_PASSWORD_SALT`
-- [ ] Use HTTPS with reverse proxy (nginx/traefik)
-- [ ] Set `FLASK_DEBUG=false`
-- [ ] Regular backups of `./data/` directory
-- [ ] Monitor disk space (KuzuDB can grow large)
-
-### Backup Strategy
-```bash
-# Create backup
-docker-compose down
-tar -czf mybibliotheca-backup-$(date +%Y%m%d).tar.gz ./data/
-docker-compose up -d
-
-# Restore backup
-docker-compose down
-tar -xzf mybibliotheca-backup-YYYYMMDD.tar.gz
-docker-compose up -d
-```
-
-### Performance Notes
-- Single worker limitation may impact performance under heavy load
-- Consider using a reverse proxy with caching for static assets
-- Monitor memory usage as KuzuDB loads data into memory
-- Use SSD storage for better KuzuDB performance
-
-## Migration from SQLite/Redis
-
-If migrating from a previous version:
-1. Stop the application
-2. Use the migration tools in the `scripts/` directory
-3. Update Docker configuration
-4. Start with new Docker setup
-
-See `MIGRATION.md` for detailed migration instructions.
+For production, use HTTPS through a reverse proxy and protect `.env` and backups. See the [deployment guide](docs/DEPLOYMENT.md) and [backup guide](docs/BACKUP_RESTORE.md).

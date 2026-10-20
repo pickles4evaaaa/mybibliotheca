@@ -5,6 +5,18 @@ All notable changes to MyBibliotheca will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-10-20
+
+### Changed
+- PostgreSQL is now the primary database for new installations.
+- Added a verified in-app migration wizard for existing Kuzu libraries; upgrading the application alone does not migrate data.
+- Updated installation, configuration, and migration documentation for the PostgreSQL deployment.
+
+### Migration notes
+- Back up the application data directory and PostgreSQL storage before upgrading.
+- Existing Kuzu installations remain on Kuzu until an administrator completes the migration wizard.
+- Keep the Kuzu database and verified backups until the PostgreSQL library is checked.
+
 ## [2.2.2] - 2026-10-19
 
 ### Fixed

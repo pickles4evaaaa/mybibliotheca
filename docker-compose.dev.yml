@@ -1,7 +1,21 @@
-# DEVELOPMENT ONLY - Contains hardcoded credentials for testing
-# DO NOT USE IN PRODUCTION - Use docker-compose.yml instead
-
+# Development stack: PostgreSQL, Redis, and MyBibliotheca.
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: bibliotheca
+      POSTGRES_USER: bibliotheca
+      POSTGRES_PASSWORD: dev-postgres-password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   redis:
     image: redis:7.4-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
@@ -19,28 +33,28 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
-      - ./data:/app/data  # Bind mount for development (includes backups)
+      - ./data:/app/data
     environment:
-      # Development settings
-      - SECRET_KEY=dev-secret-key-change-in-production
-      - SECURITY_PASSWORD_SALT=dev-salt-change-in-production
-      - WTF_CSRF_ENABLED=true
-      
-      # Database - KuzuDB as primary datastore
-      - KUZU_DB_PATH=/app/data/kuzu
-      - GRAPH_DATABASE_ENABLED=true
-      - CACHE_REDIS_URL=redis://redis:6379/1
-      - KUZU_REDIS_CACHE_ENABLED=true
-      - KUZU_REDIS_CACHE_TTL_SECONDS=10
-      
-      # Application settings
-      - TIMEZONE=UTC
-      - READING_STREAK_OFFSET=0
-      - FLASK_DEBUG=true
-      
-      # PostgreSQL defaults to six workers; the entrypoint keeps Kuzu at one.
-      - WORKERS=${WORKERS:-6}
+      SECRET_KEY: dev-secret-key-change-in-production
+      SECURITY_PASSWORD_SALT: dev-salt-change-in-production
+      WTF_CSRF_ENABLED: "true"
+      KUZU_DB_PATH: /app/data/kuzu
+      GRAPH_DATABASE_ENABLED: "true"
+      CACHE_REDIS_URL: redis://redis:6379/1
+      KUZU_REDIS_CACHE_ENABLED: "true"
+      KUZU_REDIS_CACHE_TTL_SECONDS: "10"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: bibliotheca
+      POSTGRES_USER: bibliotheca
+      POSTGRES_PASSWORD: dev-postgres-password
+      TIMEZONE: UTC
+      READING_STREAK_OFFSET: "0"
+      FLASK_DEBUG: "true"
+      WORKERS: "6"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5054/"]
@@ -49,28 +63,33 @@ services:
       retries: 3
       start_period: 40s
 
-  # Test service for running automated tests
   bibliotheca-test:
     build: .
     volumes:
       - ./data-test:/app/data
       - .:/app/test-source:ro
     environment:
-      - SECRET_KEY=test-secret-key
-      - SECURITY_PASSWORD_SALT=test-salt
-      - CACHE_REDIS_URL=redis://redis:6379/1
-      - KUZU_REDIS_CACHE_ENABLED=true
-      - GRAPH_DATABASE_ENABLED=true  # Enable for testing
-      - FLASK_DEBUG=true
-      # Test admin credentials
-      - DEV_ADMIN_USERNAME=testadmin
-      - DEV_ADMIN_PASSWORD=TestPassword123!
+      SECRET_KEY: test-secret-key
+      SECURITY_PASSWORD_SALT: test-salt
+      CACHE_REDIS_URL: redis://redis:6379/1
+      KUZU_REDIS_CACHE_ENABLED: "true"
+      GRAPH_DATABASE_ENABLED: "true"
+      FLASK_DEBUG: "true"
+      DEV_ADMIN_USERNAME: testadmin
+      DEV_ADMIN_PASSWORD: TestPassword123!
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: bibliotheca
+      POSTGRES_USER: bibliotheca
+      POSTGRES_PASSWORD: dev-postgres-password
     command: python3 -m pytest tests/ -v
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     profiles:
       - test
 
 volumes:
-  bibliotheca_data:
+  postgres_dev_data:
