@@ -24,8 +24,11 @@ python3 scripts/setup_docker.py
 
 `.env` is a plain text settings file that Docker Compose reads when it starts.
 The setup command creates it from `.env.example`, fills in the three required
-random values, and restricts access to the file. Keep it private and in the
-same folder as `docker-compose.yml`.
+random values, assigns a private Compose project name to a new install, and
+restricts access to the file. Keep it private and in the same folder as
+`docker-compose.yml`. The project name keeps a newly cloned install from
+attaching to a PostgreSQL volume left by a deleted checkout; Docker retains
+that older volume separately.
 
 ### 2. Security Configuration
 

@@ -300,6 +300,17 @@ def run_schema_preflight() -> None:
         _PREFLIGHT_DB_KEY = current_db_key
         return
 
+    # This preflight compares and upgrades the legacy Kuzu graph schema. New
+    # installs and migrated deployments can have PostgreSQL as the active
+    # backend while retaining no usable Kuzu database; attempting to acquire a
+    # Kuzu connection in that state prevents every Gunicorn worker from loading.
+    from app.infrastructure.persistence_state import get_active_backend
+    if get_active_backend() == "postgres":
+        logger.info("Schema preflight skipped: PostgreSQL is the active persistence backend")
+        _PREFLIGHT_RAN = True
+        _PREFLIGHT_DB_KEY = current_db_key
+        return
+
     marker = _load_marker()
 
     # Load schema early to compare hashes
