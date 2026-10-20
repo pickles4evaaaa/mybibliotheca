@@ -4,18 +4,36 @@ MyBibliotheca 3.0.0 uses PostgreSQL for application data. New installs start on 
 
 **Do not delete, move, or modify the Kuzu database during migration.** Upgrading the application does not convert Kuzu data automatically.
 
+## Update your Compose setup
+
+The 3.0.0 production Compose file differs from the old Kuzu-only setup. It adds a PostgreSQL service and the `postgres_data` volume, and pins the app to `pickles4evaaaa/mybibliotheca:3.0.0`. Use the updated file before starting the migration.
+
+- If you use an unmodified Git checkout, update the checkout to get the new `docker-compose.yml`.
+- If you use a copied or customized Compose file, replace it with the 3.0.0 file or add the PostgreSQL service, the pinned app image, and its connection settings from [docker-compose.yml](../docker-compose.yml). Keep custom ports and proxy settings and preserve `./data:/app/data`.
+- Keep your existing `SECRET_KEY` and `SECURITY_PASSWORD_SALT`. Add a unique `POSTGRES_PASSWORD` to `.env`.
+- Do not run `docker compose down -v`, delete `data/`, or remove the new `postgres_data` volume.
+
 ## Before you start
 
 - Schedule a maintenance window. The application should not receive normal user writes during cutover.
-- Make a separate copy of the full application `data/` directory and PostgreSQL storage.
-- Confirm that `POSTGRES_PASSWORD` is set in `.env` and PostgreSQL is healthy:
+- Make a separate copy of the full application `data/` directory and any existing PostgreSQL storage.
+- Update the checkout/Compose file, then pull and start the services:
+
+  ```bash
+  git pull
+  docker compose pull
+  docker compose up -d
+  docker compose ps
+  ```
+
+- Confirm PostgreSQL is healthy and that `POSTGRES_PASSWORD` is set in `.env`:
 
   ```bash
   docker compose ps
   docker compose logs --tail=100 postgres
   ```
 
-- Upgrade the application and start the services. Keep the Kuzu path mounted at `./data`.
+- Keep the Kuzu path mounted at `./data`.
 - Sign in with an administrator account.
 
 ## Run the migration wizard
@@ -38,4 +56,4 @@ Redis remains an optional/shared cache; it is not the primary data store. Contin
 
 ## New installation
 
-For a fresh installation, configure `.env` from `.env.example`, set unique values for `SECRET_KEY`, `SECURITY_PASSWORD_SALT`, and `POSTGRES_PASSWORD`, then run `docker compose up -d --build`. When no legacy Kuzu database is present, the app initializes PostgreSQL automatically. See the [deployment guide](DEPLOYMENT.md) for the full install steps.
+For a fresh installation, configure `.env` from `.env.example`, set unique values for `SECRET_KEY`, `SECURITY_PASSWORD_SALT`, and `POSTGRES_PASSWORD`, then run `docker compose pull` and `docker compose up -d`. When no legacy Kuzu database is present, the app initializes PostgreSQL automatically. See the [deployment guide](DEPLOYMENT.md) for the full install steps.

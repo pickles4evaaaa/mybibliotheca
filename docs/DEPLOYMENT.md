@@ -95,10 +95,14 @@ with PostgreSQL configured start on PostgreSQL.
 
 ### Upgrade an existing Kuzu installation
 
-1. Make a separate copy of the complete application `data/` directory and
-   PostgreSQL volume before upgrading. Do not delete or move
-   `data/kuzu/bibliotheca.db` during this upgrade.
-2. Set a strong `POSTGRES_PASSWORD` in `.env`, then update and start the stack:
+1. Make a separate copy of the complete application `data/` directory before
+   upgrading. Do not delete or move `data/kuzu/bibliotheca.db`.
+2. Update to the 3.0.0 Compose file. It adds PostgreSQL and the `postgres_data`
+   volume and pins the app image. If you use a custom Compose file, add the
+   PostgreSQL service and connection settings while preserving your `./data`
+   mount, existing secrets, ports, and proxy settings. Add a unique
+   `POSTGRES_PASSWORD` to `.env`. Do not run `docker compose down -v`.
+3. Pull and start the stack:
 
    ```bash
    # The Compose file pins pickles4evaaaa/mybibliotheca:3.0.0.
@@ -107,25 +111,25 @@ with PostgreSQL configured start on PostgreSQL.
    docker compose ps
    ```
 
-3. Sign in as an administrator. On startup, the app routes the administrator
+4. Sign in as an administrator. On startup, the app routes the administrator
    to **Admin → Database Migration** until cutover is complete. First click
    **Create and verify Kuzu backup**. The app pauses Kuzu connections, archives
    the database plus covers/uploads/settings, and checks the ZIP contents and
    CRCs. Download the resulting backup and keep your separate `data/` copy.
-4. After step 1 is verified, the page enables step 2. It checks PostgreSQL
+5. After step 1 is verified, the page enables step 2. It checks PostgreSQL
    connectivity and inventories the Kuzu graph. The configured PostgreSQL
    target must be empty; point the migration at a fresh database if it already
    contains application rows. Do not truncate data to clear this check.
-5. Schedule a maintenance window and start the verified migration. The app
+6. Schedule a maintenance window and start the verified migration. The app
    pauses Kuzu writes while it snapshots and imports the graph, then checks
    preserved source data and normalized PostgreSQL projections. If a check
    fails, Kuzu remains active and the migration report identifies the blocker.
-6. When the migration verifies, the app automatically increases Gunicorn to
+7. When the migration verifies, the app automatically increases Gunicorn to
    the configured PostgreSQL worker count and replaces the Kuzu worker. Keep
    the page open; it reloads when the PostgreSQL workers are ready. Confirm
    **Admin → Database Migration** reports PostgreSQL as the active backend.
    If the app is running outside Gunicorn, restart the app process when prompted.
-7. Keep the Kuzu database and both backups until you have verified
+8. Keep the Kuzu database and both backups until you have verified
    your users, books, reading data, covers, and integrations on PostgreSQL.
    Redis remains enabled as the application cache after cutover.
 
