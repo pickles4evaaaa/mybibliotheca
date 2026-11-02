@@ -6,6 +6,7 @@ organizes the existing session behavior.
 
 from __future__ import annotations
 
+from app.utils.log_redaction import redact_sensitive
 import logging
 from typing import Dict
 
@@ -29,13 +30,13 @@ def get_onboarding_data() -> Dict:
         session.modified = True
         data = backup
     
-    logger.info(f"🔍 SESSION DEBUG: get_onboarding_data returning: {data}")
+    logger.info(f"🔍 SESSION DEBUG: get_onboarding_data returning: {redact_sensitive(data)}")
     return data
 
 
 def update_onboarding_data(data: Dict):
     """Update onboarding data in session."""
-    logger.info(f"🔍 SESSION DEBUG: update_onboarding_data called with: {data}")
+    logger.info(f"🔍 SESSION DEBUG: update_onboarding_data called with: {redact_sensitive(data)}")
     
     # Force session to be permanent for better persistence
     session.permanent = True
@@ -45,7 +46,7 @@ def update_onboarding_data(data: Dict):
         session['onboarding_data'] = {}
     
     current_data = session['onboarding_data']
-    logger.info(f"🔍 SESSION DEBUG: current_data before update: {current_data}")
+    logger.info(f"🔍 SESSION DEBUG: current_data before update: {redact_sensitive(current_data)}")
     
     # Update the data
     current_data.update(data)
@@ -55,8 +56,8 @@ def update_onboarding_data(data: Dict):
     # Also store in a backup location to help with debugging
     session['onboarding_backup'] = current_data.copy()
     
-    logger.info(f"🔍 SESSION DEBUG: session after update: {dict(session)}")
-    logger.info(f"🔍 SESSION DEBUG: onboarding_data in session: {session.get('onboarding_data', 'NOT_FOUND')}")
+    logger.info(f"🔍 SESSION DEBUG: session after update: {redact_sensitive(dict(session))}")
+    logger.info(f"🔍 SESSION DEBUG: onboarding_data in session: {redact_sensitive(session.get('onboarding_data', 'NOT_FOUND'))}")
 
 
 def set_onboarding_step(step: int):

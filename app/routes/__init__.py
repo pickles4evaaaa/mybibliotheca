@@ -3,6 +3,7 @@ Routes package initialization.
 Registers all blueprint modules for the Bibliotheca application.
 """
 
+from app.utils.log_redaction import redact_sensitive
 import logging
 import os
 from flask import Blueprint, request
@@ -159,7 +160,7 @@ def bulk_delete_books():
     print(f"Bulk delete route called by user {current_user.id}")
     print(f"Request method: {request.method}")
     print(f"Request form keys: {list(request.form.keys())}")
-    print(f"Full form data: {dict(request.form)}")
+    print(f"Full form data: {redact_sensitive(request.form)}")
     
     # Try both possible field names
     selected_uids = request.form.getlist('selected_books')

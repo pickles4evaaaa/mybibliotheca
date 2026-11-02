@@ -45,8 +45,7 @@ print = _dprint
 # Import files are read in several passes (scan, custom-field analysis, row loop).
 # Strip a UTF-8 BOM (Excel re-saves) and never let one stray non-UTF-8 byte in a
 # large export abort the whole job: undecodable bytes become U+FFFD instead.
-_CSV_ENCODING = 'utf-8-sig'
-_CSV_ERRORS = 'replace'
+from app.utils.csv_io import CSV_ENCODING as _CSV_ENCODING, CSV_ERRORS as _CSV_ERRORS, undecodable_warning as _csv_undecodable_warning
 
 from app.services import book_service, import_mapping_service, custom_field_service, reading_log_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
@@ -437,7 +436,7 @@ def import_books():
             temp_path = temp_file.name
         try:
             # Read CSV headers and first few rows for preview
-            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+            with open(temp_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 # Try to detect delimiter with improved logic
                 sample = csvfile.read(1024)
                 csvfile.seek(0)
@@ -487,6 +486,10 @@ def import_books():
                         preview_rows = [[line.strip()] for line in all_lines[:3]]
                         total_rows = len(all_lines)
             
+            _decode_warning = _csv_undecodable_warning(temp_path)
+            if _decode_warning:
+                flash(_decode_warning, 'warning')
+
             # Auto-detect field mappings
             suggested_mappings = auto_detect_fields(headers, current_user.id)
             
@@ -946,13 +949,19 @@ def import_books_execute():
     # Count total rows
     try:
         if csv_file_path:
-            with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+            with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 reader = csv.DictReader(csvfile)
                 job_data['total'] = sum(1 for _ in reader)
         else:
             job_data['total'] = 0
     except:
         job_data['total'] = 0
+
+    _decode_warning = _csv_undecodable_warning(csv_file_path) if csv_file_path else None
+    if _decode_warning:
+        job_data['warnings'] = [_decode_warning]
+        job_data['recent_activity'].append(f'Warning: {_decode_warning}')
+        flash(_decode_warning, 'warning')
     
     # Store job data in Kuzu instead of Redis
     print(f"🏗️ [EXECUTE] Creating job {task_id} for user {current_user.id}")
@@ -1501,7 +1510,7 @@ def direct_import():
         
         # Count total rows
         try:
-            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+            with open(temp_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 import csv
                 reader = csv.DictReader(csvfile)
                 total_rows = sum(1 for _ in reader)
@@ -1762,7 +1771,7 @@ def upload_import():
 
         # Count total rows
         try:
-            with open(csv_file_path, 'r', encoding='utf-8') as f:
+            with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as f:
                 reader = csv.reader(f)
                 total_rows = sum(1 for row in reader)
                 job_data['total'] = max(0, total_rows - 1)  # Subtract the header row.
@@ -3462,7 +3471,7 @@ def simple_csv_import():
         errors = []
         
         try:
-            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+            with open(temp_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 reader = csv.DictReader(csvfile)
                 rows = list(reader)
                 
@@ -3579,7 +3588,7 @@ def simple_upload():
             # For unknown format, try to auto-detect column mappings
             field_mappings = {}
             try:
-                with open(temp_path, 'r', encoding='utf-8') as csvfile:
+                with open(temp_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                     reader = csv.DictReader(csvfile)
                     headers = reader.fieldnames or []
                     print(f"📋 [SIMPLE_UPLOAD] CSV headers detected: {headers}")
@@ -3604,13 +3613,34 @@ def simple_upload():
         
         # Count total books in CSV for progress tracking
         try:
-            with open(temp_path, 'r', encoding='utf-8') as csvfile:
+            with open(temp_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 reader = csv.reader(csvfile)
                 # Skip header
                 next(reader, None)
                 total_books = sum(1 for row in reader)
         except Exception as e:
             total_books = 0
+
+        # Never report 'Import started' when every row would be silently skipped.
+        if format_type not in ('goodreads', 'storygraph') and not any(
+            v in ('title', 'isbn') for v in field_mappings.values()
+        ):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            return jsonify({
+                'error': 'Unrecognized CSV format: no Title or ISBN column was found, so no rows could be imported. '
+                         'Use the full Import page to map your columns manually.'
+            }), 400
+        if total_books == 0:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            return jsonify({'error': 'The CSV file contains no data rows.'}), 400
+
+        decode_warning = _csv_undecodable_warning(temp_path)
         
         
         # Create import config
@@ -3644,6 +3674,9 @@ def simple_upload():
             'created_at': datetime.now().isoformat(),
             'recent_activity': [f'Started import of {file.filename} ({total_books} books)']
         }
+        if decode_warning:
+            job_data['warnings'] = [decode_warning]
+            job_data['recent_activity'].append(f'Warning: {decode_warning}')
         # Store job data with user isolation
         safe_create_import_job(current_user.id, task_id, job_data)
         
@@ -3681,7 +3714,8 @@ def simple_upload():
             'task_id': import_config['task_id'],
             'format_detected': format_type,
             'confidence': confidence,
-            'message': f'Import started! Detected {format_type} format with {confidence:.1%} confidence.'
+            'message': f'Import started! Detected {format_type} format with {confidence:.1%} confidence.',
+            'warnings': [decode_warning] if decode_warning else []
         })
         
     except Exception as e:
@@ -3903,7 +3937,7 @@ def import_reading_history():
         csv_file_path = _owned_import_file_path(requested_csv_path, current_user.id)
         if csv_file_path:
             try:
-                with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                     sample = csvfile.read(1024)
                     csvfile.seek(0)
                     delimiter = ','
@@ -3953,7 +3987,7 @@ def import_reading_history():
         temp_path = temp_file.name
         
         # Read CSV headers and first few rows for preview
-        with open(temp_path, 'r', encoding='utf-8') as csvfile:
+        with open(temp_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
             # Try to detect delimiter
             sample = csvfile.read(1024)
             csvfile.seek(0)
@@ -4051,7 +4085,7 @@ def import_reading_history_execute():
         
         # Count total rows
         try:
-            with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+            with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 reader = csv.DictReader(csvfile)
                 job_data['total'] = sum(1 for _ in reader)
         except:
@@ -4954,7 +4988,7 @@ async def process_reading_history_import(import_config):
         total_entries = 0
         processed_entries = 0
         
-        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+        with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             
             for row_num, row in enumerate(reader, 1):

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import csv
 
+from app.utils.csv_io import CSV_ENCODING as _CSV_ENCODING, CSV_ERRORS as _CSV_ERRORS
+
 
 def detect_csv_format(csv_file_path):
     """
@@ -16,7 +18,7 @@ def detect_csv_format(csv_file_path):
     Returns tuple of (format_type, confidence_score)
     """
     try:
-        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+        with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
             # Read first line to get headers
             reader = csv.reader(csvfile)
             headers = next(reader, [])

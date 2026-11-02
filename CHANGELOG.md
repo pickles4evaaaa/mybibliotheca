@@ -14,11 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Library Journey timeline no longer places books without a finish date into a bogus year (e.g. the import year); only the selected date type is used (#208).
-- Editing, deleting and viewing locations no longer fails with a server error on PostgreSQL, and a location saved on the book edit form now shows up when you reopen it (#255).
+- Editing, deleting and viewing locations no longer fails with a server error on PostgreSQL, and a location saved on the book edit form now shows up when you reopen it, including edits that change nothing else and clearing the location (#255).
 - The library page shows book authors again, and sorting by author works (#256).
 - First-run setup now shows the real reason when it fails instead of a generic "Setup failed" message (#170).
-- Goodreads and CSV imports: merging into an existing book no longer silently drops dates, status, rating and notes; Goodreads ratings and reviews are now imported; failed merges are reported as errors instead of successes; and an undecodable byte or BOM no longer aborts a large import (#183, #216).
+- Goodreads and CSV imports: merging into an existing book no longer silently drops dates, status, rating and notes; Goodreads ratings and reviews are now imported; failed merges are reported as errors instead of successes; and an undecodable byte or BOM no longer aborts an import at any entry point (upload preview, execute, simple upload, format detection, onboarding import); a warning reports how many characters were replaced (#183, #216).
+- Simple upload no longer reports "Import started" when the file's format is unrecognized and every row would be skipped; it returns a clear error instead.
 - The AI settings page error (`load_ai_config` NameError) was fixed in 2.2.2 and is included (#251).
+
+### Security
+- Passwords, password hashes, CSRF tokens and other secrets are no longer written to logs (onboarding/session debug output, user creation); a global log filter masks them as a safeguard.
 
 ### Added
 - "New update available" notice for administrators that checks GitHub releases and links to the release page. Cached, non-blocking, sends no identifying data, and can be disabled with `UPDATE_CHECK_ENABLED=false`.

@@ -15,6 +15,8 @@ The system maintains state through Flask sessions and provides a seamless setup 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, current_app, jsonify
 from flask_login import login_user, current_user
 from werkzeug.security import generate_password_hash
+from app.utils.log_redaction import redact_sensitive
+from app.utils.csv_io import CSV_ENCODING as _CSV_ENCODING, CSV_ERRORS as _CSV_ERRORS
 import json
 import logging
 import csv
@@ -152,7 +154,7 @@ def step(step_num: int):
     
     # DEBUG: Log step access attempt
     logger.info(f"🔍 ONBOARDING DEBUG: User accessing step {step_num}, current_step={current_step}")
-    logger.info(f"🔍 ONBOARDING DEBUG: Session data: {dict(session)}")
+    logger.info(f"🔍 ONBOARDING DEBUG: Session data: {redact_sensitive(dict(session))}")
     logger.info(f"🔍 ONBOARDING DEBUG: Request method: {request.method}")
     
     # Check if user is already authenticated (onboarding completed)
@@ -299,7 +301,7 @@ def admin_setup_step():
                 session['onboarding_step'] = 2
                 session.modified = True
                 
-                logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {dict(session)}")
+                logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {redact_sensitive(dict(session))}")
                 
                 flash('Admin account configured successfully!', 'success')
                 return redirect(url_for('onboarding.step', step_num=2))
@@ -332,7 +334,7 @@ def site_config_step():
     
     if request.method == 'POST':
         try:
-            logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {dict(request.form)}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {redact_sensitive(request.form)}")
             
             site_config = {
                 'site_name': request.form.get('site_name', 'MyBibliotheca'),
@@ -459,7 +461,7 @@ def site_config_step():
             session['onboarding_step'] = 3
             session.modified = True
             
-            logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {dict(session)}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {redact_sensitive(dict(session))}")
             
             flash('Site configuration saved!', 'success')
             return redirect(url_for('onboarding.step', step_num=3))
@@ -531,7 +533,7 @@ def data_options_step():
     
     if request.method == 'POST':
         try:
-            logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {dict(request.form)}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {redact_sensitive(request.form)}")
             
             data_option = request.form.get('data_option')
             data_options: Dict[str, Any] = {'option': data_option}
@@ -556,7 +558,7 @@ def data_options_step():
                         'scheduled_minute': scheduled_minute,
                         'frequency': frequency
                     }
-                    logger.info(f"🔍 ONBOARDING DEBUG: Captured backup settings from onboarding: {data_options['backup_settings']}")
+                    logger.info(f"🔍 ONBOARDING DEBUG: Captured backup settings from onboarding: {redact_sensitive(data_options['backup_settings'])}")
 
                     # Persist immediately via backup service so schedule starts without waiting for completion
                     try:
@@ -704,14 +706,14 @@ def data_options_step():
                         flash(f'Error saving uploaded file: {e}', 'error')
                         raise
             
-            logger.info(f"🔍 ONBOARDING DEBUG: Saving data_options: {data_options}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Saving data_options: {redact_sensitive(data_options)}")
             update_onboarding_data({'data_options': data_options})
             
             # Move to next step
             logger.info(f"🔍 ONBOARDING DEBUG: Moving to step 4")
             set_onboarding_step(4)
             
-            logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {dict(session)}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {redact_sensitive(dict(session))}")
             
             return redirect(url_for('onboarding.step', step_num=4))
             
@@ -736,7 +738,7 @@ def data_config_step():
     data_options = get_onboarding_data().get('data_options', {})
     option = data_options.get('option')
     
-    logger.info(f"🔍 ONBOARDING DEBUG: data_options: {data_options}")
+    logger.info(f"🔍 ONBOARDING DEBUG: data_options: {redact_sensitive(data_options)}")
     logger.info(f"🔍 ONBOARDING DEBUG: option: {option}")
     
     if option == 'migrate':
@@ -783,7 +785,7 @@ def migration_config_step(data_options: Dict):
     
     if request.method == 'POST':
         try:
-            logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {dict(request.form)}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {redact_sensitive(request.form)}")
             
             migration_config = {'type': 'migration'}
             
@@ -811,7 +813,7 @@ def migration_config_step(data_options: Dict):
             logger.info(f"🔍 ONBOARDING DEBUG: Moving to step 5")
             set_onboarding_step(5)
             
-            logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {dict(session)}")
+            logger.info(f"🔍 ONBOARDING DEBUG: Session after update: {redact_sensitive(dict(session))}")
             
             return redirect(url_for('onboarding.step', step_num=5))
             
@@ -830,7 +832,7 @@ def migration_config_step(data_options: Dict):
 def import_config_step(data_options: Dict):
     """Configure import settings - simplified version that mirrors the library import."""
     logger.info(f"🔍 ONBOARDING DEBUG: import_config_step called, method={request.method}")
-    logger.info(f"🔍 ONBOARDING DEBUG: data_options: {data_options}")
+    logger.info(f"🔍 ONBOARDING DEBUG: data_options: {redact_sensitive(data_options)}")
     
     if request.method == 'POST':
         try:
@@ -846,7 +848,7 @@ def import_config_step(data_options: Dict):
             
             # Detect the file type automatically (same logic as direct_import)
             try:
-                with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                     first_line = csvfile.readline()
                     
                 # Determine import type based on headers (same logic as direct_import)
@@ -932,7 +934,7 @@ def import_config_step(data_options: Dict):
         logger.info(f"📂 Auto-configuring for CSV file: {csv_file_path}")
         
         # Detect the file type automatically (same logic as POST)
-        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+        with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
             first_line = csvfile.readline()
             
         # Determine import type based on headers
@@ -952,7 +954,7 @@ def import_config_step(data_options: Dict):
             logger.info("✅ Auto-detected StoryGraph CSV format")
         else:
             # Check if it's a simple ISBN-only file
-            with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+            with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                 lines = csvfile.readlines()[:5]  # Check first 5 lines
                 
             # If all lines look like ISBNs (10 or 13 digits), treat as ISBN-only
@@ -1082,18 +1084,18 @@ def confirmation_step():
     
     # DEBUG: Log all form data for POST requests
     if request.method == 'POST':
-        logger.info(f"🔍 ONBOARDING DEBUG: POST form data: {dict(request.form)}")
+        logger.info(f"🔍 ONBOARDING DEBUG: POST form data: {redact_sensitive(request.form)}")
     
     onboarding_data = get_onboarding_data()
     
-    logger.info(f"🔍 ONBOARDING DEBUG: onboarding_data: {onboarding_data}")
+    logger.info(f"🔍 ONBOARDING DEBUG: onboarding_data: {redact_sensitive(onboarding_data)}")
     
     # Ensure we stay on step 5 even if there are errors
     set_onboarding_step(5)
     
     if request.method == 'POST':
         print(f"🚨🚨🚨 STEP5 DEBUG: POST REQUEST RECEIVED! 🚨🚨🚨")
-        print(f"🚨 STEP5 DEBUG: Form data: {dict(request.form)}")
+        print(f"🚨 STEP5 DEBUG: Form data: {redact_sensitive(request.form)}")
         action = request.form.get('action')
         
         if action == 'execute':
@@ -1974,7 +1976,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         data_options = onboarding_data.get('data_options', {})
         data_option = data_options.get('option', 'unknown')
         print(f"📂 [SETUP] Data option: {data_option}")
-        print(f"📂 [SETUP] Data options: {data_options}")
+        print(f"📂 [SETUP] Data options: {redact_sensitive(data_options)}")
         
         if data_option == 'import':
             print(f"📂 [SETUP] Import option selected, starting CSV import job")
@@ -2059,7 +2061,7 @@ def handle_onboarding_completion(onboarding_data: Dict):
         admin_data = onboarding_data.get('admin', {})
         admin_username = admin_data.get('username', 'UNKNOWN')
         print(f"🎉 [COMPLETION] Looking for admin user: {admin_username}")
-        print(f"🎉 [COMPLETION] Admin data: {admin_data}")
+        print(f"🎉 [COMPLETION] Admin data: {redact_sensitive(admin_data)}")
         
         admin_user = user_service.get_user_by_username_sync(admin_username)
         
@@ -2163,7 +2165,7 @@ def start_onboarding_import_job(user_id: str, import_config: Dict) -> Optional[s
             csv_file_path = import_config.get('csv_file_path')
             print(f"🚀 [IMPORT_JOB] CSV file path: {csv_file_path}")
             if csv_file_path:
-                with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                     reader = csv.DictReader(csvfile)
                     job_data['total'] = sum(1 for _ in reader)
                     print(f"🚀 [IMPORT_JOB] CSV row count: {job_data['total']}")

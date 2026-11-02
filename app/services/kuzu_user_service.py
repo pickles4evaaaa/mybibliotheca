@@ -4,6 +4,7 @@ Kuzu User Service
 Handles user management operations using clean Kuzu architecture.
 """
 
+from app.utils.log_redaction import redact_sensitive
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone as dt_timezone
@@ -241,12 +242,12 @@ class KuzuUserService:
                 'timezone': timezone,
                 'bio': location  # Store location in bio field for now
             }
-            print(f"🚀 [USER_SERVICE] User data prepared: {user_data}")
+            print(f"🚀 [USER_SERVICE] User data prepared: {redact_sensitive(user_data)}")
             
             # Use run_async to call the async method
             print(f"🚀 [USER_SERVICE] Calling kuzu_service.create_user via run_async...")
             created_user_data = run_async(self.kuzu_service.create_user(user_data))
-            print(f"🚀 [USER_SERVICE] kuzu_service.create_user returned: {created_user_data}")
+            print(f"🚀 [USER_SERVICE] kuzu_service.create_user returned: {redact_sensitive(created_user_data)}")
             
             if created_user_data:
                 user = User(

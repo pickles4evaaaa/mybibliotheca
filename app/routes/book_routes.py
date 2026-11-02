@@ -289,6 +289,27 @@ def _handle_mixed(uid, form):
         flash(f'Error updating data: {str(e)}', 'error')
     return redirect(url_for('book.view_book_enhanced', uid=uid))
 
+def _apply_book_location(uid, form):
+    """Persist the posted location_id (empty string clears it) via the location service.
+
+    Returns True when the field was posted and persisted, False when the field was
+    absent, and raises nothing (failures are logged).
+    """
+    if 'location_id' not in form:
+        return False
+    raw = form.get('location_id')
+    location_id = (raw or '').strip() or None
+    try:
+        from app.services import get_location_service
+        ok = get_location_service().set_book_location(uid, location_id, str(current_user.id))
+        if not ok:
+            current_app.logger.warning(f"[BOOK_EDIT][LOCATION] set_book_location rejected uid={uid} location_id={location_id}")
+        return bool(ok)
+    except Exception as e:
+        current_app.logger.warning(f"[BOOK_EDIT][LOCATION] failed uid={uid} err={e}")
+        return False
+
+
 def _handle_edit_book_post(uid, user_book, form):
     """Unified POST handler that updates only the fields that actually changed."""
     form_keys = set(form.keys())
@@ -319,6 +340,8 @@ def _handle_edit_book_post(uid, user_book, form):
         ok = True
         if changes:
             ok = book_service.update_book_sync(uid, str(current_user.id), **changes)
+
+        location_posted = ok and _apply_book_location(uid, form)
 
         if ok:
             # Persist publisher relationship if it was posted.
@@ -354,6 +377,8 @@ def _handle_edit_book_post(uid, user_book, form):
                 updated_fields.append('publisher')
             if clear_needs_review:
                 updated_fields.append('needs_review')
+            if location_posted:
+                updated_fields.append('location')
 
             if updated_fields:
                 flash(f"Updated: {', '.join(sorted(set(updated_fields)))}", 'success')
@@ -2155,25 +2180,8 @@ def edit_book(uid):
         except Exception as series_err:
             current_app.logger.warning(f"[SERIES][EDIT_ATTACH_FAIL] uid={uid} err={series_err}")
         
-        # Handle location update separately
-        location_id = request.form.get('location_id', '').strip()
-        if location_id is not None:  # Allow empty string to clear location
-            # Use the location service to update the book location
-            try:
-                from app.services import get_location_service
-                
-                location_service = get_location_service()
-                
-                # Convert empty string to None for clearing location
-                location_success = location_service.set_book_location(
-                    uid, 
-                    location_id if location_id else None, 
-                    str(current_user.id)
-                )
-                if not location_success:
-                    pass
-            except Exception as e:
-                pass
+        # Handle location update separately (empty string clears)
+        _apply_book_location(uid, request.form)
         
         if success:
             # Invalidate cache so UI updates immediately
@@ -2627,26 +2635,8 @@ def update_book_details(uid):
     try:
         updated_book = book_service.update_book_sync(uid, str(current_user.id), **update_data)
         
-        # Handle location update separately
-        if location_id is not None:  # Allow empty string to clear location
-            # Use the location service to update the book location
-            try:
-                from app.services import get_location_service
-                
-                location_service = get_location_service()
-                
-                # Convert empty string to None for clearing location
-                location_success = location_service.set_book_location(
-                    uid, 
-                    location_id if location_id.strip() else None, 
-                    str(current_user.id)
-                )
-                if not location_success:
-                        pass
-            except Exception as e:
-                pass
-        else:
-            pass
+        # Handle location update separately (empty string clears)
+        _apply_book_location(uid, request.form)
         
         if updated_book is not None:
             flash('Book details updated successfully.', 'success')

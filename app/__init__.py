@@ -383,6 +383,10 @@ def create_app():
     app = Flask(__name__, static_folder=None, static_url_path=None)
     app.config.from_object(Config)
     
+    # Never let secrets reach log output, whatever a call site formats.
+    from .utils.log_redaction import install_redacting_filter
+    install_redacting_filter()
+
     # Configure Python logging level from LOG_LEVEL env (default ERROR)
     try:
         log_level_name = os.getenv('LOG_LEVEL', 'ERROR').upper()
