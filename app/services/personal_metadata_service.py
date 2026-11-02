@@ -551,8 +551,12 @@ CREATE REL TABLE {self.REL_NAME}(
             updates["start_date"] = self._postgres_datetime(existing.get("start_date"))
             updates["finish_date"] = self._postgres_datetime(existing.get("finish_date"))
             updates["review"] = existing.get("user_review")
+            # Core fields live in their own user_books columns. Keeping them out of the
+            # JSONB blob matters: merged rows carry datetime values (start/finish dates)
+            # that are not JSON serializable, which made the whole UPDATE fail and
+            # silently dropped imported reading status, dates, ratings and notes.
             updates["custom_metadata"] = {
-                key: value for key, value in existing.items() if key not in {"personal_notes", "user_review"}
+                key: value for key, value in existing.items() if key not in core_fields
             }
             row = postgres_library.get_user_book_sync(user_id, book_id)
             if row is None:
