@@ -46,12 +46,12 @@ MyBibliotheca is a comprehensive personal library management system that allows 
 
 ### Version Information
 
-- **Version:** 3.0.0 (Stable)
+- **Version:** 3.0.1 (Stable)
 - **Database:** PostgreSQL for new installations; existing Kuzu installations can migrate with the in-app wizard
 - **Framework:** Flask with Flask-Login authentication
 - **Python:** Requires Python 3.13+
 - **Security:** CSRF protection, account lockout, password policies
-- **Docker Image:** `pickles4evaaaa/mybibliotheca:3.0.0`
+- **Docker Image:** `pickles4evaaaa/mybibliotheca:3.0.1`
 
 ## Quick Start
 

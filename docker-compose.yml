@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
 
   bibliotheca:
-    image: pickles4evaaaa/mybibliotheca:3.0.0
+    image: pickles4evaaaa/mybibliotheca:3.0.1
     ports:
       - "5054:5054"
     depends_on:

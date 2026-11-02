@@ -68,7 +68,7 @@ chmod 755 data
 ### 3. Deploy Application
 
 ```bash
-# Pull the pinned 3.0.0 image and start services
+# Pull the pinned 3.0.1 image and start services
 docker compose pull
 docker compose up -d
 
@@ -87,7 +87,7 @@ with PostgreSQL configured start on PostgreSQL.
 
 1. Make a separate copy of the complete application `data/` directory before
    upgrading. Do not delete or move `data/kuzu/bibliotheca.db`.
-2. Update to the 3.0.0 Compose file. It adds PostgreSQL and the `postgres_data`
+2. Update to the 3.0.1 Compose file. It adds PostgreSQL and the `postgres_data`
    volume and pins the app image. If you use a custom Compose file, add the
    PostgreSQL service and connection settings while preserving your `./data`
    mount, existing secrets, ports, and proxy settings. Add a unique
@@ -95,7 +95,7 @@ with PostgreSQL configured start on PostgreSQL.
 3. Pull and start the stack:
 
    ```bash
-   # The Compose file pins pickles4evaaaa/mybibliotheca:3.0.0.
+   # The Compose file pins pickles4evaaaa/mybibliotheca:3.0.1.
    docker compose pull
    docker compose up -d
    docker compose ps

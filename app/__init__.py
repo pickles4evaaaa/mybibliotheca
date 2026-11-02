@@ -507,6 +507,14 @@ def create_app():
         site_name = 'MyBibliotheca'
         return dict(site_name=site_name)
 
+    from app.utils.update_check import get_current_version as _get_current_version
+    _app_version = _get_current_version()
+
+    @app.context_processor
+    def inject_app_version():
+        """Expose the installed version (from pyproject.toml) to all templates."""
+        return dict(app_version=_app_version)
+
     @app.context_processor
     def inject_active_persistence_backend():
         """Show which database backend currently serves application data."""
