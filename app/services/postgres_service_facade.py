@@ -68,6 +68,14 @@ class PostgresServiceFacade:
             "progress_ms": (row.get("custom_metadata") or {}).get("progress_ms"),
             "progress_percentage": (row.get("custom_metadata") or {}).get("progress_percentage"),
         }
+        # Locations are stored as book_locations links (set_book_location);
+        # prefer them so the edit form preselects the saved location.
+        try:
+            linked = self.location_service.get_book_locations(book.id, None) if book.id else []
+        except Exception:
+            linked = []
+        if linked:
+            personal["location_id"] = linked[0].id
         for name, value in personal.items():
             setattr(book, name, value)
         setattr(book, "want_to_read", personal["reading_status"] == "plan_to_read")

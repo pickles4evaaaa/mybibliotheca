@@ -77,7 +77,7 @@ class PostgresLocationService:
         with self.store.connection() as connection, connection.cursor() as cursor:
             cursor.execute(f"SELECT {', '.join(_LOCATION_COLUMNS)} FROM locations WHERE id=%s", (location_id,))
             row = cursor.fetchone()
-        return _location_dict(row) if row else None
+        return _location_cache(_location(row)) if row else None
 
     def create_location(self, name: str, description: str | None = None, location_type: str = "home",
                         address: str | None = None, is_default: bool = False) -> Location:
@@ -272,6 +272,10 @@ class PostgresLocationService:
                 cursor.execute("DELETE FROM book_locations WHERE book_id=%s", (book_id,))
                 if location_id:
                     cursor.execute("INSERT INTO book_locations(book_id,location_id,created_at) VALUES (%s,%s,now())", (book_id, location_id))
+                # Keep the acting user's primary location in step so edit forms
+                # and library overlays that read user_books.location_id agree.
+                cursor.execute("UPDATE user_books SET location_id=%s WHERE book_id=%s AND user_id=%s",
+                               (location_id or None, book_id, str(user_id)))
             self._invalidate(location_id)
             return True
         except Exception:
