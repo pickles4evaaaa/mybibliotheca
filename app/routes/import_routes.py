@@ -42,6 +42,12 @@ def _dprint(*args, **kwargs):
 # Redirect module print to conditional debug print
 print = _dprint
 
+# Import files are read in several passes (scan, custom-field analysis, row loop).
+# Strip a UTF-8 BOM (Excel re-saves) and never let one stray non-UTF-8 byte in a
+# large export abort the whole job: undecodable bytes become U+FFFD instead.
+_CSV_ENCODING = 'utf-8-sig'
+_CSV_ERRORS = 'replace'
+
 from app.services import book_service, import_mapping_service, custom_field_service, reading_log_service
 from app.simplified_book_service import SimplifiedBookService, SimplifiedBook
 from app.domain.models import CustomFieldDefinition, CustomFieldType, ImportMappingTemplate, ReadingLog
@@ -1916,7 +1922,7 @@ async def process_simple_import(import_config):
             except Exception:
                 mappings_inv = {}
 
-            with open(csv_file_path, 'r', encoding='utf-8', newline='') as fh:
+            with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as fh:
                 reader = csv.reader(fh)
                 headers = next(reader, [])
                 if not headers:
@@ -2052,7 +2058,7 @@ async def process_simple_import(import_config):
                             pass
         else:
             # If enrichment is disabled, only count rows (fast).
-            with open(csv_file_path, 'r', encoding='utf-8', newline='') as fh:
+            with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as fh:
                 reader = csv.reader(fh)
                 _ = next(reader, None)  # header
                 for idx, _row in enumerate(reader, 1):
@@ -2304,7 +2310,7 @@ async def process_simple_import(import_config):
             pass
 
         source_filename = os.path.basename(csv_file_path)
-        with open(csv_file_path, 'r', encoding='utf-8') as fh:
+        with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as fh:
             reader = csv.DictReader(fh)
             for row_num, row in enumerate(reader, 1):
                 try:
@@ -2475,6 +2481,7 @@ async def process_simple_import(import_config):
 
                     merged_applied = False
                     duplicate_existing_id = None
+                    pm_merge_error = None
                     try:
                         result = await simplified_service.add_book_to_user_library(
                             book_data=simplified_book,
@@ -2569,7 +2576,11 @@ async def process_simple_import(import_config):
                                         merged_applied = True
                                 except Exception as pm_ex:
                                     print(f"⚠️ [MERGE] Personal metadata merge failed: {pm_ex}")
-                                result = True  # Treat duplicate+merge as success
+                                    logger.warning(f"Import merge could not save personal data for book {duplicate_existing_id}: {pm_ex}")
+                                    pm_merge_error = str(pm_ex)
+                                # A duplicate is a success only if the user's own status/dates were saved;
+                                # otherwise report it so the row is visible in the error log.
+                                result = pm_merge_error is None
                             except Exception as merge_ex:
                                 print(f"⚠️ [MERGE] Failed merging duplicate: {merge_ex}")
                                 result = False
@@ -2597,7 +2608,8 @@ async def process_simple_import(import_config):
 
                     if not result:
                         error_count += 1
-                        message_txt = 'Duplicate book detected but merge failed' if duplicate_existing_id else 'Failed to add book to library (service returned no result)'
+                        progress_update['errors'] = error_count
+                        message_txt = (f'Duplicate book detected but merge failed: {pm_merge_error}' if pm_merge_error else 'Duplicate book detected but merge failed') if duplicate_existing_id else 'Failed to add book to library (service returned no result)'
                         error_payload = {
                             'row_number': row_num,
                             'title': simplified_book.title or '',
@@ -3693,7 +3705,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
     
     try:
         # Step 1: Read CSV headers to see what custom fields are mapped
-        with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+        with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             csv_headers = reader.fieldnames or []
             
@@ -3717,7 +3729,7 @@ async def pre_analyze_and_create_custom_fields(csv_file_path, field_mappings, us
                 
                 # Try to sample the CSV to infer field type
                 try:
-                    with open(csv_file_path, 'r', encoding='utf-8') as csvfile:
+                    with open(csv_file_path, 'r', encoding=_CSV_ENCODING, errors=_CSV_ERRORS, newline='') as csvfile:
                         reader = csv.DictReader(csvfile)
                         sample_rows = []
                         for i, row in enumerate(reader):

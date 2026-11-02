@@ -1289,6 +1289,9 @@ class SimplifiedBookService:
             'editor': None,
             'translator': None,
             'illustrator': None,
+            # Per-user fields
+            'user_rating': None,
+            'personal_notes': None,
             # Custom metadata fields
             'global_custom_metadata': {},
             'personal_custom_metadata': {}
@@ -1576,6 +1579,20 @@ class SimplifiedBookService:
                     # Store for potential later use (not currently persisted into personal metadata)
                     iso = _normalize_date_value(value)
                     book_data['date_added'] = iso or None
+                elif book_field in ('rating', 'user_rating'):
+                    # Goodreads "My Rating" / StoryGraph "Star Rating"; 0 means "not rated".
+                    try:
+                        rating = float(str(normalize_goodreads_value(str(value), 'text')).strip())
+                    except (ValueError, TypeError):
+                        rating = 0.0
+                    book_data['user_rating'] = min(rating, 5.0) if rating > 0 else None
+                elif book_field in ('notes', 'personal_notes'):
+                    note = normalize_goodreads_value(str(value), 'text')
+                    if note:
+                        # Both "My Review" (notes) and "Private Notes"-style columns may
+                        # be mapped; keep every non-empty one.
+                        existing_note = book_data.get('personal_notes')
+                        book_data['personal_notes'] = f"{existing_note}\n\n{note}" if existing_note else note
                 elif book_field.startswith('custom_'):
                     # Handle custom fields by parsing prefix and storing in metadata
                     if book_field.startswith('custom_global_'):
