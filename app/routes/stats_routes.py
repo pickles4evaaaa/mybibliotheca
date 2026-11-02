@@ -19,6 +19,7 @@ from .stats_helpers import (
     _extract_publisher_name,
     _extract_date,
     _get_book_date,
+    _resolve_timeline_date,
     _parse_flexible_date,
     _calculate_timeline_positions,
     _clean_book_data_for_json,
@@ -198,59 +199,25 @@ def library_journey():
                 if status_filter and book_data['reading_status'] != status_filter:
                     continue
                     
-                # 2. Date filter - Use the selected date type primarily, with transparent fallback to retain data density
-                fallback_order = [date_type, 'date_added', 'finish_date', 'start_date', 'publication_date']
-                # Remove duplicates while keeping order
-                seen = set()
-                fallback_order = [f for f in fallback_order if not (f in seen or seen.add(f))]
-                target_date = None
-                source_field = None
-                for field in fallback_order:
-                    if book_data.get(field):
-                        target_date = book_data.get(field)
-                        source_field = field
-                        break
-                if not target_date:
-                    continue  # Skip only if no dates are available at all
-                
-                # 3. Year range filter (support year-only and YYYY-MM dates)
-                try:
-                    normalized_date = None
-                    if isinstance(target_date, str):
-                        td = target_date.strip()
-                        if len(td) == 4 and td.isdigit():
-                            book_year = int(td)
-                            normalized_date = f"{td}-01-01"
-                        elif len(td) == 7 and td[4] == '-':  # YYYY-MM
-                            book_year = int(td[:4])
-                            normalized_date = f"{td}-01"
-                        else:
-                            dt = datetime.fromisoformat(td.replace('Z', '+00:00'))
-                            book_year = dt.year
-                            # store date in YYYY-MM-DD
-                            normalized_date = (dt.date() if hasattr(dt, 'date') else dt).isoformat()
-                    else:
-                        # date or datetime
-                        by = getattr(target_date, 'year', None)
-                        if by is None:
-                            raise ValueError('Unsupported date type')
-                        book_year = int(by)
-                        if hasattr(target_date, 'isoformat'):
-                            # if datetime, convert to date()
-                            try:
-                                normalized_date = target_date.date().isoformat()
-                            except Exception:
-                                normalized_date = target_date.isoformat()
-                        else:
-                            normalized_date = str(target_date)
+                # 2. Date filter - only the selected date type counts. Books without a
+                # real value for it are excluded rather than bucketed under another
+                # date (e.g. date_added/import date), which produced bogus years.
+                resolved = _resolve_timeline_date(book_data, date_type)
+                if resolved is None:
+                    continue
+                normalized_date, book_year = resolved
+                target_date = normalized_date
+                source_field = date_type
 
+                # 3. Year range filter
+                try:
                     if year_from and book_year < int(year_from):
                         continue
                     if year_to and book_year > int(year_to):
                         continue
                 except (ValueError, TypeError):
                     continue
-                
+
                 # Use the normalized/selected date as the primary date for positioning
                 book_data['timeline_date'] = normalized_date or target_date
                 book_data['timeline_source'] = source_field or date_type

@@ -124,6 +124,23 @@ def _extract_date(book, field_name):
         return None
 
 
+def _resolve_timeline_date(book_data, date_type):
+    """Return (iso_date, year) for the selected date type, or None if the book has no usable value."""
+    value = book_data.get(date_type)
+    if not value:
+        return None
+    try:
+        if isinstance(value, str):
+            dt = _parse_flexible_date(value)
+        elif hasattr(value, 'year'):
+            dt = datetime(value.year, getattr(value, 'month', 1), getattr(value, 'day', 1))
+        else:
+            return None
+    except (ValueError, TypeError):
+        return None
+    return dt.date().isoformat(), dt.year
+
+
 def _get_book_date(book, date_type):
     """Get the appropriate date from book based on date_type."""
     date_value = None
@@ -142,30 +159,11 @@ def _get_book_date(book, date_type):
             # Fallback to legacy logic below if parsing fails
             pass
     
-    # Primary selection based on requested type
-    if date_type == 'finish_date' and book.get('finish_date'):
-        date_value = book['finish_date']
-    elif date_type == 'start_date' and book.get('start_date'):
-        date_value = book['start_date']
-    elif date_type == 'publication_date' and book.get('publication_date'):
-        date_value = book['publication_date']
-    elif date_type == 'date_added' and book.get('date_added'):
-        date_value = book['date_added']
+    # Strictly use the requested date type; never fall back to another date,
+    # since that would place books in a bogus year on the timeline.
+    if date_type in ('finish_date', 'start_date', 'publication_date', 'date_added'):
+        date_value = book.get(date_type)
 
-    # Fallback sequence if we still don't have a value:
-    # 1. date_added (user context)
-    # 2. publication_date (bibliographic)
-    # 3. start_date (reading context)
-    # 4. finish_date
-    if not date_value and book.get('date_added'):
-        date_value = book['date_added']
-    if not date_value and book.get('publication_date'):
-        date_value = book['publication_date']
-    if not date_value and book.get('start_date'):
-        date_value = book['start_date']
-    if not date_value and book.get('finish_date'):
-        date_value = book['finish_date']
-    
     # Convert string dates to datetime if needed
     if isinstance(date_value, str):
         try:
@@ -924,6 +922,7 @@ __all__ = [
     "_get_book_date",
     "_parse_flexible_date",
     "_calculate_timeline_positions",
+    "_resolve_timeline_date",
     "_clean_book_data_for_json",
     "_get_status_color",
     "_calculate_timeline_stats",
