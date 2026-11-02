@@ -87,6 +87,39 @@ class PostgresLibraryService:
         )
         return value
 
+    @staticmethod
+    def _attach_contributors(cursor: Any, rows: list[dict[str, Any]]) -> None:
+        """Add contributors/authors/author to library rows (one batched query).
+
+        The library page renders ``book.author`` and sorts on contributors, so
+        the overlay rows must carry them rather than only ``books`` columns.
+        """
+        book_ids = [str(row["book_id"]) for row in rows if row.get("book_id")]
+        by_book: dict[str, list[dict[str, Any]]] = {}
+        if book_ids:
+            cursor.execute(
+                "SELECT c.book_id, p.id, p.name, "
+                "lower(COALESCE(NULLIF(c.contribution_type,''), NULLIF(c.source_relationship,''), 'authored')), "
+                "c.order_index "
+                "FROM book_contributors c JOIN people p ON p.id = c.person_id "
+                "WHERE c.book_id = ANY(%s) ORDER BY c.book_id, c.order_index NULLS LAST, c.id",
+                (book_ids,),
+            )
+            for book_id, person_id, name, ctype, order_index in cursor.fetchall():
+                if ctype == "written_by":
+                    ctype = "authored"
+                by_book.setdefault(str(book_id), []).append({
+                    "person_id": str(person_id), "contribution_type": ctype, "order": order_index,
+                    "person": {"id": str(person_id), "name": name or ""},
+                })
+        for row in rows:
+            contributors = by_book.get(str(row.get("book_id")), [])
+            names = [c["person"]["name"] for c in contributors
+                     if c["contribution_type"] in ("authored", "co_authored") and c["person"]["name"]]
+            row["contributors"] = contributors
+            row["authors"] = [{"name": name} for name in names]
+            row["author"] = ", ".join(names)
+
     def get_user_book_sync(self, user_id: str, book_id: str) -> dict[str, Any] | None:
         cache_key = f"postgres:library:item:{user_id}:{book_id}"
         tags = (self._user_tag(user_id), "postgres:books")
@@ -115,7 +148,7 @@ class PostgresLibraryService:
         offset = max(0, int(offset))
         order_by = _SORTS.get(sort, _SORTS["title_asc"])
         cache_key = f"postgres:library:page:{user_id}:{limit}:{offset}:{sort}"
-        tags = (self._user_tag(user_id), "postgres:books")
+        tags = (self._user_tag(user_id), "postgres:books", "postgres:people")
 
         def read():
             with self.store.connection() as connection, connection.cursor() as cursor:
@@ -125,7 +158,9 @@ class PostgresLibraryService:
                     "WHERE ub.user_id = %s ORDER BY " + order_by + " LIMIT %s OFFSET %s",
                     (user_id, limit, offset),
                 )
-                return [dict(zip(_LIBRARY_KEYS, row)) for row in cursor.fetchall()]
+                rows = [dict(zip(_LIBRARY_KEYS, row)) for row in cursor.fetchall()]
+                self._attach_contributors(cursor, rows)
+                return rows
 
         rows = self._cached_query(cache_key, tags, read)
         return [self._with_book_id_aliases(row) or row for row in rows]
