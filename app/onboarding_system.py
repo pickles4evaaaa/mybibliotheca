@@ -1138,7 +1138,7 @@ def confirmation_step():
                         # Fallback: if no task id was created, treat setup as complete.
                         return handle_onboarding_completion(onboarding_data)
                     logger.error("🔍 ONBOARDING DEBUG: Import setup failed")
-                    flash('Setup failed while starting import. Please check logs and try again.', 'error')
+                    flash(_pop_setup_error('Setup failed while starting import.'), 'error')
                     update_onboarding_data(onboarding_data)
                     set_onboarding_step(5)
                 elif data_option == 'migrate':
@@ -1150,7 +1150,7 @@ def confirmation_step():
                         return handle_onboarding_completion(onboarding_data)
                     else:
                         logger.error(f"🔍 ONBOARDING DEBUG: Migration failed")
-                        flash('Migration failed. Please check the error message and try again.', 'error')
+                        flash(_pop_setup_error('Migration failed.'), 'error')
                         # Ensure session data is preserved
                         update_onboarding_data(onboarding_data)
                         set_onboarding_step(5)
@@ -1164,7 +1164,7 @@ def confirmation_step():
                         return handle_onboarding_completion(onboarding_data)
                     else:
                         logger.error(f"🔍 ONBOARDING DEBUG: Fresh start setup failed")
-                        flash('Setup failed. Please check the error message and try again.', 'error')
+                        flash(_pop_setup_error('Setup failed.'), 'error')
                         # Ensure session data is preserved
                         update_onboarding_data(onboarding_data)
                         set_onboarding_step(5)
@@ -1391,6 +1391,27 @@ def import_progress_json(task_id: str):
             'error_messages': [str(e)]
         })
 
+_SETUP_ERROR_KEY = 'onboarding_setup_error'
+
+
+def _set_setup_error(message: str) -> None:
+    """Remember the reason setup failed so the UI can show it to the user."""
+    try:
+        session[_SETUP_ERROR_KEY] = str(message)
+        session.modified = True
+    except Exception:
+        pass
+
+
+def _pop_setup_error(default: str) -> str:
+    """Return a user-facing failure message, including the recorded reason if any."""
+    try:
+        reason = session.pop(_SETUP_ERROR_KEY, None)
+    except Exception:
+        reason = None
+    return f"{default} {reason}" if reason else default
+
+
 def execute_onboarding(onboarding_data: Dict) -> bool:
     """Execute the complete onboarding configuration."""
     try:
@@ -1424,6 +1445,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
             print(f"🚀 [EXECUTE] Admin user details: ID={admin_user.id}, username={admin_user.username}, email={admin_user.email}")
         else:
             print(f"🚀 [EXECUTE] Failed to create admin user!")
+            _set_setup_error("Could not create the admin user. Check the server logs.")
             return False
         
         # Step 2: Apply site configuration and create location
@@ -1658,6 +1680,7 @@ def execute_onboarding(onboarding_data: Dict) -> bool:
         
     except Exception as e:
         logger.error(f"Error executing onboarding: {e}")
+        _set_setup_error(f"Unexpected error during migration: {e}")
         return False
 
 
@@ -1681,6 +1704,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         
         if not admin_data:
             logger.error("❌ Missing admin data in execute_onboarding_setup_only")
+            _set_setup_error("Missing admin account information.")
             return False
         
         print(f"🚀 [SETUP] ============ STEP 1: CREATING ADMIN USER ============")
@@ -1696,6 +1720,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             print(f"🚀 [SETUP] Password hash generated successfully")
         except Exception as hash_error:
             logger.error(f"Failed to generate password hash: {hash_error}")
+            _set_setup_error(f"Could not process the admin password: {hash_error}")
             return False
         
         try:
@@ -1723,10 +1748,12 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             logger.error(f"Exception creating admin user: {user_create_error}")
             import traceback
             traceback.print_exc()
+            _set_setup_error(f"Could not create the admin user: {user_create_error}")
             return False
         
         if not admin_user:
             logger.error("❌ Failed to create admin user - service returned None")
+            _set_setup_error("Could not create the admin user. The database may be unavailable or the username/email may already exist; check the server logs.")
             return False
         
         logger.info(f"✅ Admin user created: {admin_user.username} (ID: {admin_user.id})")
@@ -1957,6 +1984,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
             print(f"📂 [SETUP] Admin user ID for import: {admin_user_id}")
             if not admin_user_id:
                 logger.error("❌ Admin user has no ID")
+                _set_setup_error("Admin user was created without an ID; cannot start the import.")
                 return False
             
             try:
@@ -1967,6 +1995,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 
                 if not import_task_id:
                     logger.error("❌ Failed to start CSV import job")
+                    _set_setup_error("Could not start the book import job; check the server logs.")
                     return False
                 else:
                     logger.info(f"✅ CSV import job started with ID: {import_task_id}")
@@ -1977,6 +2006,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
                 logger.error(f"Exception starting CSV import job: {import_error}")
                 import traceback
                 traceback.print_exc()
+                _set_setup_error(f"Could not start the book import job: {import_error}")
                 return False
         else:
             print(f"📂 [SETUP] No import selected (option='{data_option}'), skipping CSV import")
@@ -1990,6 +2020,7 @@ def execute_onboarding_setup_only(onboarding_data: Dict) -> bool:
         logger.error(f"Error executing onboarding setup: {e}")
         import traceback
         traceback.print_exc()
+        _set_setup_error(f"Unexpected error during setup: {e}")
         return False
 
 
