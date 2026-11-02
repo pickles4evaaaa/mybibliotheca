@@ -1335,6 +1335,18 @@
     box-shadow: inset 0 0 0 1px rgba(251,146,60,0.35);
   }
 
+  /* Wrapper for the admin update notice. Deliberately NOT .container: that class is a
+     padded glass card and would render as an empty card while the notice is hidden. */
+  .update-banner-wrap {
+    width: var(--layout-max-width);
+    max-width: 100%;
+    margin: 0 auto;
+    padding: 0;
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
+
   .alert {
     border: 1px solid transparent;
     border-radius: 18px;
@@ -1800,8 +1812,8 @@
     </nav>
     {% endblock %}
     {% if current_user.is_authenticated and current_user.is_admin %}
-    <div class="container">
-      <div id="update-banner" class="alert alert-info alert-dismissible fade show mt-2 mb-0 d-none" role="alert" data-endpoint="{{ url_for('admin.update_check_status') }}">
+    <div class="update-banner-wrap">
+      <div id="update-banner" class="alert alert-info alert-dismissible fade show mb-3 d-none" role="alert" data-endpoint="{{ url_for('admin.update_check_status') }}">
         <i class="bi bi-arrow-up-circle-fill me-1"></i>
         <span>New update available: <a id="update-banner-link" href="#" target="_blank" rel="noopener noreferrer" class="alert-link"></a></span>
         <button type="button" id="update-banner-dismiss" class="btn-close" aria-label="Dismiss"></button>

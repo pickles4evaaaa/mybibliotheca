@@ -194,7 +194,7 @@ def test_endpoint_forbidden_for_non_admin_and_anon(monkeypatch):
 
 def test_base_template_banner_admin_only():
     tpl = (Path(__file__).resolve().parent.parent / "app/templates/base.html").read_text()
-    start = tpl.index("{% if current_user.is_authenticated and current_user.is_admin %}\n    <div class=\"container\">\n      <div id=\"update-banner\"")
+    start = tpl.index("{% if current_user.is_authenticated and current_user.is_admin %}\n    <div class=\"update-banner-wrap\">\n      <div id=\"update-banner\"")
     block = tpl[start:tpl.index("{% endif %}", start)]
     assert 'rel="noopener noreferrer"' in block and 'target="_blank"' in block
     assert "updateDismissed:" in block  # per-version dismissal key
