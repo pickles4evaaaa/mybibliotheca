@@ -701,6 +701,17 @@ def admin_or_self_required(user_id_param='user_id'):
         return decorated_function
     return decorator
 
+@admin.route('/update-check.json')
+@login_required
+@admin_required
+def update_check_status():
+    """Cached release-check status for the update banner (no per-request network call)."""
+    from app.utils.update_check import get_status
+    resp = jsonify(get_status())
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
+
+
 @admin.route('/dashboard')
 @login_required
 @admin_required

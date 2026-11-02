@@ -1799,6 +1799,47 @@
       </div>
     </nav>
     {% endblock %}
+    {% if current_user.is_authenticated and current_user.is_admin %}
+    <div class="container">
+      <div id="update-banner" class="alert alert-info alert-dismissible fade show mt-2 mb-0 d-none" role="alert" data-endpoint="{{ url_for('admin.update_check_status') }}">
+        <i class="bi bi-arrow-up-circle-fill me-1"></i>
+        <span>New update available: <a id="update-banner-link" href="#" target="_blank" rel="noopener noreferrer" class="alert-link"></a></span>
+        <button type="button" id="update-banner-dismiss" class="btn-close" aria-label="Dismiss"></button>
+      </div>
+    </div>
+    <script>
+    (function () {
+      var el = document.getElementById('update-banner');
+      if (!el) return;
+      function dismissed(v) { try { return localStorage.getItem('updateDismissed:' + v) === '1'; } catch (e) { return false; } }
+      function apply(d) {
+        if (!d || !d.update_available || !d.latest || dismissed(d.latest)) return false;
+        var a = document.getElementById('update-banner-link');
+        a.textContent = d.latest;
+        a.href = d.url || 'https://github.com/pickles4evaaaa/mybibliotheca/releases';
+        el.dataset.version = d.latest;
+        el.classList.remove('d-none');
+        return true;
+      }
+      function load(retry) {
+        fetch(el.dataset.endpoint, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (!d) return;
+            apply(d);
+            // First request after startup triggers a background fetch; look once more.
+            if (!d.checked_at && d.enabled !== false && retry) setTimeout(function () { load(false); }, 6000);
+          })
+          .catch(function () {});
+      }
+      document.getElementById('update-banner-dismiss').addEventListener('click', function () {
+        try { localStorage.setItem('updateDismissed:' + el.dataset.version, '1'); } catch (e) {}
+        el.classList.add('d-none');
+      });
+      load(true);
+    })();
+    </script>
+    {% endif %}
     <div class="container">
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}

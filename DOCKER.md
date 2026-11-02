@@ -34,4 +34,8 @@ An application upgrade alone does not move the database. Keep the existing `data
 
 The `.env.example` file documents the supported settings. Compose defaults connect the application to the bundled PostgreSQL service and Redis. The production Compose file pins the app image to `pickles4evaaaa/mybibliotheca:3.0.0`. For a memory-constrained host, lower `WORKERS`; PostgreSQL defaults to six workers. The app automatically uses one worker while Kuzu remains active during migration.
 
+### Update notice
+
+Administrators see a dismissible "New update available" banner when a newer stable release appears on [GitHub releases](https://github.com/pickles4evaaaa/mybibliotheca/releases). The check runs in the background at most every ~6 hours, uses ETag caching to stay within GitHub's unauthenticated limits, fails silently when offline, and sends only a `MyBibliotheca/<version>` User-Agent. Pre-releases are ignored unless the installed version is a pre-release. Set `UPDATE_CHECK_ENABLED=false` to disable it entirely. The app never updates itself.
+
 For production, use HTTPS through a reverse proxy and protect `.env` and backups. See the [deployment guide](docs/DEPLOYMENT.md) and [backup guide](docs/BACKUP_RESTORE.md).

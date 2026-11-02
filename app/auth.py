@@ -483,6 +483,15 @@ def settings():
                 stats['app_version'] = data.get('project', {}).get('version', stats['app_version'])
     except Exception as e:
         current_app.logger.debug(f"Version load failed: {e}")
+    try:
+        if current_user.is_admin:
+            from app.utils.update_check import get_status
+            upd = get_status()
+            stats['update_available'] = upd['update_available']
+            stats['update_latest'] = upd['latest']
+            stats['update_url'] = upd['url']
+    except Exception as e:
+        current_app.logger.debug(f"Update status unavailable: {e}")
     return render_template('settings.html', title='Settings', site_name=site_name, stats=stats)
 
 # ---------------- Inline Settings Partials (AJAX) -----------------

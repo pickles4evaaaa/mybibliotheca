@@ -5,6 +5,11 @@ All notable changes to MyBibliotheca will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
+
 ## [3.0.0] - 2026-10-20
 
 ### Changed

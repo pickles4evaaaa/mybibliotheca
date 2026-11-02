@@ -175,6 +175,10 @@ services:
       - "traefik.http.services.bibliotheca.loadbalancer.server.port=5054"
 ```
 
+## Update Notice
+
+Admins see a dismissible banner (and a note on Settings) when a newer stable GitHub release exists. The app checks `api.github.com` in the background about every 6 hours (`UPDATE_CHECK_TTL_SECONDS` overrides), uses ETag caching, caches in memory plus `$DATA_DIR/update_check.json`, and sends only a `MyBibliotheca/<version>` User-Agent. Set `UPDATE_CHECK_ENABLED=false` for air-gapped or privacy-sensitive installs. Pre-releases are ignored unless you run a pre-release.
+
 ## Production Security Hardening
 
 ### Container Security

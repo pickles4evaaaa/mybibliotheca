@@ -122,6 +122,9 @@
                         <div class="fw-semibold small text-uppercase opacity-75">System</div>
                         <div class="display-6 fw-bold" style="font-size:1.75rem;">{{ stats.app_version }}</div>
                         <div class="small opacity-75">UTC {{ stats.utc_time }}</div>
+                        {% if stats.update_available and stats.update_latest %}
+                        <div class="small mt-1"><a class="link-warning fw-semibold" href="{{ stats.update_url }}" target="_blank" rel="noopener noreferrer">Update available: {{ stats.update_latest }}</a></div>
+                        {% endif %}
                     </div>
                 </div>
                 {% endif %}
