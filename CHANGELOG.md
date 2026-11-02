@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - "New update available" notice for administrators that checks GitHub releases and links to the release page. Cached, non-blocking, sends no identifying data, and can be disabled with `UPDATE_CHECK_ENABLED=false`.
 
+### Hotfix
+- Fixed an empty glass card appearing under the navbar for administrators: the hidden update notice was wrapped in a styled container. Republished as the same 3.0.1 tags.
+
 ### Changed
 - The page footer now shows the installed version read from the application instead of a hard-coded number.
 - README documentation links now point to docs.mybibliotheca.org.
