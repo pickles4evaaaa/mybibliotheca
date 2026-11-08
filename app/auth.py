@@ -750,6 +750,7 @@ def settings_data_partial(panel: str):
                 })
             stats = svc.get_backup_stats()
             try:
+                svc.refresh_settings()
                 backup_settings = {
                     'enabled': svc._settings.get('enabled', True),
                     'frequency': svc._settings.get('frequency', 'daily'),

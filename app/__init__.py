@@ -359,6 +359,11 @@ def _initialize_default_templates():
 
 
 def create_app():
+    try:
+        from app.utils.api_limits import install as _install_api_limits
+        _install_api_limits()
+    except Exception as _e:
+        print(f"api_limits not installed: {_e}")
     import os
     import logging
     # Resolve an interrupted cutover before importing any module with Kuzu

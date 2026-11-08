@@ -1101,7 +1101,19 @@ def settings_server_partial(panel: str):
                 traceback.print_exc(file=sys.stderr)
                 return jsonify({'ok': False, 'error': 'save_failed'}), 400
         metadata_settings = get_metadata_settings()
-        return render_template('settings/partials/server_metadata.html', metadata_settings=metadata_settings)
+        try:
+            from app.utils.api_limits import get_status as _api_limits_status
+            api_limits = _api_limits_status()
+        except Exception:
+            api_limits = None
+        google_key = None
+        try:
+            from app.utils import google_books_settings as _gbs
+            _k = _gbs.get_api_key()
+            google_key = {'configured': bool(_k), 'masked': _gbs.mask(_k) if _k else '', 'source': _gbs.key_source()}
+        except Exception:
+            pass
+        return render_template('settings/partials/server_metadata.html', metadata_settings=metadata_settings, api_limits=api_limits, google_key=google_key)
     if panel == 'repairs':
         if not current_user.is_admin:
             return '<div class="text-danger small">Not authorized.</div>'

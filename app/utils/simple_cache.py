@@ -51,12 +51,41 @@ def cache_set(key: str, value: Any, ttl_seconds: int = 60) -> None:
     _cache.set(key, value, ttl_seconds)
 
 
+def _shared_client():
+    """Redis client when configured (shared by every gunicorn worker), else None."""
+    try:
+        from app.infrastructure.redis_cache import get_redis_client
+        return get_redis_client()
+    except Exception:
+        return None
+
+
+def _version_key(user_id: str) -> str:
+    return f"mybibliotheca:library_version:{user_id}"
+
+
 def get_user_library_version(user_id: str) -> int:
+    # The version is part of every library cache key. It must be shared between workers,
+    # otherwise a book added through one worker stays invisible on the others until
+    # their private cache entries expire.
+    client = _shared_client()
+    if client is not None:
+        try:
+            val = client.get(_version_key(str(user_id)))
+            return int(val or 0)
+        except Exception:
+            pass
     with _version_lock:
         return int(_user_versions.get(user_id, 0))
 
 
 def bump_user_library_version(user_id: str) -> int:
+    client = _shared_client()
+    if client is not None:
+        try:
+            return int(client.incr(_version_key(str(user_id))))
+        except Exception:
+            pass
     with _version_lock:
         current = int(_user_versions.get(user_id, 0)) + 1
         _user_versions[user_id] = current

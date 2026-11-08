@@ -75,7 +75,9 @@
     [data-theme="dark"] {
       /* Dark theme variables */
       --bg-color: #1a1a1a;
+      {% if background_config.type not in ('solid', 'gradient', 'image') or (background_config.type == 'image' and not background_config.image_url) %}
       --bg-gradient: linear-gradient(to bottom, #1a1a1a, #0d0d0d);
+      {% endif %}
       --overlay-background: rgba(0, 0, 0, 0.25);
       --container-background: rgba(30, 30, 30, 0.95);
       --navbar-background: rgba(20, 20, 20, 0.95);

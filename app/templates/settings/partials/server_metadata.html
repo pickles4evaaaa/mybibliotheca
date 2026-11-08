@@ -1,3 +1,60 @@
+{% if google_key is defined and google_key %}
+<div class="card mb-3" id="google-key-card" data-csrf-token="{{ csrf_token() }}">
+  <div class="card-header py-2"><strong><i class="bi bi-key-fill me-1"></i>Google Books API key</strong></div>
+  <div class="card-body py-2">
+    <div class="small mb-2">
+      {% if google_key.configured %}<span class="badge bg-success">Configured</span> <code>{{ google_key.masked }}</code> <span class="text-muted">(from {{ google_key.source }})</span>
+      {% else %}<span class="badge bg-warning text-dark">Not set</span> <span class="text-muted">Lookups use the shared anonymous quota and are slow and unstable.</span>{% endif %}
+    </div>
+    <div class="input-group input-group-sm">
+      <input type="password" id="gb-key-input" class="form-control" placeholder="Paste a new API key" autocomplete="off" spellcheck="false">
+      <button class="btn btn-primary" type="button" title="Verify with Google and save"
+        onclick="(function(b){var card=document.getElementById('google-key-card'),inp=document.getElementById('gb-key-input'),st=document.getElementById('gb-key-status');var k=inp.value.trim();if(!k){st.textContent='Enter a key first.';return;}st.textContent='Verifying…';fetch('/api/google-books-key',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRFToken':card.getAttribute('data-csrf-token')},body:JSON.stringify({api_key:k})}).then(function(r){return r.json();}).then(function(j){if(j.ok){st.textContent='Saved. '+((j.test&&j.test.message)||'');inp.value='';setTimeout(function(){window.dispatchEvent(new Event('reload-settings-panel'));},900);}else{st.textContent='Not saved: '+(j.error||'unknown error');}}).catch(function(){st.textContent='Request failed.';});})(this)">Verify &amp; Save</button>
+      {% if google_key.source == 'settings' %}
+      <button class="btn btn-outline-danger" type="button" title="Remove the saved key"
+        onclick="(function(){var card=document.getElementById('google-key-card');fetch('/api/google-books-key',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRFToken':card.getAttribute('data-csrf-token')},body:JSON.stringify({clear:true})}).then(function(){window.dispatchEvent(new Event('reload-settings-panel'));});})()">Remove</button>
+      {% endif %}
+    </div>
+    <div id="gb-key-status" class="small text-muted mt-1"></div>
+  </div>
+</div>
+{% endif %}
+{% if api_limits %}
+{% set g = api_limits.google_books %}{% set ol = api_limits.openlibrary %}
+<div class="card mb-3" id="api-limits-card">
+  <div class="card-header py-2"><strong><i class="bi bi-speedometer2 me-1"></i>Provider API usage today</strong></div>
+  <div class="card-body py-2">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="d-flex justify-content-between"><span>Google Books
+          {% if g.blocked %}<span class="badge bg-danger ms-1">Paused{% if g.blocked_reason == 'quota' %} – daily limit reached{% endif %}</span>
+          {% else %}<span class="badge bg-success ms-1">Active</span>{% endif %}</span>
+          <span class="text-muted small">{{ g.requests_today }}{% if g.daily_limit %} / {{ g.daily_limit }}{% endif %} requests</span></div>
+        {% if g.daily_limit %}
+        <div class="progress mt-1" style="height:.5rem"><div class="progress-bar {% if g.blocked %}bg-danger{% elif g.requests_today >= g.daily_limit * 0.8 %}bg-warning{% else %}bg-success{% endif %}" style="width: {{ [100, (g.requests_today * 100 / g.daily_limit)|round|int]|min }}%"></div></div>
+        {% endif %}
+        <div class="small text-muted mt-1">
+          {% if g.blocked and g.blocked_until %}Resumes {{ g.blocked_until.replace('T',' ')[:16] }}. {% endif %}
+          {% if g.skipped_today %}{{ g.skipped_today }} lookups skipped. {% endif %}
+          {% if not g.api_key_configured %}No API key set (shared anonymous quota) – add one in the box above for your own quota.{% endif %}
+          Quota resets {{ g.resets_at.replace('T',' ')[:16] }} (server time).
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="d-flex justify-content-between"><span>OpenLibrary
+          {% if ol.blocked %}<span class="badge bg-danger ms-1">Paused</span>{% else %}<span class="badge bg-success ms-1">Active</span>{% endif %}</span>
+          <span class="text-muted small">{{ ol.requests_today }} requests</span></div>
+        <div class="small text-muted mt-1">
+          Limited to {{ ol.max_requests }} request{{ 's' if ol.max_requests != 1 }} per {{ ol.window_seconds|round(1) }}s.
+          {% if ol.delayed_today %}{{ ol.delayed_today }} delayed. {% endif %}
+          {% if ol.skipped_today %}{{ ol.skipped_today }} skipped. {% endif %}
+          Tune with <code>OPENLIBRARY_MAX_REQUESTS</code> / <code>OPENLIBRARY_WINDOW_SECONDS</code>.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% set books = metadata_settings.get('books', {}) %}
 {% set people = metadata_settings.get('people', {}) %}
 {% set book_provider_map = {

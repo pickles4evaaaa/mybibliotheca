@@ -336,6 +336,33 @@ def site_config_step():
         try:
             logger.info(f"🔍 ONBOARDING DEBUG: Processing POST data: {redact_sensitive(request.form)}")
             
+            # Google Books API key (required choice): enter a key, or explicitly accept the slow path.
+            try:
+                from .utils import google_books_settings as _gbs
+                _gkey = (request.form.get('google_books_api_key') or '').strip()
+                _gskip = 'google_skip_ack' in request.form
+                if _gkey:
+                    from .routes.misc_routes import test_google_key
+                    _res = test_google_key(_gkey)
+                    if _res['status'] == 'invalid':
+                        flash(_res['message'], 'error')
+                        return redirect(url_for('onboarding.step', step_num=2))
+                    _gbs.save(api_key=_gkey)
+                    try:
+                        from .utils.api_limits import clear_block
+                        clear_block()
+                    except Exception:
+                        pass
+                elif _gbs.get_api_key():
+                    pass  # already configured (earlier visit or .env)
+                elif _gskip:
+                    _gbs.save(skip_acknowledged=True)
+                else:
+                    flash('Add a Google Books API key, or tick the box acknowledging that skipping it makes metadata lookup slow and unstable.', 'error')
+                    return redirect(url_for('onboarding.step', step_num=2))
+            except Exception as _ge:
+                logger.warning(f"⚠️ ONBOARDING DEBUG: Google Books key handling failed: {_ge}")
+
             site_config = {
                 'site_name': request.form.get('site_name', 'MyBibliotheca'),
                 'timezone': request.form.get('timezone', 'UTC'),
@@ -497,10 +524,20 @@ def site_config_step():
     except Exception as e:
         logger.warning(f"⚠️ ONBOARDING DEBUG: Could not load ABS settings for template: {e}")
 
+    google_key_info = {'configured': False, 'masked': '', 'source': 'none', 'skip_ack': False}
+    try:
+        from .utils import google_books_settings as _gbs
+        _k = _gbs.get_api_key()
+        google_key_info = {'configured': bool(_k), 'masked': _gbs.mask(_k) if _k else '',
+                           'source': _gbs.key_source(), 'skip_ack': bool(_gbs.load().get('skip_acknowledged'))}
+    except Exception as e:
+        logger.warning(f"⚠️ ONBOARDING DEBUG: Could not load Google key info: {e}")
+
     return render_template('onboarding/step2_site_config.html',
                          timezones=timezones,
                          current_config=display_config,
                          abs_settings=abs_settings,
+                         google_key=google_key_info,
                          step=2,
                          total_steps=5)
 

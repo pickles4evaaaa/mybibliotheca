@@ -23,7 +23,7 @@
     <p>These settings (and backup settings below) can be changed later in the admin panel.</p>
 </div>
 
-<form method="POST" class="needs-validation" novalidate>
+<form method="POST" class="needs-validation" novalidate onsubmit="return (function(f){var k=f.google_books_api_key.value.trim(),a=f.google_skip_ack.checked,have={{ 'true' if google_key and google_key.configured else 'false' }};if(k||a||have)return true;var c=document.getElementById('collapseGoogle');if(c&&!c.classList.contains('show'))new bootstrap.Collapse(c,{toggle:true});f.google_skip_ack.focus();alert('Please add a Google Books API key, or tick the box acknowledging that skipping it makes metadata lookup slow and unstable.');return false;})(this)">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
     <div class="accordion" id="step2Accordion">
@@ -57,6 +57,32 @@
                             <option value="category" {% if current_config.get('terminology_preference') == 'category' %}selected{% endif %}>Categories (e.g., "Fiction", "Non-Fiction", "Reference")</option>
                         </select>
                         <div class="form-text">This affects how book classifications are displayed throughout the interface</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Google Books API key (required choice) -->
+        <div class="accordion-item shadow-sm mb-2">
+            <h2 class="accordion-header" id="headingGoogle">
+                <button class="accordion-button bg-warning text-dark" type="button" data-bs-toggle="collapse" data-bs-target="#collapseGoogle" aria-expanded="true" aria-controls="collapseGoogle">
+                    <i class="bi bi-key-fill me-2"></i> Google Books API Key (Required)
+                </button>
+            </h2>
+            <div id="collapseGoogle" class="accordion-collapse collapse show" aria-labelledby="headingGoogle" data-bs-parent="#step2Accordion">
+                <div class="accordion-body">
+                    <p class="mb-2">Book lookups use Google Books. Without your own API key you share a tiny anonymous quota that is usually already used up, so lookups become slow and unreliable.</p>
+                    <button type="button" class="btn btn-sm btn-outline-dark mb-3" data-bs-toggle="modal" data-bs-target="#googleKeyHelp">
+                        <i class="bi bi-question-circle me-1"></i>How do I get a key? (step-by-step)
+                    </button>
+                    <br>
+                    <label for="google_books_api_key" class="form-label">API key</label>
+                    <input type="password" id="google_books_api_key" name="google_books_api_key" class="form-control" autocomplete="off" spellcheck="false"
+                           placeholder="{% if google_key and google_key.configured %}Saved ({{ google_key.masked }}, from {{ google_key.source }}) – leave blank to keep{% else %}AIza…{% endif %}">
+                    <div class="form-text">Stored on this server in <code>data/google_books_settings.json</code>; no .env edit needed. It can be changed later in Settings &rarr; Server &rarr; Metadata.</div>
+                    <div class="form-check mt-3" id="google_skip_wrap">
+                        <input class="form-check-input" type="checkbox" id="google_skip_ack" name="google_skip_ack" {% if google_key and google_key.skip_ack %}checked{% endif %}>
+                        <label class="form-check-label" for="google_skip_ack">I'm skipping this and I understand metadata lookup will be slow and unstable.</label>
                     </div>
                 </div>
             </div>
@@ -247,9 +273,49 @@
         </button>
     </div>
     </form>
+<!-- Step-by-step: getting a Google Books API key -->
+<div class="modal fade" id="googleKeyHelp" tabindex="-1" aria-labelledby="googleKeyHelpLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="googleKeyHelpLabel"><i class="bi bi-key-fill me-2"></i>Get a free Google Books API key</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted">Takes about 3 minutes and is free. You need a Google account. The key gives your server its own lookup quota (1,000 requests/day by default) instead of the shared one.</p>
+        <ol class="list-group list-group-numbered mb-3">
+          <li class="list-group-item">Open <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a> and sign in. Accept the terms if asked.</li>
+          <li class="list-group-item">Click the <strong>project picker</strong> at the top (next to the Google Cloud logo) &rarr; <strong>New Project</strong>. Name it <code>MyBibliotheca</code> &rarr; <strong>Create</strong>, then make sure it is the selected project.</li>
+          <li class="list-group-item">Open <a href="https://console.cloud.google.com/apis/library/books.googleapis.com" target="_blank" rel="noopener">the Books API page</a> and click <strong>Enable</strong>.</li>
+          <li class="list-group-item">Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">APIs &amp; Services &rarr; Credentials</a>, click <strong>+ Create credentials</strong> &rarr; <strong>API key</strong>.</li>
+          <li class="list-group-item">Copy the key that appears (it starts with <code>AIza</code>).</li>
+          <li class="list-group-item"><em>Recommended:</em> click <strong>Edit API key</strong> (or <strong>Show key</strong> &rarr; Edit) &rarr; under <strong>API restrictions</strong> choose <strong>Restrict key</strong> &rarr; select <strong>Books API</strong> &rarr; <strong>Save</strong>. This limits what the key can do if it ever leaks.</li>
+          <li class="list-group-item">Close this window, paste the key into the <strong>API key</strong> box, and continue. MyBibliotheca verifies it with Google and stores it on your server.</li>
+        </ol>
+        <div class="alert alert-info small mb-0">
+          <strong>New key not working right away?</strong> Google can take a few minutes to activate a new key. It is saved either way, and you can re-enter it later in <em>Settings &rarr; Server &rarr; Metadata</em>.
+          Do <strong>not</strong> set an application restriction (IP/HTTP referrer) unless it matches your server&rsquo;s public IP, or requests will be rejected.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a class="btn btn-primary" href="https://console.cloud.google.com/apis/library/books.googleapis.com" target="_blank" rel="noopener">Open Google Cloud Console <i class="bi bi-box-arrow-up-right ms-1"></i></a>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
+<script>
+// Bootstrap modals must live directly under <body>; inside the transformed/z-indexed
+// onboarding card the backdrop would render above the dialog and block all clicks.
+(function(){
+  var m = document.getElementById('googleKeyHelp');
+  if (m && m.parentElement !== document.body) { document.body.appendChild(m); }
+})();
+</script>
 <script>
 // Initialize Step 2 behavior (timezone + accordion)
 document.addEventListener('DOMContentLoaded', function() {

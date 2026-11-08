@@ -27,7 +27,7 @@
                 <h5><i class="bi bi-info-circle me-2"></i>About Simple Backup</h5>
                 <p class="mb-2">This simplified backup system backs up your complete Bibliotheca data as ZIP archives.</p>
                 <ul class="mb-0">
-                    <li><strong>Database:</strong> Complete KuzuDB database files</li>
+                    <li><strong>Database:</strong> {% if active_persistence_backend == 'postgres' %}Complete PostgreSQL database dump{% else %}Complete KuzuDB database files{% endif %}</li>
                     <li><strong>Images:</strong> All book cover images and uploaded files</li>
                     <li><strong>Restore:</strong> Cleanly disconnects, replaces all files, and reconnects</li>
                     <li><strong>Simple:</strong> No complex metadata or multi-step processes</li>
@@ -292,9 +292,15 @@
                     <div class="alert alert-info">
                         <h6><i class="bi bi-info-circle me-2"></i>What will be backed up:</h6>
                         <ul class="mb-0">
+                            {% if active_persistence_backend == 'postgres' %}
+                            <li>Complete PostgreSQL database dump ({{ backup_stats.database_size_formatted }})</li>
+                            <li>All tables, relationships, and data</li>
+                            <li>Database schema and indexes</li>
+                            {% else %}
                             <li>Complete KuzuDB database ({{ backup_stats.database_size_formatted }})</li>
                             <li>All nodes, relationships, and data</li>
                             <li>Database schema and indexes</li>
+                            {% endif %}
                         </ul>
                     </div>
                 </div>

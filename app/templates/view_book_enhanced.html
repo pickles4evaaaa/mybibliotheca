@@ -469,7 +469,7 @@
                                                             {{ book.locations[0] }}
                                                         {% endif %}
                                                     {% elif book.location_id %}
-                                                        {{ book.location_id }}
+                                                        <span class="text-muted">Unknown location</span>
                                                     {% elif book.ownership_status and book.ownership_status != 'wishlist' %}
                                                         <span class="text-muted">Not set</span>
                                                     {% else %}

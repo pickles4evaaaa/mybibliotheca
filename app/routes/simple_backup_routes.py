@@ -84,6 +84,8 @@ def index():
         backup_settings = {}
         try:
             svc = backup_service
+            if hasattr(svc, 'refresh_settings'):
+                svc.refresh_settings()
             if hasattr(svc, '_settings'):
                 # expose a safe copy
                 backup_settings = {
@@ -308,6 +310,8 @@ def api_backup_settings():
     """Get or update backup scheduler settings (admin only)."""
     try:
         backup_service = get_simple_backup_service()
+        if hasattr(backup_service, 'refresh_settings'):
+            backup_service.refresh_settings()
         if request.method == 'GET':
             return jsonify(backup_service._settings if hasattr(backup_service, '_settings') else {})
         # POST update

@@ -241,6 +241,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             unifiedContainer.innerHTML = html;
             ensureServerConfigBindings();
+            // Background is applied by base.html on page load, so reload to show it.
+            if(fd.get('background_type') !== null){
+                setTimeout(()=>window.location.reload(), 800);
+            }
             if(!unifiedContainer.querySelector('.alert-inline-save-success')){
                 const alert = document.createElement('div');
                 alert.className = 'alert alert-success py-2 mb-3 alert-inline-save-success';

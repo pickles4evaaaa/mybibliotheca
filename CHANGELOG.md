@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
 
+## [3.0.2] - 2026-11-08
+
+### Added
+- Google Books API key can be entered in the GUI: a required choice in onboarding step 2 (enter a key, or explicitly acknowledge that skipping makes lookups slow and unstable) with a step-by-step "how do I get a key" popup, and a verify-and-save card in Settings → Server → Metadata. The key is stored in `data/google_books_settings.json`, takes priority over `GOOGLE_BOOKS_API_KEY`, and is now sent on every Google Books request (previously ISBN lookups and the add-book search ran on the shared anonymous quota).
+- API limit awareness: daily Google Books request counter (stops calling Google at `GOOGLE_BOOKS_DAILY_LIMIT`, default 1000, or when Google reports its quota is used up, and resumes when the quota resets at midnight Pacific), and an OpenLibrary rate limit (default 3 requests per 2 seconds; `OPENLIBRARY_MAX_REQUESTS` / `OPENLIBRARY_WINDOW_SECONDS`, e.g. 1 per 2s). Shared across all workers; usage and pause status shown in Settings → Server → Metadata and at `/api/api-limits`. Disable with `API_LIMITS_ENABLED=false`.
+
+### Changed
+- Google Books is now the preferred metadata/cover provider; OpenLibrary is only queried when Google is paused, over quota, or returns nothing. The add-book search no longer waits on OpenLibrary first.
+- Cover candidate searches return several stable, ranked results per provider instead of one best match that could change between searches (#254).
+- Library filter tiles are now a uniform size and alignment.
+- Footer and package version show 3.0.2.
+
+### Fixed
+- Background settings now apply: a custom background is no longer overridden by the dark theme, and the page reloads after saving (#259).
+- Backup manager settings are stored reliably across Gunicorn workers (#258); "Backup not found" on download and backups missing from the list no longer happen; backup index writes are atomic.
+- A book's location shows its name instead of the internal ID (#257).
+- A newly added (or edited/deleted) book now appears on the library page immediately instead of after a second refresh; the library cache version is now shared across Gunicorn workers via Redis.
+- Backup page no longer mentions Kuzu when running on PostgreSQL and reports the PostgreSQL database size.
+- Book lookups are much faster when the Google Books quota is exhausted: no more sleep-and-retry on 429 responses, parallel OpenLibrary cover checks, concurrent and cached cover-size probes.
+
 ## [3.0.1] - 2026-11-02
 
 ### Fixed

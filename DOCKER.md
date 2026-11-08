@@ -1,6 +1,6 @@
 # Docker Compose installation
 
-MyBibliotheca 3.0.1 uses PostgreSQL as its primary database. The supplied Compose stack starts the app, PostgreSQL, and Redis. New installations initialize PostgreSQL automatically; existing Kuzu installations must complete the in-app migration wizard.
+MyBibliotheca 3.0.2 uses PostgreSQL as its primary database. The supplied Compose stack starts the app, PostgreSQL, and Redis. New installations initialize PostgreSQL automatically; existing Kuzu installations must complete the in-app migration wizard.
 
 ## Install
 
@@ -32,7 +32,7 @@ An application upgrade alone does not move the database. Keep the existing `data
 
 ## Configuration
 
-The `.env.example` file documents the supported settings. Compose defaults connect the application to the bundled PostgreSQL service and Redis. The production Compose file pins the app image to `pickles4evaaaa/mybibliotheca:3.0.1`. For a memory-constrained host, lower `WORKERS`; PostgreSQL defaults to six workers. The app automatically uses one worker while Kuzu remains active during migration.
+The `.env.example` file documents the supported settings. Compose defaults connect the application to the bundled PostgreSQL service and Redis. The production Compose file pins the app image to `pickles4evaaaa/mybibliotheca:3.0.2`. For a memory-constrained host, lower `WORKERS`; PostgreSQL defaults to six workers. The app automatically uses one worker while Kuzu remains active during migration.
 
 ### Update notice
 

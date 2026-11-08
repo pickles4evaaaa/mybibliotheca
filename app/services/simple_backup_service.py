@@ -138,6 +138,20 @@ class SimpleBackupService:
             logger.error(f"Failed loading backup settings, using defaults: {e}")
             return defaults
 
+    def refresh_settings(self) -> Dict[str, Any]:
+        """Re-read settings from disk.
+
+        Gunicorn runs several workers, each with its own service instance. Without
+        a refresh, a save handled by one worker is invisible to the others.
+        """
+        try:
+            fresh = self._load_or_create_settings()
+            self._settings.clear()
+            self._settings.update(fresh)
+        except Exception as e:
+            logger.warning(f"Failed refreshing backup settings from disk: {e}")
+        return self._settings
+
     def _save_settings(self) -> bool:
         """Save settings to disk. Returns True if successful, False otherwise."""
         try:
@@ -145,7 +159,11 @@ class SimpleBackupService:
             self.backup_settings_file.parent.mkdir(parents=True, exist_ok=True)
             
             # Write to a temporary file first
-            temp_file = self.backup_settings_file.with_suffix('.json.tmp')
+            # Unique per process/thread: several Gunicorn workers may save at once,
+            # and a shared temp name lets one worker rename it away mid-write.
+            temp_file = self.backup_settings_file.with_suffix(
+                f'.json.{os.getpid()}.{threading.get_ident()}.tmp'
+            )
             with open(temp_file, 'w') as f:
                 json.dump(self._settings, f, indent=2)
             
@@ -166,9 +184,8 @@ class SimpleBackupService:
             logger.error(f"Failed saving backup settings: {e}", exc_info=True)
             # Clean up temp file if it exists (using the same path calculation as above)
             try:
-                cleanup_temp = self.backup_settings_file.with_suffix('.json.tmp')
-                if cleanup_temp.exists():
-                    cleanup_temp.unlink()
+                if temp_file.exists():
+                    temp_file.unlink()
             except Exception:
                 pass
             return False
@@ -190,6 +207,7 @@ class SimpleBackupService:
         self._scheduler_thread.start()
 
     def _maybe_run_scheduled_backup(self):
+        self.refresh_settings()
         if not self._settings.get('enabled', True):
             return
         freq = self._settings.get('frequency', 'daily')
@@ -277,14 +295,41 @@ class SimpleBackupService:
             logger.error(f"Failed to load backup index: {e}")
             return {}
     
+    def _refresh_backup_index(self) -> None:
+        """Reload the index from disk.
+
+        Gunicorn runs several workers, each with its own service instance. A backup
+        created, deleted or restored through one worker is otherwise unknown to the
+        others ("Backup not found"), and a stale worker saving its old index would
+        erase the other workers' entries. Call before reads and before mutating.
+        """
+        try:
+            if not self.backup_index_file.exists():
+                return
+            fresh = self._load_backup_index()
+            self._backup_index.clear()
+            self._backup_index.update(fresh)
+        except Exception as e:
+            logger.warning(f"Failed refreshing backup index from disk: {e}")
+
     def _save_backup_index(self) -> None:
-        """Save the backup index to disk."""
+        """Save the backup index to disk atomically."""
+        temp_file = self.backup_index_file.with_suffix(
+            f'.json.{os.getpid()}.{threading.get_ident()}.tmp'
+        )
         try:
             data = {backup_id: backup.to_dict() for backup_id, backup in self._backup_index.items()}
-            with open(self.backup_index_file, 'w') as f:
+            with open(temp_file, 'w') as f:
                 json.dump(data, f, indent=2)
+            # Atomic rename: concurrent readers never see a half-written index.
+            temp_file.replace(self.backup_index_file)
         except Exception as e:
             logger.error(f"Failed to save backup index: {e}")
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+            except Exception:
+                pass
 
     def _active_backend(self) -> str:
         try:
@@ -344,6 +389,7 @@ class SimpleBackupService:
                     file_path=str(backup_path), file_size=backup_path.stat().st_size,
                     description=description, metadata=metadata,
                 )
+                self._refresh_backup_index()
                 self._backup_index[backup_id] = backup_info
                 self._save_backup_index()
                 try:
@@ -486,6 +532,7 @@ class SimpleBackupService:
             )
             
             # Add to index and save
+            self._refresh_backup_index()
             self._backup_index[backup_id] = backup_info
             self._save_backup_index()
             
@@ -651,6 +698,7 @@ class SimpleBackupService:
                         description=f"Auto-created before restoring '{backup_info.name}'",
                         metadata=metadata,
                     )
+                    self._refresh_backup_index()
                     self._backup_index[backup_info_obj.id] = backup_info_obj
                     self._save_backup_index()
                 except Exception as e:
@@ -1114,15 +1162,18 @@ class SimpleBackupService:
     
     def list_backups(self) -> List[SimpleBackupInfo]:
         """Get list of all backups."""
+        self._refresh_backup_index()
         return list(self._backup_index.values())
     
     def get_backup(self, backup_id: str) -> Optional[SimpleBackupInfo]:
         """Get backup info by ID."""
+        self._refresh_backup_index()
         return self._backup_index.get(backup_id)
     
     def delete_backup(self, backup_id: str) -> bool:
         """Delete a backup."""
         try:
+            self._refresh_backup_index()
             if backup_id not in self._backup_index:
                 return False
             
@@ -1144,12 +1195,28 @@ class SimpleBackupService:
             logger.error(f"Failed to delete simple backup {backup_id}: {e}")
             return False
     
+    def _current_database_size(self) -> int:
+        """Size in bytes of the live database (PostgreSQL when active, else Kuzu files)."""
+        try:
+            if self._active_backend() == "postgres":
+                from app.infrastructure.postgres_store import get_postgres_store
+                with get_postgres_store().connection() as connection, connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_database_size(current_database())")
+                    row = cursor.fetchone()
+                value = row[0] if not isinstance(row, dict) else next(iter(row.values()))
+                return int(value or 0)
+        except Exception as e:
+            logger.warning(f"Could not read PostgreSQL database size: {e}")
+            return 0
+        return self._get_directory_size(self.kuzu_db_path) if self.kuzu_db_path.exists() else 0
+
     def get_backup_stats(self) -> Dict[str, Any]:
         """Get simple backup statistics."""
+        self._refresh_backup_index()
         backups = self.list_backups()
         
-        # Get current database size
-        database_size = self._get_directory_size(self.kuzu_db_path) if self.kuzu_db_path.exists() else 0
+        # Get current database size from whichever backend is active
+        database_size = self._current_database_size()
         database_size_formatted = f"{database_size / (1024 * 1024):.1f} MB" if database_size > 0 else "0 MB"
         
         # Get current static files size

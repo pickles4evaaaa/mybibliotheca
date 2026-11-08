@@ -2537,6 +2537,22 @@ def view_book_enhanced(uid):
         user_locations = location_service.get_all_locations()
     except Exception as e:
         current_app.logger.error(f"Error loading user locations: {e}")
+
+    # Always show the location's name, never its raw ID. The book wrapper falls
+    # back to the ID when its own lookup fails, so resolve it again here.
+    try:
+        _loc_names = {str(getattr(l, 'id', '')): getattr(l, 'name', '') for l in user_locations}
+        _book_loc_id = getattr(user_book, 'location_id', None)
+        if _book_loc_id and _loc_names.get(str(_book_loc_id)):
+            user_book.locations = [{'id': _book_loc_id, 'name': _loc_names[str(_book_loc_id)]}]
+        elif getattr(user_book, 'locations', None):
+            first = user_book.locations[0]
+            first_id = first.get('id') if isinstance(first, dict) else getattr(first, 'id', None)
+            first_name = first.get('name') if isinstance(first, dict) else getattr(first, 'name', None)
+            if first_id and str(first_name) == str(first_id) and _loc_names.get(str(first_id)):
+                user_book.locations = [{'id': first_id, 'name': _loc_names[str(first_id)]}]
+    except Exception as e:
+        current_app.logger.warning(f"Could not resolve book location name: {e}")
     
     # Prepare template data
     template_data = {

@@ -62,26 +62,27 @@ def search_multiple_books_by_title_author(title, author=None, limit=10):
     
     all_results = []
     
-    # Search OpenLibrary first
-    print(f"[MULTI_API] Searching OpenLibrary for: '{title}' by '{author}'")
-    try:
-        ol_results = _search_openlibrary_multiple(title, author, limit//2)
-        if ol_results:
-            all_results.extend(ol_results)
-            print(f"[MULTI_API] OpenLibrary returned {len(ol_results)} results")
-    except Exception as e:
-        print(f"[MULTI_API] OpenLibrary search failed: {e}")
-    
-    # Search Google Books
+    # Google Books is preferred; OpenLibrary (slower, rate limited) only fills in when Google
+    # is paused/over quota or returned nothing.
     print(f"[MULTI_API] Searching Google Books for: '{title}' by '{author}'")
     try:
-        gb_results = search_google_books_by_title_author(title, author, limit//2)
+        gb_results = search_google_books_by_title_author(title, author, limit)
         if gb_results:
             all_results.extend(gb_results)
             print(f"[MULTI_API] Google Books returned {len(gb_results)} results")
     except Exception as e:
         print(f"[MULTI_API] Google Books search failed: {e}")
-    
+
+    if not all_results:
+        print(f"[MULTI_API] Falling back to OpenLibrary for: '{title}' by '{author}'")
+        try:
+            ol_results = _search_openlibrary_multiple(title, author, limit)
+            if ol_results:
+                all_results.extend(ol_results)
+                print(f"[MULTI_API] OpenLibrary returned {len(ol_results)} results")
+        except Exception as e:
+            print(f"[MULTI_API] OpenLibrary search failed: {e}")
+
     # Deduplicate results by title similarity
     unique_results = []
     seen_titles = set()
@@ -243,15 +244,28 @@ def _search_openlibrary_multiple(title, author=None, limit=10):
 
                 cover_id = doc.get('cover_i')
                 if cover_id:
-                    cover_url = normalize_cover_url(f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg")
-                    try:
-                        if cover_url and _openlibrary_cover_exists(cover_url):
-                            result['cover'] = cover_url
-                            result['cover_url'] = cover_url
-                    except Exception:
-                        pass
+                    # Verified in parallel below; sequential checks cost ~0.2-0.6s each.
+                    result['_pending_cover'] = normalize_cover_url(f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg")
 
                 scored_matches.append(result)
+
+            pending = [r for r in scored_matches if r.get('_pending_cover')]
+            if pending:
+                from concurrent.futures import ThreadPoolExecutor
+
+                def _check(r):
+                    try:
+                        return bool(_openlibrary_cover_exists(r['_pending_cover']))
+                    except Exception:
+                        return False
+
+                with ThreadPoolExecutor(max_workers=min(8, len(pending))) as pool:
+                    verdicts = list(pool.map(_check, pending))
+                for r, ok in zip(pending, verdicts):
+                    if ok:
+                        r['cover'] = r['cover_url'] = r['_pending_cover']
+            for r in scored_matches:
+                r.pop('_pending_cover', None)
 
             scored_matches.sort(key=lambda x: x['score'], reverse=True)
             print(f"[OPENLIBRARY] Returning {len(scored_matches)} book results")
@@ -262,6 +276,93 @@ def _search_openlibrary_multiple(title, author=None, limit=10):
             continue
 
     return []
+
+
+def _openlibrary_match_sort_key(match, title_variant):
+    """Stable ordering for scored OpenLibrary matches.
+
+    Higher score first, then exact title match, then more editions, then the work
+    key. The key guarantees the same query always yields the same order even when
+    OpenLibrary returns tied results in a different order between requests.
+    """
+    doc = match.get('doc') or {}
+    exact_title = str(match.get('title') or '').lower().strip() == str(title_variant or '').lower().strip()
+    try:
+        editions = int(doc.get('edition_count') or 0)
+    except Exception:
+        editions = 0
+    return (-match.get('score', 0), 0 if exact_title else 1, -editions, str(doc.get('key') or ''))
+
+
+def search_openlibrary_cover_candidates(title, author=None, limit=6):
+    """Return up to ``limit`` distinct OpenLibrary candidates that have a cover.
+
+    Uses a single search request (the results are already in the response) and a
+    deterministic order, so repeated searches give the same list.
+    """
+    title_str = '' if title is None else str(title).strip()
+    title_variants = iter_title_search_variants(title_str)
+    results = []
+    seen_cover_ids = set()
+    for t_variant in title_variants:
+        if not t_variant:
+            continue
+        query = ' '.join([t_variant] + ([author] if author else []))
+        try:
+            response = requests.get(
+                "https://openlibrary.org/search.json",
+                params={'q': query, 'limit': 20},
+                timeout=15,
+            )
+            if response.status_code != 200:
+                continue
+            docs = response.json().get('docs', []) or []
+        except Exception as e:
+            print(f"[OPENLIBRARY] Cover candidate search failed for '{t_variant}': {e}")
+            continue
+
+        scored = []
+        for doc in docs:
+            if not doc.get('cover_i'):
+                continue
+            doc_title = doc.get('title', '') or ''
+            names = doc.get('author_name')
+            doc_authors = names if isinstance(names, list) else ([names] if names else [])
+            score = 0
+            tl, dl = t_variant.lower(), doc_title.lower()
+            if tl in dl or dl in tl:
+                score += 50
+            if tl.strip() == dl.strip():
+                score += 50
+            if author:
+                for a in doc_authors:
+                    if a and author.lower() in a.lower():
+                        score += 30
+                    if a and author.lower().strip() == a.lower().strip():
+                        score += 20
+            scored.append({'doc': doc, 'score': score, 'title': doc_title, 'authors': doc_authors})
+
+        scored.sort(key=lambda m: _openlibrary_match_sort_key(m, t_variant))
+        for m in scored:
+            doc = m['doc']
+            cover_id = doc.get('cover_i')
+            if cover_id in seen_cover_ids:
+                continue
+            seen_cover_ids.add(cover_id)
+            url = normalize_cover_url(f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg")
+            if not url:
+                continue
+            results.append({
+                'title': m['title'],
+                'authors_list': m['authors'],
+                'published_date': str(doc.get('first_publish_year', '')) if doc.get('first_publish_year') else '',
+                'cover_url': url,
+            })
+            if len(results) >= limit:
+                return results
+        if results:
+            break
+    return results
 
 
 def search_book_by_title_author(title, author=None):
@@ -358,7 +459,7 @@ def search_book_by_title_author(title, author=None):
                     'isbn': best_isbn
                 })
 
-            scored_matches.sort(key=lambda x: x['score'], reverse=True)
+            scored_matches.sort(key=lambda x: _openlibrary_match_sort_key(x, t_variant))
 
             if scored_matches:
                 # Prefer candidates that can yield full metadata (ISBN) or at least a cover.
@@ -423,6 +524,23 @@ def search_book_by_title_author(title, author=None):
     return best_fallback_result
 
 
+# Google Books quota handling lives in app.utils.api_limits (shared across all gunicorn
+# workers and persisted): it counts daily requests, honours GOOGLE_BOOKS_DAILY_LIMIT, and
+# pauses Google calls until the quota resets after a quota 429. Retrying such a 429 with
+# sleeps only makes lookups slower, so we never do that.
+def _google_quota_blocked() -> bool:
+    try:
+        from app.utils.api_limits import is_blocked, GOOGLE
+        return is_blocked(GOOGLE)
+    except Exception:
+        return False
+
+
+def _google_note_rate_limited(response) -> None:
+    # The transport hook in api_limits already recorded the 429 and set the pause.
+    return None
+
+
 def search_google_books_by_title_author(title, author=None, limit=10):
     """Search Google Books API by title and optionally author."""
     import os as _os
@@ -436,6 +554,9 @@ def search_google_books_by_title_author(title, author=None, limit=10):
     if not title_variants:
         if _VERBOSE:
             print(f"[GOOGLE_BOOKS] No title provided for book search")
+        return []
+
+    if _google_quota_blocked():
         return []
 
     cached = _google_title_cache_get(title_variants[0], author)
@@ -475,7 +596,11 @@ def search_google_books_by_title_author(title, author=None, limit=10):
                 except Exception:
                     response = None
                 code = getattr(response, 'status_code', 0) if response is not None else 0
-                if code in (429, 500, 502, 503, 504) or code == 0:
+                if code == 429:
+                    # Retrying a rate limit/quota response never helps; back off instead.
+                    _google_note_rate_limited(response)
+                    return []
+                if code in (500, 502, 503, 504) or code == 0:
                     try:
                         import time as _t
                         _t.sleep(0.5 * (attempt + 1))

@@ -282,7 +282,24 @@ def select_highest_google_image(image_links: dict | None) -> str | None:
             return v
     return None
 
+_UPGRADE_CACHE: dict = {}
+
+
 def upgrade_google_cover_url(raw_url: str | None, *, allow_probe: bool = True) -> str | None:
+    """Cached wrapper: the probe costs network round trips and results rarely change."""
+    key = (raw_url, allow_probe)
+    hit = _UPGRADE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    result = _upgrade_google_cover_url_uncached(raw_url, allow_probe=allow_probe)
+    if result and 'books.google' in (raw_url or ''):
+        if len(_UPGRADE_CACHE) > 2000:
+            _UPGRADE_CACHE.clear()
+        _UPGRADE_CACHE[key] = result
+    return result
+
+
+def _upgrade_google_cover_url_uncached(raw_url: str | None, *, allow_probe: bool = True) -> str | None:
     """Normalize and opportunistically upgrade Google Books cover URL.
 
     Strategy:
@@ -321,15 +338,17 @@ def upgrade_google_cover_url(raw_url: str | None, *, allow_probe: bool = True) -
             import requests
             h1 = None
             h2 = None
-            # Probe current URL
-            try:
-                h1 = requests.head(chosen, timeout=1, allow_redirects=True)
-            except Exception:
-                pass
-            try:
-                h2 = requests.head(z0, timeout=1, allow_redirects=True)
-            except Exception:
-                h2 = None
+            # Probe both sizes concurrently (each is a separate network round trip)
+            from concurrent.futures import ThreadPoolExecutor as _TPE
+            def _head(u):
+                try:
+                    return requests.head(u, timeout=1, allow_redirects=True)
+                except Exception:
+                    return None
+            with _TPE(max_workers=2) as _ex:
+                _f1 = _ex.submit(_head, chosen)
+                _f2 = _ex.submit(_head, z0)
+                h1, h2 = _f1.result(), _f2.result()
             def _len(resp):
                 if not resp: return 0
                 try:
@@ -1100,14 +1119,14 @@ def get_cover_candidates(isbn=None, title=None, author=None):
             if filtered_google:
                 _candidate_cache_set(isbn, title, author, filtered_google)
                 return filtered_google
-        # OpenLibrary candidates
+        # OpenLibrary candidates (only when Google Books is paused or produced nothing)
         ol_data = None
-        if isbn:
+        if isbn and not _google_has_results(candidates):
             try:
                 ol_data = fetch_book_data(isbn)
             except Exception:
                 ol_data = None
-        if not ol_data and title:
+        if not ol_data and title and not _google_has_results(candidates):
             try:
                 ol_data = search_book_by_title_author(title, author)
             except Exception:
@@ -1137,6 +1156,22 @@ def get_cover_candidates(isbn=None, title=None, author=None):
 
     _candidate_cache_set(isbn, title, author, filtered)
     return filtered
+
+
+_COVER_CANDIDATE_LIMIT = 6  # max editions per provider in title/author cover search
+
+
+def _google_has_results(candidates) -> bool:
+    """True when Google Books is active and already supplied candidates, so the slower,
+    rate-limited OpenLibrary lookups can be skipped (Google is the preferred provider)."""
+    try:
+        from app.utils.api_limits import is_blocked, GOOGLE
+        if is_blocked(GOOGLE):
+            return False
+    except Exception:
+        pass
+    return any(isinstance(c, dict) and c.get('provider') == 'google' for c in (candidates or []))
+
 
 
 def get_cover_candidates_fast(isbn: Optional[str] = None, title: Optional[str] = None, author: Optional[str] = None) -> List[dict]:
@@ -1262,26 +1297,22 @@ def get_cover_candidates_fast(isbn: Optional[str] = None, title: Optional[str] =
                     candidates.append(variant)
                     added_urls.add(u)
 
-        # Merge title/author result as a fallback source of a different Google volume id
+        # Merge title/author results as additional Google volumes (different editions)
         if title or author:
             try:
-                gb_title_results = search_google_books_by_title_author(title or '', author, limit=1)
+                gb_title_results = search_google_books_by_title_author(title or '', author, limit=_COVER_CANDIDATE_LIMIT)
                 if (not gb_title_results) and author:
-                    gb_title_results = search_google_books_by_title_author(title or '', None, limit=1)
-                gb_fallback = gb_title_results[0] if gb_title_results else None
+                    gb_title_results = search_google_books_by_title_author(title or '', None, limit=_COVER_CANDIDATE_LIMIT)
+                gb_title_results = gb_title_results or []
             except Exception:
-                gb_fallback = None
-            if gb_fallback:
+                gb_title_results = []
+            order = ['extraLarge', 'large', 'medium', 'small', 'thumbnail', 'smallThumbnail']
+            added_urls = {c.get('url') for c in candidates if isinstance(c.get('url'), str) and c.get('url')}
+            for idx, gb_fallback in enumerate(gb_title_results):
                 gb_title = gb_fallback.get('title') or ''
                 gb_authors_list = gb_fallback.get('authors_list') or []
                 gb_published_date = gb_fallback.get('published_date') or ''
-                order = ['extraLarge', 'large', 'medium', 'small', 'thumbnail', 'smallThumbnail']
                 links_all = gb_fallback.get('image_links_all') or {}
-                added_urls: set[str] = set()
-                for existing in candidates:
-                    u0 = existing.get('url')
-                    if isinstance(u0, str) and u0:
-                        added_urls.add(u0)
                 for key in order:
                     if key in links_all and links_all[key]:
                         u = links_all[key]
@@ -1291,12 +1322,13 @@ def get_cover_candidates_fast(isbn: Optional[str] = None, title: Optional[str] =
                             u = normalize_cover_url(u) or u
                         except Exception:
                             pass
-                        if _is_placeholder_candidate(u, 'google'):
+                        if u in added_urls or _is_placeholder_candidate(u, 'google'):
                             continue
                         candidates.append({'provider': 'google', 'size': key, 'url': u, 'title': gb_title, 'authors_list': gb_authors_list, 'published_date': gb_published_date})
                         added_urls.add(u)
                 base = gb_fallback.get('cover_url')
-                if base:
+                # Zoom variants only for the first volume; extra volumes add one card per edition.
+                if base and idx == 0:
                     for variant in _expand_google_variants(base):
                         u = variant.get('url')
                         if not isinstance(u, str) or u in added_urls:
@@ -1319,12 +1351,12 @@ def get_cover_candidates_fast(isbn: Optional[str] = None, title: Optional[str] =
     # OpenLibrary: include cover_url if present, but do not validate the cover image.
     try:
         ol_data = None
-        if isbn:
+        if isbn and not _google_has_results(candidates):
             try:
                 ol_data = fetch_book_data(isbn)
             except Exception:
                 ol_data = None
-        if not ol_data and title:
+        if not ol_data and title and not _google_has_results(candidates):
             try:
                 ol_data = search_book_by_title_author(title, author)
             except Exception:
@@ -1347,6 +1379,29 @@ def get_cover_candidates_fast(isbn: Optional[str] = None, title: Optional[str] =
                 })
     except Exception:
         pass
+
+    # Title/author search: offer several OpenLibrary editions in a stable order
+    # instead of a single "best" match that can flip between searches.
+    if title and not _google_has_results(candidates):
+        try:
+            ol_seen = {c.get('url') for c in candidates if isinstance(c.get('url'), str)}
+            for item in search_openlibrary_cover_candidates(title, author, limit=_COVER_CANDIDATE_LIMIT) or []:
+                u = item.get('cover_url')
+                if not isinstance(u, str) or not u.strip() or u in ol_seen:
+                    continue
+                if _is_placeholder_candidate(u, 'openlibrary'):
+                    continue
+                candidates.append({
+                    'provider': 'openlibrary',
+                    'size': 'L',
+                    'url': u,
+                    'title': item.get('title') or '',
+                    'authors_list': item.get('authors_list') or [],
+                    'published_date': item.get('published_date') or '',
+                })
+                ol_seen.add(u)
+        except Exception:
+            pass
     return candidates
 
 # USAGE INSTRUCTIONS:
@@ -2075,5 +2130,6 @@ from .legacy_book_search import (  # noqa: E402,F401
     normalize_goodreads_value,
     search_book_by_title_author,
     search_google_books_by_title_author,
+    search_openlibrary_cover_candidates,
     search_multiple_books_by_title_author,
 )

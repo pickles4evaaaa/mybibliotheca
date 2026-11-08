@@ -205,37 +205,31 @@ def search_book_details():
 
         provider_timeout = float(current_app.config.get('BOOK_SEARCH_PROVIDER_TIMEOUT', 7.0)) if current_app else 7.0
         timed_out_providers: list[str] = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            fut_ol = ex.submit(_fetch_openlibrary)
-            fut_gb = ex.submit(_fetch_google)
-            try:
-                ol_results = fut_ol.result(timeout=provider_timeout)
-            except concurrent.futures.TimeoutError:
-                timed_out_providers.append('openlibrary')
-                current_app.logger.warning(f"[SEARCH] OpenLibrary timed out after {provider_timeout:.1f}s")
-                fut_ol.cancel()
-                ol_results = []
-            except Exception as e:
-                current_app.logger.debug(f"[SEARCH] OpenLibrary exception: {e}")
-                ol_results = []
-            results.extend(ol_results)
-            # Always fetch Google Books results too for better coverage
-            gb_results = []
-            try:
-                gb_results = fut_gb.result(timeout=provider_timeout)
-            except concurrent.futures.TimeoutError:
-                timed_out_providers.append('google')
-                current_app.logger.warning(f"[SEARCH] Google Books timed out after {provider_timeout:.1f}s")
-                fut_gb.cancel()
-            except Exception as e:
-                current_app.logger.debug(f"[SEARCH] Google Books exception: {e}")
-                gb_results = []
-            existing_keys = {(r.get('title','').lower(), r.get('authors','').lower()) for r in results}
-            for r in gb_results:
-                key = (r.get('title','').lower(), r.get('authors','').lower())
-                if key not in existing_keys:
-                    results.append(r)
-                    existing_keys.add(key)
+        # Google Books is the preferred provider; OpenLibrary (slower, rate limited) is only
+        # asked when Google is paused/over quota, times out, or finds nothing.
+        try:
+            from app.utils.api_limits import is_blocked as _blocked, GOOGLE as _GOOGLE
+            google_active = not _blocked(_GOOGLE)
+        except Exception:
+            google_active = True
+
+        def _run(fn, name):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(fn)
+                try:
+                    return fut.result(timeout=provider_timeout)
+                except concurrent.futures.TimeoutError:
+                    timed_out_providers.append(name)
+                    current_app.logger.warning(f"[SEARCH] {name} timed out after {provider_timeout:.1f}s")
+                    fut.cancel()
+                except Exception as e:
+                    current_app.logger.debug(f"[SEARCH] {name} exception: {e}")
+            return []
+
+        gb_results = _run(_fetch_google, 'google') if google_active else []
+        results.extend(gb_results)
+        if not gb_results:
+            results.extend(_run(_fetch_openlibrary, 'openlibrary'))
 
         # Sort results by similarity score (highest first)
         from difflib import SequenceMatcher

@@ -247,6 +247,28 @@
   .filter-btn {
     transition: all 0.2s ease;
     border: 2px solid;
+    /* Uniform tiles: identical height, content centered, long labels never grow one tile */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 5.25rem;
+    padding: 0.5rem 0.25rem;
+    line-height: 1.15;
+  }
+  .filter-btn small {
+    white-space: nowrap;
+    font-size: 0.8rem;
+  }
+  /* Add Books button matches the stat tiles' height and never wraps */
+  .library-add-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    min-height: 5.25rem;
+    padding: 0.5rem 1rem;
+    font-size: 1.05rem;
   }
 
   .filter-btn:hover {
@@ -639,8 +661,8 @@
                             </div>
                         </div>
                         <div class="col-lg-2 col-md-3 text-center">
-                            <a href="{{ url_for('main.add_book') }}" class="btn btn-success btn-lg">
-                                <i class="bi bi-plus-circle me-1"></i>Add Books
+                            <a href="{{ url_for('main.add_book') }}" class="btn btn-success library-add-btn w-100">
+                                <i class="bi bi-plus-circle me-2"></i>Add Books
                             </a>
                         </div>
                     </div>
