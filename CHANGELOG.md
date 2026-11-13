@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
 
+## [3.0.3] - 2026-11-13
+
+### Changed
+- Footer and package version show 3.0.3.
+
 ### Fixed
 - The "Currently Reading" tile no longer drops to 0 when browsing "Total Books" on PostgreSQL; the Wishlist tile is counted in that view too (#261).
 - Category aliases: the edit form no longer turns an empty alias list into a `[]` alias, existing `[]` / `['[]']` aliases are cleaned up on display and on the next save, and clearing the alias field now actually removes the aliases (#262).

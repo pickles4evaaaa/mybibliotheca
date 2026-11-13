@@ -347,3 +347,6 @@ cookiejar
 
 # Regression test for server settings persistence
 !tests/test_settings_server_partial.py
+
+# Local agent instructions (contain private host details)
+AGENTS.md
