@@ -103,8 +103,13 @@
     <div class="col-lg-3 col-md-6 mb-3">
         <div class="card bg-info text-white text-center">
             <div class="card-body">
+                {% if book_id %}
+                <h4 class="card-title">{{ all_time_stats.distinct_days }}</h4>
+                <p class="card-text">Days Read</p>
+                {% else %}
                 <h4 class="card-title">{{ all_time_stats.distinct_books }}</h4>
                 <p class="card-text">Distinct Books</p>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -123,11 +128,12 @@
     <div class="col-md-6">
         <div class="d-flex align-items-center">
             <label for="per-page-select" class="form-label me-2 mb-0">Show:</label>
-            <select id="per-page-select" class="form-select" style="width: auto;" onchange="changePerPage()">
+            <select id="per-page-select" class="form-select" style="width: auto;"
+                    onchange="window.location.href = this.options[this.selectedIndex].dataset.url">
                 {% for option in valid_per_page %}
-                <option value="{{ option }}" {% if pagination.per_page == option %}selected{% endif %}>{{ option }}</option>
+                <option value="{{ option }}" data-url="{{ url_for('stats.reading_logs', per_page=option, book_id=book_id) }}" {% if not show_all and pagination.per_page == option %}selected{% endif %}>{{ option }}</option>
                 {% endfor %}
-                <option value="all" {% if pagination.per_page == pagination.total_count %}selected{% endif %}>All</option>
+                <option value="all" data-url="{{ url_for('stats.reading_logs', per_page='all', book_id=book_id) }}" {% if show_all %}selected{% endif %}>All</option>
             </select>
             <span class="ms-2 text-muted">entries per page</span>
         </div>
@@ -235,7 +241,7 @@
         <tfoot class="table-light">
             <tr class="fw-bold">
                 <td>Total</td>
-                <td>{{ all_time_stats.distinct_books }} books</td>
+                <td>{% if book_id %}This book{% else %}{{ all_time_stats.distinct_books }} books{% endif %}</td>
                 <td>{{ all_time_stats.total_pages }} pages</td>
                 <td>{{ all_time_stats.total_time_formatted }}</td>
                 <td>{{ all_time_stats.total_log_entries }} entries</td>
@@ -251,7 +257,7 @@
     <ul class="pagination justify-content-center">
         {% if pagination.has_prev %}
         <li class="page-item">
-            <a class="page-link" href="#" data-page="{{ pagination.page - 1 }}" aria-label="Previous">
+            <a class="page-link" href="{{ url_for('stats.reading_logs', page=pagination.page - 1, per_page=('all' if show_all else pagination.per_page), book_id=book_id) }}" aria-label="Previous">
                 <span aria-hidden="true">&laquo;</span>
             </a>
         </li>
@@ -268,7 +274,7 @@
             </li>
             {% elif page_num == 1 or page_num == pagination.total_pages or (page_num >= pagination.page - 2 and page_num <= pagination.page + 2) %}
             <li class="page-item">
-                <a class="page-link" href="#" data-page="{{ page_num }}">{{ page_num }}</a>
+                <a class="page-link" href="{{ url_for('stats.reading_logs', page=page_num, per_page=('all' if show_all else pagination.per_page), book_id=book_id) }}">{{ page_num }}</a>
             </li>
             {% elif page_num == pagination.page - 3 or page_num == pagination.page + 3 %}
             <li class="page-item disabled">
@@ -279,7 +285,7 @@
 
         {% if pagination.has_next %}
         <li class="page-item">
-            <a class="page-link" href="#" data-page="{{ pagination.page + 1 }}" aria-label="Next">
+            <a class="page-link" href="{{ url_for('stats.reading_logs', page=pagination.page + 1, per_page=('all' if show_all else pagination.per_page), book_id=book_id) }}" aria-label="Next">
                 <span aria-hidden="true">&raquo;</span>
             </a>
         </li>
@@ -414,40 +420,4 @@ function showAlert(message, type) {
         }
     }, 5000);
 }
-
-function loadPage(page) {
-    const perPage = document.getElementById('per-page-select').value;
-    const bookFilter = {{ book_id|tojson }};
-    const bookQuery = bookFilter ? `&book_id=${encodeURIComponent(bookFilter)}` : '';
-    const url = `/stats/reading-logs?page=${page}&per_page=${perPage}${bookQuery}`;
-    
-    const content = document.getElementById('reading-logs-detail-content');
-    content.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"></div></div>';
-    
-    fetch(url)
-        .then(response => response.text())
-        .then(html => {
-            content.innerHTML = html;
-        })
-        .catch(error => {
-            console.error('Error loading page:', error);
-            content.innerHTML = '<div class="alert alert-danger">Error loading page. Please try again.</div>';
-        });
-}
-
-function changePerPage() {
-    loadPage(1); // Go to first page when changing per-page count
-}
-
-// Delegated handler for pagination links
-document.addEventListener('click', function(e) {
-    const link = e.target.closest('a.page-link[data-page]');
-    if (link) {
-        e.preventDefault();
-        const page = parseInt(link.getAttribute('data-page'), 10);
-        if (!isNaN(page)) {
-            loadPage(page);
-        }
-    }
-});
 </script>

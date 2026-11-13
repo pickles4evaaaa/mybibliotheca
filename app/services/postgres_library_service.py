@@ -198,11 +198,28 @@ class PostgresLibraryService:
     def get_library_status_counts_sync(self, user_id: str) -> dict[str, int]:
         with self.store.connection() as connection, connection.cursor() as cursor:
             cursor.execute(
-                "SELECT COALESCE(reading_status, ''), count(*) FROM user_books "
-                "WHERE user_id = %s GROUP BY reading_status",
+                "SELECT lower(btrim(COALESCE(reading_status, ''))), lower(btrim(COALESCE(ownership_status, ''))), count(*) "
+                "FROM user_books WHERE user_id = %s GROUP BY 1, 2",
                 (user_id,),
             )
-            counts = {str(status): int(count) for status, count in cursor.fetchall()}
+            rows = cursor.fetchall()
+        # Return the canonical keys the library stat tiles read. Stored values
+        # use 'reading' (and a few legacy spellings), and the wishlist tile is
+        # an ownership status rather than a reading status.
+        canonical = {
+            "read": "read", "finished": "read", "complete": "read", "completed": "read",
+            "reading": "currently_reading", "currently_reading": "currently_reading",
+            "currently reading": "currently_reading",
+            "on_hold": "on_hold", "onhold": "on_hold", "on-hold": "on_hold", "paused": "on_hold",
+            "plan_to_read": "plan_to_read", "want_to_read": "plan_to_read", "wishlist_reading": "plan_to_read",
+        }
+        counts = {"read": 0, "currently_reading": 0, "on_hold": 0, "plan_to_read": 0, "wishlist": 0}
+        for status, ownership, count in rows:
+            key = canonical.get(str(status))
+            if key:
+                counts[key] += int(count)
+            if ownership == "wishlist":
+                counts["wishlist"] += int(count)
         return counts
 
     def add_book_to_user_library_sync(

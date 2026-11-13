@@ -475,7 +475,7 @@ function showUserReadingLogs() {
   container.scrollIntoView({ behavior: 'smooth' });
   
   // Fetch content via AJAX
-  fetch('/stats/reading-logs')
+  fetch('/stats/reading-logs?partial=1')
     .then(response => response.text())
     .then(html => {
       content.innerHTML = html;

@@ -689,43 +689,65 @@ def community_currently_reading():
 @stats_bp.route('/reading-logs')
 @login_required
 def reading_logs():
-    """Get paginated reading logs for the current user"""
+    """Get paginated reading logs for the current user.
+
+    Rendered as a full page by default. The stats dashboard embeds the same
+    table by requesting it with ``partial=1``.
+    """
     from flask import request
-    
+
+    valid_per_page = [10, 25, 50, 100]
+    all_per_page = 500  # service-side cap for the "All" option
+    book_id = request.args.get('book_id') or None
+    template = ('reading_logs/user_logs.html' if request.args.get('partial')
+                else 'reading_logs/user_logs_page.html')
+
     try:
         # Get pagination parameters
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 25))
-        book_id = request.args.get('book_id') or None
-        
-        # Validate per_page options
-        valid_per_page = [10, 25, 50, 100]
-        if per_page not in valid_per_page:
-            per_page = 25
-        
+        try:
+            page = max(1, int(request.args.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        raw_per_page = request.args.get('per_page', 25)
+        show_all = str(raw_per_page).lower() == 'all'
+        if show_all:
+            per_page = all_per_page
+        else:
+            try:
+                per_page = int(raw_per_page)
+            except (TypeError, ValueError):
+                per_page = 25
+            if per_page not in valid_per_page:
+                per_page = 25
+
         # Get paginated logs
         result = reading_log_service.get_user_reading_logs_paginated_sync(
             str(current_user.id), page=page, per_page=per_page, book_id=book_id
         )
-        
-        # Get all-time stats for totals
-        all_time_stats = reading_log_service.get_user_all_time_reading_stats_sync(str(current_user.id))
-        
-        return render_template('reading_logs/user_logs.html', 
+
+        # Totals follow the same filter as the table: this book's logs when a
+        # book is selected, otherwise every log the user has.
+        all_time_stats = reading_log_service.get_user_all_time_reading_stats_sync(
+            str(current_user.id), book_id=book_id
+        )
+
+        return render_template(template,
                              logs=result['logs'],
                              pagination=result['pagination'],
                              all_time_stats=all_time_stats,
                              valid_per_page=valid_per_page,
+                             show_all=show_all,
                              book_id=book_id)
-    
+
     except Exception as e:
         current_app.logger.error(f"Error loading reading logs: {e}")
-        return render_template('reading_logs/user_logs.html', 
-                             logs=[], 
+        return render_template(template,
+                             logs=[],
                              pagination={'page': 1, 'per_page': 25, 'total_count': 0, 'total_pages': 1, 'has_prev': False, 'has_next': False},
                              all_time_stats={'total_log_entries': 0, 'total_pages': 0, 'total_minutes': 0, 'distinct_books': 0, 'distinct_days': 0, 'total_time_formatted': '0m'},
-                             valid_per_page=[10, 25, 50, 100],
-                             book_id=None)
+                             valid_per_page=valid_per_page,
+                             show_all=False,
+                             book_id=book_id)
 
 @stats_bp.route('/community_stats/recent-activity')
 @login_required

@@ -276,11 +276,13 @@ class PostgresReadingLogService:
             rows = cursor.fetchall()
         return [{**dict(row[0]), "latest_log_date": row[1], "authors": []} for row in rows]
 
-    def get_user_all_time_reading_stats_sync(self, user_id: str) -> dict[str, Any]:
+    def get_user_all_time_reading_stats_sync(self, user_id: str, book_id: str | None = None) -> dict[str, Any]:
+        where = "user_id=%s" + (" AND book_id=%s" if book_id else "")
+        params = (user_id, book_id) if book_id else (user_id,)
         with self.store.connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "SELECT count(*),coalesce(sum(pages_read),0),coalesce(sum(minutes_read),0),count(DISTINCT book_id) FILTER (WHERE book_id IS NOT NULL),count(DISTINCT date) FILTER (WHERE date IS NOT NULL) "
-                "FROM reading_logs WHERE user_id=%s", (user_id,),
+                "FROM reading_logs WHERE " + where, params,
             )
             entries, pages, minutes, books, days = cursor.fetchone()
         minutes = int(minutes or 0)

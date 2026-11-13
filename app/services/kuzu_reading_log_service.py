@@ -695,12 +695,13 @@ class KuzuReadingLogService:
             logger.error(f"Error getting recently read books: {e}")
             return []
 
-    def get_user_all_time_reading_stats_sync(self, user_id: str) -> Dict[str, Any]:
+    def get_user_all_time_reading_stats_sync(self, user_id: str, book_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get all-time reading statistics for a user.
         
         Args:
             user_id: The user ID
+            book_id: When given, only count this user's logs for that book
             
         Returns:
             Dictionary with all-time reading statistics
@@ -708,15 +709,21 @@ class KuzuReadingLogService:
         try:
             # Use the same working query pattern as the paginated method to get ALL reading logs
             # This ensures we're counting from the same data source that displays correctly
-            all_logs_query = """
-            MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
-            OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
-            RETURN rl, b
-            """
-            
-            logs_result = safe_execute_kuzu_query(all_logs_query, {
-                "user_id": user_id
-            })
+            if book_id:
+                all_logs_query = """
+                MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)-[:FOR_BOOK]->(b:Book {id: $book_id})
+                RETURN rl, b
+                """
+                stats_params = {"user_id": user_id, "book_id": book_id}
+            else:
+                all_logs_query = """
+                MATCH (u:User {id: $user_id})-[:LOGGED]->(rl:ReadingLog)
+                OPTIONAL MATCH (rl)-[:FOR_BOOK]->(b:Book)
+                RETURN rl, b
+                """
+                stats_params = {"user_id": user_id}
+
+            logs_result = safe_execute_kuzu_query(all_logs_query, stats_params)
             
             # Process the results manually to count everything
             logs_list = _convert_query_result_to_list(logs_result)

@@ -389,7 +389,7 @@ def library():
             _ver = get_user_library_version(str(current_user.id))
             # Include a small schema/version suffix to invalidate older cached shapes
             # (prevents lingering broken counts after upgrades).
-            _sc_key = f"status_counts:{current_user.id}:v{_ver}:v2"
+            _sc_key = f"status_counts:{current_user.id}:v{_ver}:v3"
             global_counts = cache_get(_sc_key)
             if global_counts is None:
                 global_counts = book_service.get_library_status_counts_sync(str(current_user.id))

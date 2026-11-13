@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
 
+### Fixed
+- The "Currently Reading" tile no longer drops to 0 when browsing "Total Books" on PostgreSQL; the Wishlist tile is counted in that view too (#261).
+- Category aliases: the edit form no longer turns an empty alias list into a `[]` alias, existing `[]` / `['[]']` aliases are cleaned up on display and on the next save, and clearing the alias field now actually removes the aliases (#262).
+- "View Reading Log" on a book opens a normal, styled page instead of unstyled text, and its totals count only that book's sessions instead of all of your reading logs. Paging and the "entries per page" selector (including "All") work on that page and from the stats dashboard (#263).
+
 ## [3.0.2] - 2026-11-08
 
 ### Added

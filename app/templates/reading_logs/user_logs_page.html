@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{% block title %}{% if book_id %}Book Reading Log{% else %}My Reading Logs{% endif %} - {{ super() }}{% endblock %}
+
+{% block content %}
+{# Full-page wrapper: the table itself is the partial the stats dashboard embeds. #}
+{% include "reading_logs/user_logs.html" %}
+{% endblock %}

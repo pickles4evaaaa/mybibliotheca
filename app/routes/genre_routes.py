@@ -13,7 +13,7 @@ import traceback
 import random
 
 from app.services import book_service
-from app.domain.models import Category, ReadingStatus
+from app.domain.models import Category, ReadingStatus, normalize_aliases
 
 # Global helper function for dict/object attribute access
 def get_attr(obj, attr, default=None):
@@ -491,7 +491,7 @@ def add_category():
                 'parent_id': form.parent_id.data if form.parent_id.data else None,
                 'color': form.color.data if form.color.data else generate_random_color(),
                 'icon': form.icon.data if form.icon.data else None,
-                'aliases': [alias.strip() for alias in form.aliases.data.split('\n') if alias.strip()] if form.aliases.data else []
+                'aliases': normalize_aliases(form.aliases.data)
             }
             
             new_category = book_service.create_category_sync(category_data)
@@ -523,6 +523,9 @@ def edit_category(category_id):
         
         if request.method == 'GET':
             form = CategoryForm(current_category_id=category_id, obj=category)
+            # The textarea takes one alias per line; populating it straight
+            # from the list would render the list's repr (e.g. "[]").
+            form.aliases.data = '\n'.join(normalize_aliases(getattr(category, 'aliases', None)))
             return render_template('genres/add_edit.html', form=form, category=category)
         
         # POST - update category
@@ -541,7 +544,9 @@ def edit_category(category_id):
                 'level': getattr(category, 'level', 0),
                 'color': form.color.data if form.color.data else getattr(category, 'color', None),
                 'icon': form.icon.data if form.icon.data else getattr(category, 'icon', None),
-                'aliases': [alias.strip() for alias in form.aliases.data.split('\n') if alias.strip()] if form.aliases.data else getattr(category, 'aliases', []),
+                # An emptied field means "remove all aliases", so never fall
+                # back to the stored value here.
+                'aliases': normalize_aliases(form.aliases.data),
                 'book_count': getattr(category, 'book_count', 0),
                 'user_book_count': getattr(category, 'user_book_count', 0),
                 'created_at': getattr(category, 'created_at', None),

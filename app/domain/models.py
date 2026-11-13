@@ -249,6 +249,49 @@ class Series:
             self.normalized_name = self.name.strip().lower()
 
 
+def normalize_aliases(value: Any) -> List[str]:
+    """Return a clean list of alias strings from any stored representation.
+
+    Aliases have been stored as a list, as a newline-joined string (Kuzu), and,
+    through an old edit-form bug, as the ``repr`` of a list (``"[]"``,
+    ``"['Sci-Fi']"``) nested inside the list itself. Unwrap those artifacts so
+    callers always get the real names, without duplicates or blanks.
+    """
+    import ast
+
+    result: List[str] = []
+
+    def _add(item: Any, depth: int = 0) -> None:
+        if item is None:
+            return
+        if isinstance(item, (list, tuple, set)):
+            for sub in item:
+                _add(sub, depth + 1)
+            return
+        text = str(item).strip()
+        if not text:
+            return
+        if '\n' in text:
+            for line in text.splitlines():
+                _add(line, depth + 1)
+            return
+        if depth < 10 and text.startswith('[') and text.endswith(']'):
+            try:
+                parsed = ast.literal_eval(text)
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                parsed = None
+            # Only a list of strings (or an empty list) is a repr artifact;
+            # anything else, e.g. "[sic]" or "[1984]", is a genuine alias.
+            if isinstance(parsed, list) and all(isinstance(sub, str) for sub in parsed):
+                _add(parsed, depth + 1)
+                return
+        if text not in result:
+            result.append(text)
+
+    _add(value)
+    return result
+
+
 @dataclass
 class Category:
     """Category/Genre domain model with hierarchical support."""
@@ -276,6 +319,7 @@ class Category:
     def __post_init__(self):
         if not self.normalized_name and self.name:
             self.normalized_name = self._normalize_name(self.name)
+        self.aliases = normalize_aliases(self.aliases)
     
     @staticmethod
     def _normalize_name(name: str) -> str:
