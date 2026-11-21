@@ -104,10 +104,7 @@ def create_reading_log_entry():
                 'message': 'Please provide either pages read or minutes read'
             }), 400
         
-        # Universal library: verify book exists globally (personal metadata optional)
         user_book = book_service.get_book_by_id_for_user_sync(book_id, current_user.id)
-        if not user_book:
-            user_book = book_service.get_book_by_id_sync(book_id)
         if not user_book:
             return jsonify({
                 'status': 'error',
@@ -128,18 +125,7 @@ def create_reading_log_entry():
         created_log = reading_log_service.create_reading_log_sync(reading_log)
         
         if created_log:
-            # Ensure the personal start date is captured when logging begins
             try:
-                existing_start = getattr(user_book, 'start_date', None)
-                if not existing_start:
-                    start_dt = datetime(
-                        log_entry_date.year,
-                        log_entry_date.month,
-                        log_entry_date.day,
-                        tzinfo=timezone.utc
-                    )
-                    personal_metadata_service.ensure_start_date(current_user.id, book_id, start_dt)
-
                 # Promote reading status to "reading" when logging begins unless already finished/abandoned
                 raw_status = getattr(user_book, 'reading_status', None)
                 if isinstance(raw_status, ReadingStatus):
@@ -151,11 +137,7 @@ def create_reading_log_entry():
                 terminal_statuses = {'read', 'finished', 'completed', 'did_not_finish', 'did-not-finish', 'dnf'}
 
                 if normalized_status not in terminal_statuses and normalized_status != ReadingStatus.READING.value:
-                    personal_metadata_service.update_personal_metadata(
-                        current_user.id,
-                        book_id,
-                        custom_updates={'reading_status': ReadingStatus.READING.value}
-                    )
+                    book_service.update_book_sync(book_id, current_user.id, reading_status=ReadingStatus.READING.value)
             except Exception as ensure_exc:
                 logger.warning(f"Unable to ensure reading metadata for book {book_id}: {ensure_exc}")
 
@@ -340,8 +322,6 @@ def api_user_books():
                 continue
             b = book_service.get_book_by_id_for_user_sync(bid, current_user.id)
             if not b:
-                b = book_service.get_book_by_id_sync(bid)
-            if not b:
                 continue
             metadata_snapshot: Dict[str, Any] = {}
             try:
@@ -372,9 +352,9 @@ def api_user_books():
             books.append(payload)
             seen.add(b.id)
 
-        # 2) Include most recently added books in the global library
+        # 2) Include most recently added books in the current user's library
         if len(books) < limit:
-            recently_added = book_service.get_recently_added_books_sync(limit=min(5, limit - len(books)))
+            recently_added = book_service.get_recently_added_books_sync(current_user.id, limit=min(5, limit - len(books)))
             for b in recently_added:
                 if len(books) >= limit:
                     break

@@ -510,6 +510,9 @@ def fetch_book(isbn):
             return (10-(t%10))%10 == int(v[12])
         if not raw or not (_v10(raw) or _v13(raw)):
             return jsonify({'error': 'Invalid ISBN'}), 400
+        async_requested = request.args.get('async_cover') == '1'
+        if async_requested and not current_user.is_authenticated:
+            return jsonify({'error': 'Authentication required'}), 401
         from app.utils.metadata_aggregator import fetch_unified_by_isbn
         unified = fetch_unified_by_isbn(isbn) or {}
         book_data = dict(unified)
@@ -564,7 +567,6 @@ def fetch_book(isbn):
                         break
             except Exception as fb_err:
                 current_app.logger.debug(f"[COVER][ISBN_FALLBACK_FAIL] isbn={isbn} err={fb_err}")
-        async_requested = request.args.get('async_cover') == '1'
         if cover_url and not async_requested:
             try:
                 from app.services.cover_service import cover_service
@@ -598,7 +600,8 @@ def fetch_book(isbn):
                 book_data['cover_candidate'] = cand
                 book_data['cover_url'] = cand.get('url')
             job = cover_service.schedule_async_processing(isbn=isbn, title=book_data.get('title'), author=book_data.get('author'))
-            book_data['cover_job_id'] = job['id']
+            if job:
+                book_data['cover_job_id'] = job['id']
         if not book_data.get('cover'):
             fallback = url_for('serve_static', filename='bookshelf.png', _external=True)
             book_data['cover'] = fallback
@@ -907,6 +910,9 @@ def api_quick_isbn(isbn):
             parts.append(f"TOTAL={(last-base)*1000:.1f}ms")
             return ' | '.join(parts)
         _mark('start')
+        async_mode = request.args.get('async_cover') == '1'
+        if async_mode and not current_user.is_authenticated:
+            return jsonify({'error': 'Authentication required'}), 401
         from app.utils.metadata_aggregator import fetch_unified_by_isbn
         unified = fetch_unified_by_isbn(isbn) or {}
         _mark('unified_fetch')
@@ -927,7 +933,6 @@ def api_quick_isbn(isbn):
         except Exception:
             pass
         _mark('cover_norm')
-        async_mode = request.args.get('async_cover') == '1'
         from app.services.cover_service import cover_service
         if async_mode:
             cand = cover_service.select_candidate(isbn=isbn, title=data.get('title'), author=data.get('author'))
@@ -935,7 +940,8 @@ def api_quick_isbn(isbn):
                 data['cover_candidate'] = cand
                 data['cover_url'] = cand.get('url')
             job = cover_service.schedule_async_processing(isbn=isbn, title=data.get('title'), author=data.get('author'))
-            data['cover_job_id'] = job['id']
+            if job:
+                data['cover_job_id'] = job['id']
             _mark('async_schedule')
         else:
             cr = cover_service.fetch_and_cache(isbn=isbn, title=data.get('title'), author=data.get('author'))

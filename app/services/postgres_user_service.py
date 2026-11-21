@@ -156,6 +156,19 @@ class PostgresUserService:
     async def get_all_users(self, limit: int = 1000) -> list[User]:
         return await asyncio.to_thread(self.get_all_users_sync, limit)
 
+    def update_privacy_settings_sync(self, user_id: str, settings: dict[str, bool]) -> User | None:
+        fields = [key for key in ("share_library", "share_current_reading", "share_reading_activity") if key in settings]
+        if not fields:
+            return self.get_user_by_id_sync(user_id)
+        assignments = ", ".join(f"{key} = %s" for key in fields)
+        with self.store.transaction() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                f"UPDATE users SET {assignments}, updated_at = now() WHERE id = %s RETURNING {', '.join(_USER_COLUMNS)}",
+                (*[settings[key] for key in fields], user_id),
+            )
+            row = cursor.fetchone()
+        return _user_from_row(row) if row else None
+
     def update_user_sync(self, user: User) -> User | None:
         if not user.id:
             return None

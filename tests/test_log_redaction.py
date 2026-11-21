@@ -1,5 +1,6 @@
 import logging
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 from flask import Flask
@@ -9,11 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.infrastructure import persistence_state
 
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
-
-import app.onboarding_state as ob_state  # noqa: E402
-import app.onboarding_system as ob  # noqa: E402
-from app.utils import log_redaction as lr  # noqa: E402
+with patch.object(persistence_state, 'get_persistence_state', return_value={'backend': 'kuzu', 'migration_run_id': None}):
+    import app.onboarding_state as ob_state  # noqa: E402
+    import app.onboarding_system as ob  # noqa: E402
+    from app.utils import log_redaction as lr  # noqa: E402
 
 PW = "Sup3r-Secret-Pw!987"
 

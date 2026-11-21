@@ -135,7 +135,7 @@ def parse_book_data(data):
     
     # Create domain book with all fields from comprehensive documentation
     domain_book = DomainBook(
-        id=str(data.get('id', '')),
+        id='',  # The server allocates IDs for API-created books.
         title=data.get('title', '').strip(),
         normalized_title=data.get('title', '').strip().lower(),
         subtitle=data.get('subtitle', '').strip() or None,

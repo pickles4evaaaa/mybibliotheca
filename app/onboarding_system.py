@@ -252,36 +252,14 @@ def admin_setup_step():
     
     if request.method == 'POST':
         
-        # Manual form validation for better debugging
-        form_valid = form.validate()
-        
-        # Check if basic required fields are present
-        username = request.form.get('username', '').strip()
-        email = request.form.get('email', '').strip()
-        password = request.form.get('password', '').strip()
-        password2 = request.form.get('password2', '').strip()
-        
-        
-        # If form validation fails, try to process anyway if we have required data
-        if form_valid or (username and email and password and password == password2):
+        if form.validate():
             try:
-                logger.info(f"🔍 ONBOARDING DEBUG: Form processing, using form data directly")
-                
-                # Use form data directly if form validation failed but data is present
-                if form_valid:
-                    admin_data = {
-                        'username': form.username.data,
-                        'email': form.email.data,
-                        'password': form.password.data
-                    }
-                else:
-                    # Use raw form data
-                    admin_data = {
-                        'username': username,
-                        'email': email,
-                        'password': password
-                    }
-                
+                admin_data = {
+                    'username': form.username.data,
+                    'email': form.email.data,
+                    'password': form.password.data,
+                }
+
                 logger.info(f"🔍 ONBOARDING DEBUG: Saving admin data: {admin_data['username']}, {admin_data['email']}")
                 
                 
@@ -312,10 +290,9 @@ def admin_setup_step():
                 logger.error(f"🔍 ONBOARDING DEBUG: Error in admin setup: {e}")
                 flash(f'Error configuring admin account: {e}', 'error')
         else:
-            if not form_valid:
-                for field, errors in form.errors.items():
-                    for error in errors:
-                        flash(f'{field}: {error}', 'error')
+            for field, errors in form.errors.items():
+                for error in errors:
+                    flash(f'{field}: {error}', 'error')
     
     logger.info(f"🔍 ONBOARDING DEBUG: Rendering step 1 template")
     

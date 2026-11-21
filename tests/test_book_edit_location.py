@@ -1,4 +1,5 @@
 import sys
+from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,9 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.infrastructure import persistence_state
 
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
-
-import app.routes.book_routes as br  # noqa: E402
+with patch.object(persistence_state, 'get_persistence_state', return_value={'backend': 'kuzu', 'migration_run_id': None}):
+    import app.routes.book_routes as br  # noqa: E402
 
 
 class _Loc:

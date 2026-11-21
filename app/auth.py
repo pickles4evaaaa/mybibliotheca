@@ -568,20 +568,11 @@ def settings_privacy_partial():
         p_form.timezone.choices = [('UTC','UTC')]
     if p_form.validate_on_submit():
         try:
-            # Always fetch a fresh User domain object from service to avoid dict-like proxy issues
-            user_obj = None
-            try:
-                user_obj = user_service.get_user_by_id_sync(getattr(current_user, 'id', None))
-            except Exception as fe:
-                current_app.logger.warning(f"Failed to refetch user for privacy update, falling back to current_user: {fe}")
-            if user_obj is None:
-                # Fallback: mutate current_user if it quacks like domain object
-                user_obj = current_user  # type: ignore
-            # Apply changes
-            setattr(user_obj, 'share_current_reading', p_form.share_current_reading.data)
-            setattr(user_obj, 'share_reading_activity', p_form.share_reading_activity.data)
-            setattr(user_obj, 'share_library', p_form.share_library.data)
-            updated = user_service.update_user_sync(user_obj)  # type: ignore
+            updated = user_service.update_privacy_settings_sync(current_user.id, {
+                'share_current_reading': p_form.share_current_reading.data,
+                'share_reading_activity': p_form.share_reading_activity.data,
+                'share_library': p_form.share_library.data,
+            })
             if updated:
                 # Mirror onto session's current_user for immediate reflection
                 try:
@@ -1408,27 +1399,15 @@ def privacy_settings():
     
     if form.validate_on_submit():
         try:
-            # Get current user from Kuzu to ensure we have the latest data
-            user_from_kuzu = user_service.get_user_by_id_sync(current_user.id)
-            if user_from_kuzu:
-                # Update privacy settings (excluding timezone)
-                user_from_kuzu.share_current_reading = form.share_current_reading.data
-                user_from_kuzu.share_reading_activity = form.share_reading_activity.data
-                user_from_kuzu.share_library = form.share_library.data
-                
-                # Save through Kuzu service
-                updated_user = user_service.update_user_sync(user_from_kuzu)
-                if updated_user:
-                    # Update current_user object for immediate reflection
-                    current_user.share_current_reading = updated_user.share_current_reading
-                    current_user.share_reading_activity = updated_user.share_reading_activity
-                    current_user.share_library = updated_user.share_library
-                    flash('Privacy settings updated successfully!', 'success')
-                    return redirect(url_for('auth.privacy_settings'))
-                else:
-                    flash('Failed to update privacy settings.', 'error')
-            else:
-                flash('User not found.', 'error')
+            updated_user = user_service.update_privacy_settings_sync(current_user.id, {
+                'share_current_reading': form.share_current_reading.data,
+                'share_reading_activity': form.share_reading_activity.data,
+                'share_library': form.share_library.data,
+            })
+            if updated_user:
+                flash('Privacy settings updated successfully!', 'success')
+                return redirect(url_for('auth.privacy_settings'))
+            flash('Failed to update privacy settings.', 'error')
         except Exception as e:
             flash(f'Failed to update privacy settings: {str(e)}', 'error')
     

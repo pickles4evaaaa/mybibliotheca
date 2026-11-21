@@ -1,4 +1,5 @@
 import csv
+from contextlib import contextmanager
 import io
 
 from app.routes.import_format_helpers import get_goodreads_field_mappings
@@ -57,6 +58,7 @@ def test_empty_date_and_isbn():
 import asyncio
 import json
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -134,6 +136,25 @@ class _FakeFacade(PostgresServiceFacade):
     def __init__(self):  # no database
         self.book_service = _FakeBookService()
         self.library_service = _FakeLibraryService()
+
+    @contextmanager
+    def _locked_book_members(self, book_id):
+        yield {uid for uid, bid in self.library_service.rows if bid == book_id}
+
+        # Model the two membership reads inside the facade's locked transaction.
+        self.store = MagicMock()
+        connection = self.store.shared_transaction.return_value.__enter__.return_value
+        cursor = connection.cursor.return_value.__enter__.return_value
+        def read_book():
+            book_id, = cursor.execute.call_args.args[1]
+            return (book_id,) if book_id in self.book_service.books else None
+
+        def read_members():
+            book_id, = cursor.execute.call_args.args[1]
+            return [(user,) for user, book in self.library_service.rows if book == book_id]
+
+        cursor.fetchone.side_effect = read_book
+        cursor.fetchall.side_effect = read_members
 
     def get_book_by_title_author_sync(self, title, author):
         for b in self.book_service.books.values():

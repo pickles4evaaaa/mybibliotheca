@@ -184,9 +184,11 @@ def create_app_with_stubs():
                 return self.active_user
             return None
 
-        def update_user_sync(self, user):
+        def update_privacy_settings_sync(self, user_id, settings):
+            for field, value in settings.items():
+                setattr(self.active_user, field, value)
             self.updated = True
-            return user
+            return self.active_user
 
         def get_all_users_sync(self):
             return [

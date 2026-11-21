@@ -374,11 +374,11 @@ class KuzuRelationshipService:
             traceback.print_exc()
             return []
 
-    async def get_recently_added_books(self, limit: int = 10) -> List[Book]:
-        """Get the most recently created books (global scope)."""
+    async def get_recently_added_books(self, user_id: str, limit: int = 10) -> List[Book]:
+        """Get recently created books with personal metadata for this user."""
         try:
             query = """
-            MATCH (b:Book)
+            MATCH (:User {id: $user_id})-[:HAS_PERSONAL_METADATA]->(b:Book)
             OPTIONAL MATCH (b)-[stored:STORED_AT]->(l:Location)
             WITH b,
                  COLLECT(DISTINCT CASE WHEN l.id IS NOT NULL AND l.name IS NOT NULL THEN {id: l.id, name: l.name} ELSE NULL END) AS locations
@@ -394,7 +394,7 @@ class KuzuRelationshipService:
             """
 
             result = safe_execute_kuzu_query(query, {
-                "limit": limit
+                "user_id": user_id, "limit": limit
             })
             rows = _convert_query_result_to_list(result)
 
@@ -1080,9 +1080,9 @@ class KuzuRelationshipService:
         """Sync wrapper for get_books_for_user."""
         return run_async(self.get_books_for_user(user_id, limit, offset))
     
-    def get_recently_added_books_sync(self, limit: int = 10) -> List[Book]:
+    def get_recently_added_books_sync(self, user_id: str, limit: int = 10) -> List[Book]:
         """Sync wrapper for get_recently_added_books."""
-        return run_async(self.get_recently_added_books(limit))
+        return run_async(self.get_recently_added_books(user_id, limit))
 
     def get_book_by_id_for_user_sync(self, book_id: str, user_id: str) -> Optional[Book]:
         """Sync wrapper for get_book_by_id_for_user."""

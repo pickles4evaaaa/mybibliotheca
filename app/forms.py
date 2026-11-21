@@ -142,22 +142,22 @@ class SetupForm(FlaskForm):
         try:
             from .services import user_service
             user = user_service.get_user_by_username_sync(username.data)
-            if user is not None:
-                raise ValidationError('Please use a different username.')
-        except Exception as e:
-            # During onboarding, database might not be fully set up, so ignore validation errors
-            pass
+        except Exception:
+            # The user store may be unavailable before first-time setup.
+            user = None
+        if user is not None:
+            raise ValidationError('Please use a different username.')
 
     def validate_email(self, email):
         """Ensure no users exist with this email"""
         try:
             from .services import user_service
             user = user_service.get_user_by_email_sync(email.data)
-            if user is not None:
-                raise ValidationError('Please use a different email address.')
-        except Exception as e:
-            # During onboarding, database might not be fully set up, so ignore validation errors
-            pass
+        except Exception:
+            # The user store may be unavailable before first-time setup.
+            user = None
+        if user is not None:
+            raise ValidationError('Please use a different email address.')
         
         # Check for .local domains and provide helpful message
         if email.data and email.data.endswith('.local'):

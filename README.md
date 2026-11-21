@@ -2,9 +2,9 @@
 
 MyBibliotheca is a self-hosted library manager and reading tracker. Organize books, track reading progress, record reading sessions, and keep your collection on infrastructure you control.
 
-## Release 3.0.3
+## Release 3.0.4
 
-Version **3.0.3** uses PostgreSQL as its primary database. New installations use PostgreSQL automatically. Existing Kuzu installations need to be migrated with the in-app database migration wizard.
+Version **3.0.4** uses PostgreSQL as its primary database. New installations use PostgreSQL automatically. Existing Kuzu installations need to be migrated with the in-app database migration wizard.
 
 ## Documentation
 

@@ -13,6 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The production `docker-compose.yml` now uses the `latest` image tag instead of pinning a release, so `docker compose pull` always gets the newest stable version. Pin a release tag (for example `3.0.3`) to stay on one version.
 
+## [3.0.4] - 2026-11-21
+
+### Changed
+- The footer displays package version 3.0.4.
+
+### Security
+- Book edits require library membership. Removing a book affects only the caller’s shelf, and shared catalog entries are protected from edits through the book update API (#264).
+- Reading-log suggestions and new book-linked logs are scoped to the caller’s library.
+- Shared-library API responses exclude private notes and personal metadata. Community activity follows current privacy settings.
+- Existing Kuzu installations must complete the PostgreSQL migration before accessing library routes.
+
 ## [3.0.3] - 2026-11-13
 
 ### Changed

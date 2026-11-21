@@ -6,6 +6,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+from threading import Lock
 import uuid
 import logging
 from flask import current_app, request, has_request_context, has_app_context
@@ -26,6 +28,10 @@ class CoverResult:
 
 _PROCESSED_CACHE: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
 _COVER_JOBS: dict[str, dict[str, Any]] = {}
+_JOB_LOCK = Lock()
+_MAX_PENDING_JOBS = 32
+_MAX_JOB_RECORDS = 256
+_JOB_TTL_SECONDS = 900
 _EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 _CACHE_TTL_SECONDS = int(os.getenv('COVER_CACHE_TTL', '21600'))  # 6 hours by default
@@ -291,78 +297,71 @@ class CoverService:
             return 100
         return min(candidates, key=_rank)
 
-    def schedule_async_processing(self, isbn: Optional[str] = None, title: Optional[str] = None, author: Optional[str] = None, prefer_provider: Optional[str] = None) -> dict:
-        """Schedule background processing of best cover. Returns job info with immediate candidate URL.
-
-        The UI can display the remote candidate immediately; poll status endpoint to swap to processed local URL.
-        """
-        cand = self.select_candidate(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
-        selected_cand = dict(cand) if cand else None
-        if selected_cand and selected_cand.get('url'):
-            try:
-                from app.utils.book_utils import normalize_cover_url
-                selected_cand['url'] = normalize_cover_url(selected_cand['url'])
-            except Exception:
-                pass
+    def schedule_async_processing(self, isbn: Optional[str] = None, title: Optional[str] = None, author: Optional[str] = None, prefer_provider: Optional[str] = None) -> Optional[dict]:
+        """Reserve capacity before provider lookup. Return None when busy."""
         job_id = str(uuid.uuid4())
-        job_record = {
-            'id': job_id,
-            'status': 'pending',
-            'original_url': selected_cand.get('url') if selected_cand else None,
-            'processed_url': None,
-            'error': None,
-            'isbn': isbn,
-            'title': title,
-            'provider': selected_cand.get('provider') if selected_cand else None,
-            'size': selected_cand.get('size') if selected_cand else None,
-            'started': time.time(),
-            'completed': None
-        }
-        _COVER_JOBS[job_id] = job_record
+        with _JOB_LOCK:
+            self._expire_jobs()
+            pending = sum(job['completed'] is None for job in _COVER_JOBS.values())
+            if pending >= _MAX_PENDING_JOBS:
+                return None
+            if len(_COVER_JOBS) >= _MAX_JOB_RECORDS:
+                oldest = min((j for j in _COVER_JOBS.values() if j['completed'] is not None),
+                             key=lambda j: j['completed'])
+                del _COVER_JOBS[oldest['id']]
+            job = {
+                'id': job_id, 'status': 'pending', 'original_url': None,
+                'processed_url': None, 'error': None, 'isbn': isbn, 'title': title,
+                'provider': None, 'size': None, 'started': time.time(), 'completed': None,
+            }
+            _COVER_JOBS[job_id] = job
 
-        # Capture app context object so background thread can log safely
         try:
-            # current_app is a proxy; capturing it directly is acceptable
-            app_obj = current_app
-        except Exception:
-            app_obj = None
+            args = dict(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
+            candidate = self.select_candidate(**args) or {}
+            url = candidate.get('url')
+            if url:
+                from app.utils.book_utils import normalize_cover_url
+                url = normalize_cover_url(url)
+            with _JOB_LOCK:
+                job.update(original_url=url, provider=candidate.get('provider'), size=candidate.get('size'))
+                if not url:
+                    job.update(status='no_candidate', completed=time.time())
+                    return job.copy()
+                snapshot = job.copy()
+            app = current_app._get_current_object() if has_app_context() else None
 
-        def _worker(app_obj=app_obj):
-            ctx = app_obj.app_context() if app_obj else None
-            if ctx:
-                ctx.push()
-            try:
+            def process():
                 try:
-                    if not selected_cand or not selected_cand.get('url'):
-                        job_record['status'] = 'no_candidate'
-                        job_record['completed'] = time.time()
-                        return
-                    cr = self.fetch_and_cache(isbn=isbn, title=title, author=author, prefer_provider=prefer_provider)
-                    if cr and cr.cached_url:
-                        job_record['processed_url'] = cr.cached_url
-                        job_record['status'] = 'done'
-                    else:
-                        job_record['status'] = 'failed'
-                    job_record['completed'] = time.time()
-                except Exception as e:  # pragma: no cover
-                    job_record['status'] = 'error'
-                    job_record['error'] = str(e)
-                    job_record['completed'] = time.time()
-                    try:
-                        if has_app_context():
-                            current_app.logger.error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
-                        else:
-                            logging.getLogger(__name__).error(f"[COVER][ASYNC] Job {job_id} failed: {e}")
-                    except Exception:
-                        pass
-            finally:
-                if ctx:
-                    ctx.pop()
-        _EXECUTOR.submit(_worker)
-        return job_record
+                    with app.app_context() if app else nullcontext():
+                        result = self.fetch_and_cache(**args)
+                    cached_url = result.cached_url if result else None
+                    outcome = dict(status='done' if cached_url else 'failed', processed_url=cached_url)
+                except Exception as exc:
+                    logging.getLogger(__name__).exception('Cover processing failed')
+                    outcome = dict(status='error', error=str(exc))
+                with _JOB_LOCK:
+                    job.update(outcome, completed=time.time())
+
+            _EXECUTOR.submit(process)
+            return snapshot
+        except Exception:
+            with _JOB_LOCK:
+                del _COVER_JOBS[job_id]
+            raise
+
+    @staticmethod
+    def _expire_jobs() -> None:
+        cutoff = time.time() - _JOB_TTL_SECONDS
+        for job_id, job in list(_COVER_JOBS.items()):
+            if job['completed'] is not None and job['completed'] <= cutoff:
+                del _COVER_JOBS[job_id]
 
     def get_job(self, job_id: str) -> Optional[dict]:
-        return _COVER_JOBS.get(job_id)
+        with _JOB_LOCK:
+            self._expire_jobs()
+            job = _COVER_JOBS.get(job_id)
+            return job.copy() if job else None
 
 
 cover_service = CoverService()

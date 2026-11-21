@@ -774,14 +774,6 @@ def create_app():
         from .debug_utils import debug_middleware, debug_auth, debug_csrf
         from .services import user_service
         from flask import current_app as _flask_current_app
-        # When running tests, skip setup/password enforcement to avoid redirects
-        try:
-            if _flask_current_app.config.get('TESTING', False):
-                return
-        except Exception:
-            # If current_app isn't available for some reason, continue normally
-            pass
-        
         # Run debug middleware if enabled
         debug_middleware()
 
@@ -814,12 +806,8 @@ def create_app():
                     response.headers['Retry-After'] = '3'
                     return response
 
-            # Existing Kuzu installs are guided through a durable, ordered
-            # first-upgrade flow after an administrator signs in: verify a
-            # source backup, then complete the PostgreSQL cutover. Keep the
-            # wizard and the assets it needs reachable while redirecting the
-            # rest of the admin UI there.
-            from .infrastructure.persistence_upgrade import has_legacy_kuzu_database
+            # Kuzu has a universal catalog. Serve only the upgrade flow until
+            # PostgreSQL can enforce user library membership on requests.
             migration_wizard_endpoints = {
                 'admin.migration_management',
                 'admin.create_postgres_migration_backup',
@@ -829,21 +817,25 @@ def create_app():
                 'auth.logout',
                 'auth.forced_password_change',
                 'auth.setup',
+                'misc.health_check',
+                'static',
             }
             if (
                 selected_backend == 'kuzu'
-                and has_legacy_kuzu_database()
-                and current_user.is_authenticated
-                and bool(getattr(current_user, 'is_admin', False))
                 and request.endpoint not in migration_wizard_endpoints
-                and not (request.endpoint and request.endpoint.startswith('static'))
-                and not request.path.startswith(('/static/', '/covers/', '/uploads/'))
             ):
-                return redirect(url_for('admin.migration_management'))
+                if current_user.is_authenticated and current_user.is_admin:
+                    return redirect(url_for('admin.migration_management'))
+                if not current_user.is_authenticated and request.method == "GET" and request.accept_mimetypes.best == "text/html":
+                    return redirect(url_for('auth.login'))
+                return jsonify({"error": "postgres_migration_required"}), 503
         except Exception as state_error:
             _flask_current_app.logger.error("Persistence state validation failed: %s", state_error)
             return jsonify({"error": "persistence_state_unavailable"}), 503
         
+        if _flask_current_app.config.get('TESTING', False):
+            return
+
         # Special debugging for setup route
         if request.endpoint == 'auth.setup':
             debug_auth("🔍 BEFORE_REQUEST: Setup route detected!")

@@ -8,9 +8,11 @@ cannot accidentally split related records across database backends.
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from ..infrastructure import redis_cache
 from ..domain.models import Book, Category, Series
 from ..infrastructure.postgres_store import PostgresStore, get_postgres_store
 from .postgres_book_service import PostgresBookService
@@ -124,6 +126,18 @@ class PostgresServiceFacade:
             user_id, book_id, reading_status, ownership_status, locations, custom_metadata,
         )
 
+    @contextmanager
+    def _locked_book_members(self, book_id: str):
+        with self.store.shared_transaction() as connection, connection.cursor() as cursor:
+            # Lock the parent before reading membership. A concurrent shelf addition
+            # needs a foreign-key lock on this same book.
+            cursor.execute("SELECT id FROM books WHERE id = %s FOR UPDATE", (book_id,))
+            if cursor.fetchone() is None:
+                yield set()
+                return
+            cursor.execute("SELECT user_id FROM user_books WHERE book_id = %s FOR UPDATE", (book_id,))
+            yield {row[0] for row in cursor.fetchall()}
+
     def update_book_sync(self, book_id: str, user_id: str, **updates: Any) -> Book | None:
         book_fields = {
             name: value for name, value in updates.items()
@@ -150,16 +164,21 @@ class PostgresServiceFacade:
         personal = {name: value for name, value in personal.items() if name in updates or (name == "user_review" and "review" in updates)}
         if "custom_metadata" in updates:
             personal["custom_metadata"] = updates["custom_metadata"]
-        updated_book = self.book_service.update_book_sync(book_id, book_fields) if book_fields else None
-        if personal:
-            self.library_service.update_user_book_sync(user_id, book_id, personal)
-        if "contributors" in updates:
-            self.book_service.replace_contributors_sync(book_id, updates["contributors"])
-        if "categories" in updates or "raw_categories" in updates:
-            categories = updates.get("categories", updates.get("raw_categories"))
-            self.book_service.replace_categories_sync(book_id, categories)
-        if "publisher" in updates:
-            self.book_service.replace_publisher_sync(book_id, updates["publisher"])
+        catalog_changes = bool(book_fields or {"contributors", "categories", "raw_categories", "publisher"} & updates.keys())
+        with self._locked_book_members(book_id) as members:
+            if str(user_id) not in members or (catalog_changes and len(members) > 1):
+                return None
+            updated_book = self.book_service.update_book_sync(book_id, book_fields) if book_fields else None
+            if personal:
+                self.library_service.update_user_book_sync(user_id, book_id, personal)
+            if "contributors" in updates:
+                self.book_service.replace_contributors_sync(book_id, updates["contributors"])
+            if "categories" in updates or "raw_categories" in updates:
+                categories = updates.get("categories", updates.get("raw_categories"))
+                self.book_service.replace_categories_sync(book_id, categories)
+            if "publisher" in updates:
+                self.book_service.replace_publisher_sync(book_id, updates["publisher"])
+        redis_cache.invalidate_tags("postgres:books", f"postgres:user_books:{user_id}")
         if updated_book:
             return updated_book
         if personal or "contributors" in updates or "categories" in updates or "raw_categories" in updates or "publisher" in updates:
@@ -170,7 +189,12 @@ class PostgresServiceFacade:
         return await asyncio.to_thread(self.update_book_sync, book_id, user_id, **updates)
 
     def delete_book_sync(self, book_id: str, user_id: str) -> bool:
-        return self.book_service.delete_book_sync(book_id)
+        with self.store.transaction() as connection, connection.cursor() as cursor:
+            cursor.execute("DELETE FROM user_books WHERE user_id = %s AND book_id = %s", (user_id, book_id))
+            removed = cursor.rowcount > 0
+        if removed:
+            redis_cache.invalidate_tags("postgres:books", f"postgres:user_books:{user_id}")
+        return removed
 
     async def delete_book(self, book_id: str, user_id: str) -> bool:
         return await asyncio.to_thread(self.delete_book_sync, book_id, user_id)
@@ -382,7 +406,9 @@ class PostgresServiceFacade:
         return self.series_service.get_book_series_relationship_sync(book_id)
 
     def set_book_publisher_sync(self, book_id: str, publisher_name: str | None, user_id: str | None = None) -> bool:
-        return self.book_service.replace_publisher_sync(book_id, publisher_name)
+        if user_id is None:
+            return False
+        return self.update_book_sync(book_id, user_id, publisher=publisher_name) is not None
 
     def get_raw_book_graph_sync(self, book_id: str, user_id: str) -> dict[str, Any]:
         """Read the lossless migrated graph snapshot for the raw diagnostic view."""
@@ -478,12 +504,9 @@ class PostgresServiceFacade:
     async def update_book_relationships(self, user_id: str, book_id: str, **updates: Any) -> bool:
         return await asyncio.to_thread(self.library_service.update_user_book_sync, user_id, book_id, updates)
 
-    def get_recently_added_books_sync(self, limit: int = 5) -> list[Book]:
-        limit = max(0, min(int(limit), 500))
-        with self.store.connection() as connection, connection.cursor() as cursor:
-            cursor.execute("SELECT id FROM books ORDER BY created_at DESC NULLS LAST, id LIMIT %s", (limit,))
-            ids = [row[0] for row in cursor.fetchall()]
-        return [book for book_id in ids if (book := self.book_service.get_book_by_id_sync(book_id))]
+    def get_recently_added_books_sync(self, user_id: str, limit: int = 5) -> list[Book]:
+        rows = self.library_service.get_books_with_user_overlay_paginated_sync(user_id, limit, 0, "date_added_desc")
+        return [self._overlay_to_book(row) for row in rows]
 
     def get_recently_added_want_to_read_books(self, user_id: str, limit: int = 5) -> list[Book]:
         rows = self.library_service.get_books_with_user_overlay_paginated_sync(user_id, min(limit * 4, 1000), 0, "date_added_desc")

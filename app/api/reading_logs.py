@@ -179,6 +179,8 @@ def create_reading_log():
             notes=notes
         )
         domain_log = reading_log_service.create_reading_log_sync(rl)
+        if not domain_log:
+            return jsonify({'status': 'error', 'message': 'Unable to record reading for this book'}), 400
 
         return jsonify({
             'status': 'success',

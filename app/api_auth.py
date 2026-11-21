@@ -56,11 +56,9 @@ def api_token_required(f):
             logger.info(f"API request to {request.path}")
             # First check for token authentication
             auth_header = request.headers.get('Authorization')
-            logger.info(f"Authorization header: {auth_header[:30] if auth_header else None}...")
             
             if auth_header and auth_header.startswith('Bearer '):
                 token = auth_header.split(' ')[1]
-                logger.info(f"Extracted token: {token[:10]}...")
                 if validate_api_token(token):
                     logger.info("Token validation successful, allowing access")
                     # Token is valid, proceed with the request
@@ -110,25 +108,10 @@ def validate_api_token(token: str) -> bool:
     For now, this is a simple implementation.
     In production, you'd check against stored tokens in database.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    # Simple validation for development
-    # In production, implement proper token storage and validation
-    logger.info(f"validate_api_token called with token: {token[:10] if token else None}...")
-    
-    if not token:
-        logger.info("No token provided")
-        return False
-    
-    # For development, accept a hardcoded test token
-    # TODO: Replace with proper database-backed token validation
-    test_token = current_app.config.get('API_TEST_TOKEN', 'dev-token-12345')
-    logger.info(f"Comparing with test_token: {test_token[:10]}...")
-    
-    result = secrets.compare_digest(token, test_token)
-    logger.info(f"Token validation result: {result}")
-    return result
+    configured_token = current_app.config.get('API_TEST_TOKEN')
+    return bool(token and configured_token and secrets.compare_digest(
+        token.encode(), configured_token.encode()
+    ))
 
 
 def api_auth_optional(f):

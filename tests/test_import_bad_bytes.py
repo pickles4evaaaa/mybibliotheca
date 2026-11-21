@@ -1,13 +1,13 @@
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.infrastructure import persistence_state
 
-persistence_state.get_persistence_state = lambda: {"backend": "kuzu", "migration_run_id": None}
-
-import re  # noqa: E402
+with patch.object(persistence_state, 'get_persistence_state', return_value={'backend': 'kuzu', 'migration_run_id': None}):
+    import re  # noqa: E402
 
 from app.routes.import_format_helpers import detect_csv_format  # noqa: E402
 from app.utils import csv_io  # noqa: E402

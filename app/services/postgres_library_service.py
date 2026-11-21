@@ -17,7 +17,7 @@ from ..infrastructure import redis_cache
 _SORTS = {
     "title_asc": "b.title ASC, b.id ASC",
     "title_desc": "b.title DESC, b.id ASC",
-    "date_added_desc": "ub.date_added DESC NULLS LAST, b.title ASC, b.id ASC",
+    "date_added_desc": "COALESCE(ub.date_added, ub.created_at, b.created_at) DESC NULLS LAST, b.title ASC, b.id ASC",
     "date_added_asc": "ub.date_added ASC NULLS LAST, b.title ASC, b.id ASC",
     "rating_desc": "ub.user_rating DESC NULLS LAST, b.title ASC, b.id ASC",
     "published_date_asc": "b.published_date ASC NULLS LAST, b.title ASC, b.id ASC",

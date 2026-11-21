@@ -667,6 +667,7 @@ class PostgresStore:
         self.min_size = max(0, int(min_size))
         self.max_size = max(self.min_size or 1, int(max_size))
         self._pool: Any = None
+        self._local = threading.local()
         self._lock = threading.Lock()
 
     def _get_pool(self):
@@ -693,6 +694,10 @@ class PostgresStore:
     @contextmanager
     def connection(self) -> Iterator[Any]:
         """Borrow a pooled connection; caller owns transaction boundaries."""
+        active = getattr(self._local, "connection", None)
+        if active is not None:
+            yield active
+            return
         with self._get_pool().connection() as connection:
             yield connection
 
@@ -702,6 +707,17 @@ class PostgresStore:
         with self.connection() as connection:
             with connection.transaction():
                 yield connection
+
+    @contextmanager
+    def shared_transaction(self) -> Iterator[Any]:
+        """Run synchronous service calls on the same transaction and connection."""
+        with self.transaction() as connection:
+            previous = getattr(self._local, "connection", None)
+            self._local.connection = connection
+            try:
+                yield connection
+            finally:
+                self._local.connection = previous
 
     def initialize_schema(self) -> None:
         """Bootstrap once, then apply only unapplied versioned migrations.

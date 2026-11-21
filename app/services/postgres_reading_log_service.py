@@ -68,12 +68,7 @@ class PostgresReadingLogService:
     def get_recent_shared_logs_sync(self, days_back: int = 7, limit: int = 50) -> list[dict[str, Any]]:
         days_back = max(0, int(days_back))
         limit = max(1, min(int(limit), 1000))
-        cache_key = f"postgres:reading_logs:shared:{days_back}:{limit}:{date.today().isoformat()}"
-        tags = ("postgres:reading_logs", "postgres:users", "postgres:books", "postgres:people")
-        snapshot = redis_cache.snapshot_tag_versions(tags)
-        hit, cached = redis_cache.get_json(cache_key, tags=tags, snapshot=snapshot)
-        if hit:
-            return cached
+        # Read current privacy preferences before returning community activity.
         with self.store.connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "SELECT rl.id,rl.user_id,rl.book_id,rl.date,rl.pages_read,rl.minutes_read,rl.notes,rl.created_at,rl.updated_at, "
@@ -83,7 +78,7 @@ class PostgresReadingLogService:
                 "JOIN books b ON b.id=rl.book_id "
                 "LEFT JOIN book_contributors bc ON bc.book_id=b.id "
                 "LEFT JOIN people p ON p.id=bc.person_id "
-                "WHERE u.share_reading_activity AND rl.date >= %s "
+                "WHERE u.is_active AND u.share_reading_activity AND rl.date >= %s "
                 "GROUP BY rl.id,u.id,b.id ORDER BY rl.date DESC NULLS LAST,rl.created_at DESC NULLS LAST,rl.id LIMIT %s",
                 (date.today() - timedelta(days=days_back), limit),
             )
@@ -96,7 +91,6 @@ class PostgresReadingLogService:
             book["author"] = row[14] or ""
             log["book"] = book
             results.append(log)
-        redis_cache.set_json(cache_key, results, ttl_seconds=30, tags=tags, snapshot=snapshot)
         return results
 
     def get_user_reading_logs_sync(self, user_id: str, days_back: int = 30, limit: int | None = 100) -> list[dict[str, Any]]:
@@ -177,6 +171,13 @@ class PostgresReadingLogService:
         committed = False
         try:
             with self.store.transaction() as connection, connection.cursor() as cursor:
+                if payload["book_id"]:
+                    cursor.execute(
+                        "SELECT 1 FROM user_books WHERE user_id=%s AND book_id=%s FOR KEY SHARE",
+                        (payload["user_id"], payload["book_id"]),
+                    )
+                    if cursor.fetchone() is None:
+                        return None
                 # Serialize same-user/day writes, including bookless logs, so concurrent imports
                 # cannot create duplicate daily rows when merging existing entries.
                 lock_key = f"reading-log:{payload['user_id']}:{payload['book_id'] or 'none'}:{payload['date']}"
@@ -210,11 +211,9 @@ class PostgresReadingLogService:
                 if payload["book_id"] and payload["date"]:
                     start_date = datetime(payload["date"].year, payload["date"].month, payload["date"].day, tzinfo=timezone.utc)
                     cursor.execute(
-                        "INSERT INTO user_books(user_id,book_id,reading_status,ownership_status,start_date,date_added,created_at,updated_at) "
-                        "VALUES (%s,%s,'','owned',%s,now(),now(),now()) "
-                        "ON CONFLICT(user_id,book_id) DO UPDATE SET "
-                        "start_date=COALESCE(user_books.start_date,EXCLUDED.start_date),updated_at=now()",
-                        (payload["user_id"], payload["book_id"], start_date),
+                        "UPDATE user_books SET start_date=COALESCE(start_date,%s),updated_at=now() "
+                        "WHERE user_id=%s AND book_id=%s",
+                        (start_date, payload["user_id"], payload["book_id"]),
                     )
             committed = True
             if result:
@@ -324,9 +323,11 @@ class PostgresReadingLogService:
         with self.store.transaction() as connection, connection.cursor() as cursor:
             cursor.execute(
                 "UPDATE reading_logs SET book_id=%s,date=%s,pages_read=%s,minutes_read=%s,notes=%s,updated_at=%s "
-                "WHERE id=%s AND user_id=%s",
+                "WHERE id=%s AND user_id=%s AND (book_id IS NOT DISTINCT FROM %s OR %s::text IS NULL OR EXISTS "
+                "(SELECT 1 FROM user_books WHERE user_id=%s AND book_id=%s FOR KEY SHARE))",
                 (reading_log.book_id, reading_log.date, int(reading_log.pages_read or 0), int(reading_log.minutes_read or 0),
-                 reading_log.notes, now, log_id, reading_log.user_id),
+                 reading_log.notes, now, log_id, reading_log.user_id, reading_log.book_id, reading_log.book_id,
+                 reading_log.user_id, reading_log.book_id),
             )
             if cursor.rowcount != 1:
                 return None

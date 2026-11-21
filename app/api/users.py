@@ -92,58 +92,16 @@ def update_current_user():
                 'message': 'User not authenticated'
             }), 401
         
-        # Get the actual user object from the service to avoid LocalProxy issues
-        user = user_service.get_user_by_id_sync(current_user.id)
+        privacy_fields = ('share_current_reading', 'share_reading_activity', 'share_library')
+        if not isinstance(data, dict) or any(
+            not isinstance(data[field], bool) for field in privacy_fields if field in data
+        ):
+            return jsonify({'status': 'error', 'message': 'Sharing settings require JSON booleans'}), 400
+        settings = {field: data[field] for field in privacy_fields if field in data}
+        user = user_service.update_privacy_settings_sync(current_user.id, settings)
         if not user:
-            return jsonify({
-                'status': 'error',
-                'message': 'User not found'
-            }), 404
-        
-        # Validate that user object has required attributes
-        required_attrs = ['share_current_reading', 'share_reading_activity', 'share_library']
-        missing_attrs = [attr for attr in required_attrs if not hasattr(user, attr)]
-        if missing_attrs:
-            current_app.logger.warning(f"User object missing attributes: {missing_attrs}")
-            # Set default values for missing attributes
-            for attr in missing_attrs:
-                if attr == 'share_current_reading':
-                    setattr(user, attr, True)
-                elif attr == 'share_reading_activity':
-                    setattr(user, attr, True)
-                elif attr == 'share_library':
-                    setattr(user, attr, False)
-        
-        # Update privacy settings on the actual user object
-        if 'share_current_reading' in data:
-            user.share_current_reading = bool(data['share_current_reading'])
-        
-        if 'share_reading_activity' in data:
-            user.share_reading_activity = bool(data['share_reading_activity'])
-        
-        if 'share_library' in data:
-            user.share_library = bool(data['share_library'])
-        
-        # Use the user service to update the user
-        try:
-            user_service.update_user_sync(user)
-        except Exception as update_error:
-            current_app.logger.error(f"Error updating user via service: {update_error}")
-            # Fallback - attempt to update the current_user proxy directly
-            try:
-                if hasattr(current_user, 'share_current_reading') and 'share_current_reading' in data:
-                    current_user.share_current_reading = bool(data['share_current_reading'])
-                if hasattr(current_user, 'share_reading_activity') and 'share_reading_activity' in data:
-                    current_user.share_reading_activity = bool(data['share_reading_activity'])
-                if hasattr(current_user, 'share_library') and 'share_library' in data:
-                    current_user.share_library = bool(data['share_library'])
-            except Exception as fallback_error:
-                current_app.logger.error(f"Fallback user update also failed: {fallback_error}")
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Failed to update user settings'
-                }), 500
-        
+            return jsonify({'status': 'error', 'message': 'Failed to update user settings'}), 500
+
         return jsonify({
             'status': 'success',
             'message': 'Profile updated successfully',
@@ -190,19 +148,7 @@ def get_user_profile(user_id):
 @users_api.route('/<string:user_id>/library', methods=['GET'])
 @api_token_required
 def get_user_library(user_id):
-    """
-    Get a user's library if sharing is enabled.
-    
-    Returns comprehensive book data including:
-    - Universal book fields (title, authors, isbn, etc.)
-    - User-specific personal metadata overlay (reading_status, ownership_status, etc.)
-    - Custom metadata (global + personal)
-    
-    Field mapping aligns with COMPREHENSIVE_FIELD_DOCUMENTATION.md:
-    - Book Table: Universal book metadata (title, isbn, description, etc.)
-    - Personal Metadata (HAS_PERSONAL_METADATA): user-specific data (reading_status, ownership_status, user_rating, etc.)
-    - Custom fields: global + personal custom metadata
-    """
+    """Return a personal library to its owner or catalog fields to a shared-library viewer."""
     try:
         # Get user from service
         user = user_service.get_user_by_id_sync(user_id)
@@ -213,14 +159,14 @@ def get_user_library(user_id):
             }), 404
         
         # Check if user allows library sharing
-        if not getattr(user, 'share_library', False) and user.id != current_user.id:
+        is_owner = str(user.id) == str(getattr(current_user, 'id', ''))
+        if not is_owner and not (getattr(user, 'is_active', True) and getattr(user, 'share_library', False)):
             return jsonify({
                 'status': 'error',
                 'message': 'User library is private'
             }), 403
         
         # Get user's books using service layer
-    # Returns books with user overlay data from personal metadata relationships
         from ..services import book_service
         domain_books = book_service.get_all_books_with_user_overlay_sync(str(user_id))
         
@@ -228,6 +174,12 @@ def get_user_library(user_id):
         books_data = []
         for book in domain_books:
             book_data = serialize_book_for_api(book)
+            if not is_owner:
+                book_data = {key: book_data[key] for key in (
+                    'id', 'title', 'subtitle', 'authors', 'isbn', 'description', 'publisher',
+                    'published_date', 'page_count', 'language', 'cover_url', 'average_rating',
+                    'categories', 'series', 'series_volume', 'media_type',
+                )}
             books_data.append(book_data)
         
         return jsonify({
