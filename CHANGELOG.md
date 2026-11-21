@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Admin-only "New update available" notice backed by a cached, silent GitHub releases check (disable with `UPDATE_CHECK_ENABLED=false`).
 
+### Changed
+- The production `docker-compose.yml` now uses the `latest` image tag instead of pinning a release, so `docker compose pull` always gets the newest stable version. Pin a release tag (for example `3.0.3`) to stay on one version.
+
 ## [3.0.3] - 2026-11-13
 
 ### Changed

@@ -8,7 +8,7 @@ Version **3.0.3** uses PostgreSQL as its primary database. New installations use
 
 ## Documentation
 
-The [MyBibliotheca documentation](https://docs.mybibliotheca.org/) is the source of truth for installing, configuring, upgrading, and maintaining the application. It includes the Docker Compose installation guide, the 3.0.3 image tag, and the Kuzu-to-PostgreSQL migration wizard instructions.
+The [MyBibliotheca documentation](https://docs.mybibliotheca.org/) is the source of truth for installing, configuring, upgrading, and maintaining the application. It includes the Docker Compose installation guide, the Docker image tags, and the Kuzu-to-PostgreSQL migration wizard instructions.
 
 - [Install or upgrade with Docker Compose](https://docs.mybibliotheca.org/stable/install/)
 - [Migrate from Kuzu to PostgreSQL](https://docs.mybibliotheca.org/stable/migration/)

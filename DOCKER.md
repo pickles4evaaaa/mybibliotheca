@@ -32,7 +32,7 @@ An application upgrade alone does not move the database. Keep the existing `data
 
 ## Configuration
 
-The `.env.example` file documents the supported settings. Compose defaults connect the application to the bundled PostgreSQL service and Redis. The production Compose file pins the app image to `pickles4evaaaa/mybibliotheca:3.0.3`. For a memory-constrained host, lower `WORKERS`; PostgreSQL defaults to six workers. The app automatically uses one worker while Kuzu remains active during migration.
+The `.env.example` file documents the supported settings. Compose defaults connect the application to the bundled PostgreSQL service and Redis. The production Compose file uses `pickles4evaaaa/mybibliotheca:latest`, which always points at the newest stable release, so `docker compose pull` upgrades the app. To stay on a specific version, change the tag to a release such as `3.0.3`. For a memory-constrained host, lower `WORKERS`; PostgreSQL defaults to six workers. The app automatically uses one worker while Kuzu remains active during migration.
 
 ### Update notice
 
